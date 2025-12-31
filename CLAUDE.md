@@ -1,61 +1,64 @@
 # claude-agent-rs
 
-Rust SDK for Claude API. 450 tests, 0 clippy warnings.
+Rust SDK for Claude API. 449 tests, 0 warnings.
 
 ## Architecture
 
 ```
 src/
-├── auth/           # AuthStrategy pattern (API Key, OAuth, Bedrock, Vertex, Foundry)
-├── client/         # HTTP client, streaming, config
-├── agent/          # Agent loop, state machine, tool execution
-├── tools/          # Tool trait, built-in tools (Read, Write, Edit, Bash, Glob, Grep)
-├── skills/         # Skill system (YAML frontmatter, triggers, execution)
-├── context/        # Memory loader (CLAUDE.md, @import), static context
-├── config/         # Settings loader (settings.json, permissions)
-├── mcp/            # MCP server integration (stdio, http, sse)
-├── session/        # Session persistence, compaction
+├── agent/          # Agent loop, executor, state machine
+├── auth/           # AuthStrategy: ApiKey, OAuth, Bedrock, Vertex, Foundry
+├── client/         # HTTP client, streaming, messages
+├── tools/          # Tool trait, 11 built-in tools
+├── skills/         # SkillDefinition, YAML frontmatter, triggers
+├── context/        # MemoryLoader (CLAUDE.md, @import), orchestrator
+├── config/         # Settings, permissions
+├── session/        # Persistence, compaction
 ├── hooks/          # Pre/post execution hooks
-├── permissions/    # Permission modes, tool restrictions
-└── prompts/        # System prompts, tool descriptions
+├── mcp/            # MCP server integration (stdio, http, sse)
+└── permissions/    # PermissionMode, rules
 ```
 
-## Key Patterns
+## Key Types
 
-**AuthStrategy** (`src/auth/strategy/traits.rs`): Cloud provider abstraction
-- `ApiKeyStrategy`, `OAuthStrategy`, `BedrockStrategy`, `VertexStrategy`, `FoundryStrategy`
-- Implement `auth_header()`, `extra_headers()`, `prepare_request()`
+| Type | Location | Purpose |
+|------|----------|---------|
+| `Agent` | agent/mod.rs | Main entry, builder pattern |
+| `Client` | client/mod.rs | API client, streaming |
+| `AuthStrategy` | auth/strategy/traits.rs | Auth abstraction |
+| `Tool` | tools/mod.rs:47 | Tool trait |
+| `SkillDefinition` | skills/mod.rs | Skill with frontmatter |
+| `MemoryLoader` | context/memory_loader.rs | CLAUDE.md loader |
 
-**Tool** (`src/tools/mod.rs`): Tool trait
-- `name()`, `description()`, `input_schema()`, `execute()`
-- Register via `ToolRegistry` or `Agent::builder().tool()`
+## Patterns
 
-**SkillDefinition** (`src/skills/mod.rs`): Declarative workflows
-- YAML frontmatter: `name`, `description`, `triggers`, `allowed-tools`, `model`
-- `$ARGUMENTS`, `$1`-`$9` substitution
+**AuthStrategy**: `auth_header()`, `extra_headers()`, `prepare_request()`
+**Tool**: `name()`, `description()`, `input_schema()`, `execute()`
+**Builder**: `Client::builder()`, `Agent::builder()`
 
-## Critical Files
+## Modification Points
 
 | Task | Files |
 |------|-------|
-| New cloud provider | `src/auth/strategy/` + `src/client/config.rs` |
-| New built-in tool | `src/tools/` + `src/tools/mod.rs` (register) |
-| Modify agent loop | `src/agent/mod.rs`, `src/agent/state.rs` |
-| Add skill feature | `src/skills/mod.rs`, `src/skills/loader.rs` |
-| Change streaming | `src/client/streaming.rs` |
+| Add cloud provider | `auth/strategy/` + `client/config.rs` |
+| Add built-in tool | `tools/` + `tools/mod.rs` (register) |
+| Modify agent loop | `agent/executor.rs` |
+| Add skill feature | `skills/mod.rs`, `skills/loader.rs` |
 
 ## Commands
 
 ```bash
-cargo test                    # Run all tests
-cargo clippy --all-features   # Lint
-cargo doc --open              # Generate docs
+cargo test
+cargo clippy --all-features
+cargo doc --open
 ```
 
-## Extension Points
+## Exports (lib.rs)
 
-**Add Tool**: Implement `Tool` trait, add to `ToolRegistry::default_tools()`
-
-**Add Auth Strategy**: Implement `AuthStrategy`, add to `ClientBuilder`
-
-**Add Skill Feature**: Modify `SkillFrontmatter` in `loader.rs`, update `SkillDefinition`
+```rust
+pub use agent::{Agent, AgentBuilder, AgentEvent, AgentResult};
+pub use auth::{AuthStrategy, BedrockStrategy, VertexStrategy, FoundryStrategy};
+pub use client::{Client, ClientBuilder, CloudProvider};
+pub use tools::{Tool, ToolAccess, ToolRegistry, ToolResult};
+pub use skills::{SkillDefinition, SkillExecutor};
+```

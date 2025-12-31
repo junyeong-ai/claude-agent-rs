@@ -2,6 +2,7 @@
 
 mod api_key;
 mod bedrock;
+mod env;
 mod foundry;
 mod oauth;
 mod traits;

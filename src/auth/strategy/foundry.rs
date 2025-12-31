@@ -5,6 +5,7 @@ use std::fmt::Debug;
 use crate::client::messages::CreateMessageRequest;
 use crate::types::SystemPrompt;
 
+use super::env::{env_bool, env_with_fallbacks};
 use super::traits::AuthStrategy;
 
 /// Microsoft Azure AI Foundry authentication strategy.
@@ -49,42 +50,31 @@ impl FoundryStrategy {
 
     /// Create a new Foundry strategy from environment variables.
     pub fn from_env() -> Option<Self> {
-        let use_foundry = std::env::var("CLAUDE_CODE_USE_FOUNDRY")
-            .map(|v| v == "1" || v.to_lowercase() == "true")
-            .unwrap_or(false);
-
-        if !use_foundry {
+        if !env_bool("CLAUDE_CODE_USE_FOUNDRY") {
             return None;
         }
 
-        let resource_name = std::env::var("AZURE_RESOURCE_NAME")
-            .or_else(|_| std::env::var("ANTHROPIC_FOUNDRY_RESOURCE"))
-            .ok()?;
+        let resource_name = env_with_fallbacks(&[
+            "AZURE_RESOURCE_NAME",
+            "ANTHROPIC_FOUNDRY_RESOURCE",
+        ])?;
 
-        let deployment_name = std::env::var("AZURE_DEPLOYMENT_NAME")
-            .or_else(|_| std::env::var("ANTHROPIC_FOUNDRY_DEPLOYMENT"))
-            .unwrap_or_else(|_| "claude-sonnet".to_string());
+        let deployment_name = env_with_fallbacks(&[
+            "AZURE_DEPLOYMENT_NAME",
+            "ANTHROPIC_FOUNDRY_DEPLOYMENT",
+        ]).unwrap_or_else(|| "claude-sonnet".to_string());
 
         let api_version = std::env::var("AZURE_API_VERSION")
             .unwrap_or_else(|_| Self::DEFAULT_API_VERSION.to_string());
-
-        let base_url = std::env::var("ANTHROPIC_FOUNDRY_BASE_URL").ok();
-
-        let skip_auth = std::env::var("CLAUDE_CODE_SKIP_FOUNDRY_AUTH")
-            .map(|v| v == "1" || v.to_lowercase() == "true")
-            .unwrap_or(false);
-
-        let api_key = std::env::var("AZURE_API_KEY").ok();
-        let access_token = std::env::var("AZURE_ACCESS_TOKEN").ok();
 
         Some(Self {
             resource_name,
             deployment_name,
             api_version,
-            base_url,
-            skip_auth,
-            api_key,
-            access_token,
+            base_url: std::env::var("ANTHROPIC_FOUNDRY_BASE_URL").ok(),
+            skip_auth: env_bool("CLAUDE_CODE_SKIP_FOUNDRY_AUTH"),
+            api_key: std::env::var("AZURE_API_KEY").ok(),
+            access_token: std::env::var("AZURE_ACCESS_TOKEN").ok(),
         })
     }
 

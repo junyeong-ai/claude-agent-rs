@@ -134,7 +134,7 @@ impl McpManager {
 
     /// List all available tools from all servers
     ///
-    /// Tools are returned with the naming convention `mcp__<server>__<tool>`
+    /// Tools are returned with the naming convention `mcp__{server}__{tool}`
     #[cfg(feature = "mcp")]
     pub async fn list_tools(&self) -> Vec<(String, McpToolDefinition)> {
         let servers = self.servers.read().await;
@@ -156,7 +156,7 @@ impl McpManager {
         Vec::new()
     }
 
-    /// Call a tool by its qualified name (mcp__<server>__<tool>)
+    /// Call a tool by its qualified name (`mcp__{server}__{tool}`)
     #[cfg(feature = "mcp")]
     pub async fn call_tool(&self, qualified_name: &str, arguments: serde_json::Value) -> McpResult<McpToolResult> {
         let (server_name, tool_name) = parse_qualified_name(qualified_name)?;

@@ -5,6 +5,7 @@ use std::fmt::Debug;
 use crate::client::messages::CreateMessageRequest;
 use crate::types::SystemPrompt;
 
+use super::env::{env_bool, env_with_fallbacks, env_with_fallbacks_or};
 use super::traits::AuthStrategy;
 
 /// Google Vertex AI authentication strategy.
@@ -40,35 +41,21 @@ impl Debug for VertexStrategy {
 impl VertexStrategy {
     /// Create a new Vertex AI strategy from environment variables.
     pub fn from_env() -> Option<Self> {
-        // Check if Vertex is enabled
-        let use_vertex = std::env::var("CLAUDE_CODE_USE_VERTEX")
-            .map(|v| v == "1" || v.to_lowercase() == "true")
-            .unwrap_or(false);
-
-        if !use_vertex {
+        if !env_bool("CLAUDE_CODE_USE_VERTEX") {
             return None;
         }
 
-        let project_id = std::env::var("ANTHROPIC_VERTEX_PROJECT_ID")
-            .or_else(|_| std::env::var("GOOGLE_CLOUD_PROJECT"))
-            .or_else(|_| std::env::var("GCLOUD_PROJECT"))
-            .ok()?;
-
-        let region = std::env::var("CLOUD_ML_REGION")
-            .or_else(|_| std::env::var("GOOGLE_CLOUD_REGION"))
-            .unwrap_or_else(|_| "us-central1".to_string());
-
-        let base_url = std::env::var("ANTHROPIC_VERTEX_BASE_URL").ok();
-
-        let skip_auth = std::env::var("CLAUDE_CODE_SKIP_VERTEX_AUTH")
-            .map(|v| v == "1" || v.to_lowercase() == "true")
-            .unwrap_or(false);
+        let project_id = env_with_fallbacks(&[
+            "ANTHROPIC_VERTEX_PROJECT_ID",
+            "GOOGLE_CLOUD_PROJECT",
+            "GCLOUD_PROJECT",
+        ])?;
 
         Some(Self {
             project_id,
-            region,
-            base_url,
-            skip_auth,
+            region: env_with_fallbacks_or(&["CLOUD_ML_REGION", "GOOGLE_CLOUD_REGION"], "us-central1"),
+            base_url: std::env::var("ANTHROPIC_VERTEX_BASE_URL").ok(),
+            skip_auth: env_bool("CLAUDE_CODE_SKIP_VERTEX_AUTH"),
             access_token: None,
         })
     }

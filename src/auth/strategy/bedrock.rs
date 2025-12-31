@@ -5,6 +5,7 @@ use std::fmt::Debug;
 use crate::client::messages::CreateMessageRequest;
 use crate::types::SystemPrompt;
 
+use super::env::{env_bool, env_with_fallbacks_or};
 use super::traits::AuthStrategy;
 
 /// AWS Bedrock authentication strategy.
@@ -41,36 +42,17 @@ impl Debug for BedrockStrategy {
 impl BedrockStrategy {
     /// Create a new Bedrock strategy from environment variables.
     pub fn from_env() -> Option<Self> {
-        // Check if Bedrock is enabled
-        let use_bedrock = std::env::var("CLAUDE_CODE_USE_BEDROCK")
-            .map(|v| v == "1" || v.to_lowercase() == "true")
-            .unwrap_or(false);
-
-        if !use_bedrock {
+        if !env_bool("CLAUDE_CODE_USE_BEDROCK") {
             return None;
         }
 
-        let region = std::env::var("AWS_REGION")
-            .or_else(|_| std::env::var("AWS_DEFAULT_REGION"))
-            .unwrap_or_else(|_| "us-east-1".to_string());
-
-        let base_url = std::env::var("ANTHROPIC_BEDROCK_BASE_URL").ok();
-
-        let skip_auth = std::env::var("CLAUDE_CODE_SKIP_BEDROCK_AUTH")
-            .map(|v| v == "1" || v.to_lowercase() == "true")
-            .unwrap_or(false);
-
-        let access_key_id = std::env::var("AWS_ACCESS_KEY_ID").ok();
-        let secret_access_key = std::env::var("AWS_SECRET_ACCESS_KEY").ok();
-        let session_token = std::env::var("AWS_SESSION_TOKEN").ok();
-
         Some(Self {
-            region,
-            base_url,
-            skip_auth,
-            access_key_id,
-            secret_access_key,
-            session_token,
+            region: env_with_fallbacks_or(&["AWS_REGION", "AWS_DEFAULT_REGION"], "us-east-1"),
+            base_url: std::env::var("ANTHROPIC_BEDROCK_BASE_URL").ok(),
+            skip_auth: env_bool("CLAUDE_CODE_SKIP_BEDROCK_AUTH"),
+            access_key_id: std::env::var("AWS_ACCESS_KEY_ID").ok(),
+            secret_access_key: std::env::var("AWS_SECRET_ACCESS_KEY").ok(),
+            session_token: std::env::var("AWS_SESSION_TOKEN").ok(),
         })
     }
 

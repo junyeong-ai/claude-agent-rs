@@ -4,7 +4,7 @@ use std::collections::HashMap;
 use std::path::Path;
 
 use crate::skills::SkillDefinition;
-use crate::types::TokenUsage;
+use crate::types::{context_window, TokenUsage, DEFAULT_COMPACT_THRESHOLD};
 
 use super::rule_index::{LoadedRule, RulesEngine};
 use super::skill_index::SkillIndex;
@@ -25,17 +25,10 @@ pub struct ContextWindowState {
 impl ContextWindowState {
     /// Create state for a specific model
     pub fn for_model(model: &str) -> Self {
-        let max_tokens = match model {
-            m if m.contains("opus") => 200_000,
-            m if m.contains("sonnet") => 200_000,
-            m if m.contains("haiku") => 200_000,
-            _ => 128_000,
-        };
-
         Self {
-            max_tokens,
+            max_tokens: context_window::for_model(model),
             current_input_tokens: 0,
-            compact_threshold: 0.8,
+            compact_threshold: DEFAULT_COMPACT_THRESHOLD,
         }
     }
 

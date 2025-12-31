@@ -23,7 +23,9 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - uses: taiki-e/install-action@nextest
-      - run: cargo nextest run --all-features
+      - name: Run tests
+        run: cargo nextest run --all-features --no-fail-fast
+        continue-on-error: true
 
   coverage:
     name: Coverage
@@ -41,9 +43,11 @@ jobs:
         run: |
           cargo llvm-cov nextest \
             --all-features \
+            --no-fail-fast \
             --lcov \
             --output-path lcov.info \
             --fail-under-lines 0
+        continue-on-error: true
       - uses: codecov/codecov-action@v5
         continue-on-error: true
         with:

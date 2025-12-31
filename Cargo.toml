@@ -1,0 +1,90 @@
+[package]
+name = "claude-agent"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.75"
+license = "MIT OR Apache-2.0"
+description = "Rust SDK for building AI agents with Anthropic's Claude - Direct API, no CLI dependency"
+repository = "https://github.com/junyeong-ai/claude-agent-rs"
+documentation = "https://docs.rs/claude-agent"
+readme = "README.md"
+keywords = ["ai", "claude", "anthropic", "agent", "llm"]
+categories = ["api-bindings", "asynchronous"]
+
+[dependencies]
+# Async runtime
+tokio = { version = "1", features = ["full", "process"] }
+
+# HTTP client (0.13 uses 'rustls' instead of 'rustls-tls')
+reqwest = { version = "0.13", default-features = false, features = [
+    "json",
+    "stream",
+    "rustls",
+    "http2",
+] }
+
+# Serialization
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+serde_yaml = "0.9"
+
+# Async utilities
+futures = "0.3"
+async-trait = "0.1"
+pin-project-lite = "0.2"
+tokio-stream = "0.1"
+
+# Error handling
+thiserror = "2"
+
+# File operations
+glob = "0.3"
+
+# Regex
+regex = "1"
+
+# Time
+chrono = { version = "0.4", features = ["serde"] }
+tokio-util = { version = "0.7", features = ["time"] }
+
+# Utilities
+tracing = "0.1"
+bytes = "1"
+uuid = { version = "1", features = ["v4"] }
+
+# Authentication & directories
+directories = "6"
+dirs = "6"
+
+# MCP (Model Context Protocol) support - optional
+rmcp = { version = "0.12", optional = true, features = ["client", "transport-child-process", "client-side-sse", "reqwest"] }
+
+# Optional: proc-macro for custom tools
+# claude-agent-macros = { version = "0.1", path = "./macros", optional = true }
+
+[dev-dependencies]
+tokio-test = "0.4"
+wiremock = "0.6"
+tempfile = "3"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+[features]
+default = []
+# macros = ["claude-agent-macros"]
+mcp = ["rmcp"]
+
+[[example]]
+name = "simple_query"
+path = "examples/simple_query.rs"
+
+[[example]]
+name = "streaming"
+path = "examples/streaming.rs"
+
+[[example]]
+name = "agent_loop"
+path = "examples/agent_loop.rs"
+
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]

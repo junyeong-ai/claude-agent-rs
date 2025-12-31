@@ -1,0 +1,17 @@
+# Clippy configuration
+# https://rust-lang.github.io/rust-clippy/master/index.html
+
+# Cognitive complexity threshold
+cognitive-complexity-threshold = 30
+
+# Allow larger types before Box is suggested
+type-complexity-threshold = 400
+
+# Avoid suggesting enum_glob_use
+avoid-breaking-exported-api = true
+
+# Maximum lines in a function
+too-many-lines-threshold = 200
+
+# Maximum arguments in a function
+too-many-arguments-threshold = 10

@@ -29,7 +29,11 @@ pub trait Persistence: Send + Sync {
     async fn list(&self, tenant_id: Option<&str>) -> SessionResult<Vec<SessionId>>;
 
     /// Add a message to an existing session
-    async fn add_message(&self, session_id: &SessionId, message: SessionMessage) -> SessionResult<()>;
+    async fn add_message(
+        &self,
+        session_id: &SessionId,
+        message: SessionMessage,
+    ) -> SessionResult<()>;
 
     /// Clean up expired sessions
     async fn cleanup_expired(&self) -> SessionResult<usize>;
@@ -94,7 +98,11 @@ impl Persistence for MemoryPersistence {
         Ok(ids)
     }
 
-    async fn add_message(&self, session_id: &SessionId, message: SessionMessage) -> SessionResult<()> {
+    async fn add_message(
+        &self,
+        session_id: &SessionId,
+        message: SessionMessage,
+    ) -> SessionResult<()> {
         let mut sessions = self.sessions.write().await;
         if let Some(session) = sessions.get_mut(&session_id.0) {
             session.add_message(message);
@@ -192,7 +200,8 @@ mod tests {
         let session_id = session.id.clone();
         persistence.save(&session).await.unwrap();
 
-        let message = crate::session::state::SessionMessage::user(vec![ContentBlock::text("Hello")]);
+        let message =
+            crate::session::state::SessionMessage::user(vec![ContentBlock::text("Hello")]);
         persistence.add_message(&session_id, message).await.unwrap();
 
         let loaded = persistence.load(&session_id).await.unwrap().unwrap();

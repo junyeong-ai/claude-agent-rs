@@ -33,9 +33,9 @@ impl CredentialProvider for ClaudeCliProvider {
             Error::Auth("Claude Code CLI credentials not found. Run 'claude login' first.".into())
         })?;
 
-        let oauth = creds.oauth().ok_or_else(|| {
-            Error::Auth("No OAuth credentials in Claude Code CLI config".into())
-        })?;
+        let oauth = creds
+            .oauth()
+            .ok_or_else(|| Error::Auth("No OAuth credentials in Claude Code CLI config".into()))?;
 
         if oauth.is_expired() {
             return Err(Error::Auth(

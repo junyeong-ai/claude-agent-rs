@@ -26,7 +26,10 @@ pub trait ConfigProvider: Send + Sync {
 /// Extension methods for typed configuration access
 pub trait ConfigProviderExt: ConfigProvider {
     /// Get a typed configuration value
-    fn get<T: DeserializeOwned + Send>(&self, key: &str) -> impl std::future::Future<Output = ConfigResult<Option<T>>> + Send
+    fn get<T: DeserializeOwned + Send>(
+        &self,
+        key: &str,
+    ) -> impl std::future::Future<Output = ConfigResult<Option<T>>> + Send
     where
         Self: Sync,
     {
@@ -47,7 +50,11 @@ pub trait ConfigProviderExt: ConfigProvider {
     }
 
     /// Set a typed configuration value
-    fn set<T: Serialize + Send + Sync>(&self, key: &str, value: &T) -> impl std::future::Future<Output = ConfigResult<()>> + Send
+    fn set<T: Serialize + Send + Sync>(
+        &self,
+        key: &str,
+        value: &T,
+    ) -> impl std::future::Future<Output = ConfigResult<()>> + Send
     where
         Self: Sync,
     {

@@ -92,7 +92,11 @@ impl Tool for SkillTool {
         if result.success {
             ToolResult::success(result.output)
         } else {
-            ToolResult::error(result.error.unwrap_or_else(|| "Skill execution failed".to_string()))
+            ToolResult::error(
+                result
+                    .error
+                    .unwrap_or_else(|| "Skill execution failed".to_string()),
+            )
         }
     }
 }

@@ -54,18 +54,15 @@ impl FoundryStrategy {
             return None;
         }
 
-        let resource_name = env_with_fallbacks(&[
-            "AZURE_RESOURCE_NAME",
-            "ANTHROPIC_FOUNDRY_RESOURCE",
-        ])?;
+        let resource_name =
+            env_with_fallbacks(&["AZURE_RESOURCE_NAME", "ANTHROPIC_FOUNDRY_RESOURCE"])?;
 
-        let deployment_name = env_with_fallbacks(&[
-            "AZURE_DEPLOYMENT_NAME",
-            "ANTHROPIC_FOUNDRY_DEPLOYMENT",
-        ]).unwrap_or_else(|| "claude-sonnet".to_string());
+        let deployment_name =
+            env_with_fallbacks(&["AZURE_DEPLOYMENT_NAME", "ANTHROPIC_FOUNDRY_DEPLOYMENT"])
+                .unwrap_or_else(|| "claude-sonnet".to_string());
 
-        let api_version = env_opt("AZURE_API_VERSION")
-            .unwrap_or_else(|| Self::DEFAULT_API_VERSION.to_string());
+        let api_version =
+            env_opt("AZURE_API_VERSION").unwrap_or_else(|| Self::DEFAULT_API_VERSION.to_string());
 
         Some(Self {
             resource_name,
@@ -197,8 +194,7 @@ mod tests {
         assert!(url.contains("my-resource"));
         assert!(url.contains("claude-sonnet"));
 
-        let custom = FoundryStrategy::new("r", "d")
-            .with_base_url("https://my-gateway.com/foundry");
+        let custom = FoundryStrategy::new("r", "d").with_base_url("https://my-gateway.com/foundry");
         assert_eq!(custom.get_base_url(), "https://my-gateway.com/foundry");
     }
 

@@ -104,7 +104,10 @@ mod tool_spec_tests {
 
         assert!(!result.is_error());
         assert!(file_path.exists());
-        assert_eq!(std::fs::read_to_string(&file_path).unwrap(), "Hello, World!");
+        assert_eq!(
+            std::fs::read_to_string(&file_path).unwrap(),
+            "Hello, World!"
+        );
     }
 
     /// Write Tool - 디렉토리 자동 생성
@@ -150,7 +153,10 @@ mod tool_spec_tests {
             }))
             .await;
 
-        assert!(!result.is_error(), "Edit should succeed with unique old_string");
+        assert!(
+            !result.is_error(),
+            "Edit should succeed with unique old_string"
+        );
         let content = std::fs::read_to_string(&file_path).unwrap();
         assert_eq!(content, "hi world");
 
@@ -180,7 +186,10 @@ mod tool_spec_tests {
             .await;
 
         // 중복된 old_string은 에러를 반환해야 함 (더 많은 컨텍스트 필요)
-        assert!(result.is_error(), "Edit should fail when old_string is not unique");
+        assert!(
+            result.is_error(),
+            "Edit should fail when old_string is not unique"
+        );
     }
 
     /// Glob Tool - CLI 스펙 준수 검증
@@ -548,8 +557,7 @@ mod client_tests {
 
 mod permission_tests {
     use claude_agent::permissions::{
-        is_file_tool, is_read_only_tool, is_shell_tool, PermissionMode,
-        PermissionPolicyBuilder,
+        is_file_tool, is_read_only_tool, is_shell_tool, PermissionMode, PermissionPolicyBuilder,
     };
 
     /// 도구 분류 검증
@@ -610,8 +618,8 @@ mod permission_tests {
 // ============================================================================
 
 mod hook_tests {
-    use claude_agent::hooks::{Hook, HookContext, HookEvent, HookInput, HookManager, HookOutput};
     use async_trait::async_trait;
+    use claude_agent::hooks::{Hook, HookContext, HookEvent, HookInput, HookManager, HookOutput};
 
     /// Custom Hook 구현
     struct TestHook {
@@ -638,7 +646,11 @@ mod hook_tests {
             &self.events
         }
 
-        async fn execute(&self, input: HookInput, _ctx: &HookContext) -> Result<HookOutput, claude_agent::Error> {
+        async fn execute(
+            &self,
+            input: HookInput,
+            _ctx: &HookContext,
+        ) -> Result<HookOutput, claude_agent::Error> {
             // PreToolUse 이벤트에서 Bash 도구 차단 예시
             if let Some(tool_name) = &input.tool_name {
                 if tool_name == "Bash" {
@@ -693,9 +705,10 @@ mod skill_tests {
     /// Skill 정의 검증
     #[test]
     fn test_skill_definition() {
-        let skill = SkillDefinition::new("commit", "Create git commit", "Analyze and commit changes")
-            .with_source_type(SkillSourceType::Builtin)
-            .with_trigger("/commit");
+        let skill =
+            SkillDefinition::new("commit", "Create git commit", "Analyze and commit changes")
+                .with_source_type(SkillSourceType::Builtin)
+                .with_trigger("/commit");
 
         assert_eq!(skill.name, "commit");
         assert!(skill.matches_trigger("/commit please"));
@@ -995,7 +1008,11 @@ fn test_feature_parity_checklist() {
         ("KillShell", true, "Kill background shell"),
         // 에이전트
         ("Agent Loop", true, "Multi-turn with tools"),
-        ("Streaming Events", true, "Text, ToolStart, ToolEnd, Complete"),
+        (
+            "Streaming Events",
+            true,
+            "Text, ToolStart, ToolEnd, Complete",
+        ),
         ("Context Management", true, "Token tracking, compaction"),
         // 세션
         ("Session Management", true, "Create, restore, branch"),
@@ -1015,12 +1032,14 @@ fn test_feature_parity_checklist() {
         assert!(
             *implemented,
             "Feature '{}' ({}) should be implemented",
-            feature,
-            description
+            feature, description
         );
     }
 
-    println!("\n📋 Feature Parity Checklist: {} features verified", total_features);
+    println!(
+        "\n📋 Feature Parity Checklist: {} features verified",
+        total_features
+    );
 }
 
 // ============================================================================
@@ -1028,7 +1047,9 @@ fn test_feature_parity_checklist() {
 // ============================================================================
 
 mod mcp_tests {
-    use claude_agent::mcp::{McpServerConfig, McpServerState, McpConnectionStatus, McpContent, McpToolResult};
+    use claude_agent::mcp::{
+        McpConnectionStatus, McpContent, McpServerConfig, McpServerState, McpToolResult,
+    };
     use std::collections::HashMap;
 
     /// MCP Server Config 검증
@@ -1101,8 +1122,12 @@ mod mcp_tests {
     fn test_mcp_tool_result() {
         let result = McpToolResult {
             content: vec![
-                McpContent::Text { text: "Line 1".to_string() },
-                McpContent::Text { text: "Line 2".to_string() },
+                McpContent::Text {
+                    text: "Line 1".to_string(),
+                },
+                McpContent::Text {
+                    text: "Line 2".to_string(),
+                },
             ],
             is_error: false,
         };
@@ -1118,8 +1143,8 @@ mod mcp_tests {
 
 mod auth_tests {
     use claude_agent::auth::{
-        AuthStrategy, Credential, CredentialProvider, EnvironmentProvider, ExplicitProvider,
-        ChainProvider,
+        AuthStrategy, ChainProvider, Credential, CredentialProvider, EnvironmentProvider,
+        ExplicitProvider,
     };
 
     /// API Key Credential 테스트
@@ -1178,8 +1203,7 @@ mod auth_tests {
     /// ChainProvider 테스트
     #[tokio::test]
     async fn test_chain_provider() {
-        let chain = ChainProvider::new(vec![])
-            .with(ExplicitProvider::api_key("chain-key"));
+        let chain = ChainProvider::new(vec![]).with(ExplicitProvider::api_key("chain-key"));
 
         assert_eq!(chain.name(), "chain");
         let cred = chain.resolve().await.unwrap();
@@ -1192,9 +1216,7 @@ mod auth_tests {
 // ============================================================================
 
 mod context_tests {
-    use claude_agent::context::{
-        StaticContext, SystemBlock, CacheControl,
-    };
+    use claude_agent::context::{CacheControl, StaticContext, SystemBlock};
 
     /// Static Context 검증
     #[test]

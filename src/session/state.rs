@@ -323,7 +323,9 @@ impl Session {
     /// Create a new session with config
     pub fn new(config: SessionConfig) -> Self {
         let now = Utc::now();
-        let expires_at = config.ttl_secs.map(|ttl| now + chrono::Duration::seconds(ttl as i64));
+        let expires_at = config
+            .ttl_secs
+            .map(|ttl| now + chrono::Duration::seconds(ttl as i64));
 
         Self {
             id: SessionId::new(),
@@ -475,20 +477,22 @@ mod tests {
     fn test_token_usage_accumulation() {
         let mut session = Session::new(SessionConfig::default());
 
-        let msg1 = SessionMessage::assistant(vec![ContentBlock::text("Response 1")])
-            .with_usage(TokenUsage {
+        let msg1 = SessionMessage::assistant(vec![ContentBlock::text("Response 1")]).with_usage(
+            TokenUsage {
                 input_tokens: 100,
                 output_tokens: 50,
                 ..Default::default()
-            });
+            },
+        );
         session.add_message(msg1);
 
-        let msg2 = SessionMessage::assistant(vec![ContentBlock::text("Response 2")])
-            .with_usage(TokenUsage {
+        let msg2 = SessionMessage::assistant(vec![ContentBlock::text("Response 2")]).with_usage(
+            TokenUsage {
                 input_tokens: 150,
                 output_tokens: 75,
                 ..Default::default()
-            });
+            },
+        );
         session.add_message(msg2);
 
         assert_eq!(session.total_usage.input_tokens, 250);

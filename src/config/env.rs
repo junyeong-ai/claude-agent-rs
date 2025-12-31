@@ -38,11 +38,7 @@ impl EnvConfigProvider {
         match &self.prefix {
             Some(prefix) => {
                 if env_name.starts_with(prefix) {
-                    Some(
-                        env_name[prefix.len()..]
-                            .to_lowercase()
-                            .replace('_', "."),
-                    )
+                    Some(env_name[prefix.len()..].to_lowercase().replace('_', "."))
                 } else {
                     None
                 }

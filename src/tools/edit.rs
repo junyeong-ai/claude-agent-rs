@@ -94,7 +94,8 @@ impl Tool for EditTool {
 
         if count == 0 {
             return ToolResult::error(
-                "old_string not found in file. Make sure it matches exactly including whitespace.".to_string()
+                "old_string not found in file. Make sure it matches exactly including whitespace."
+                    .to_string(),
             );
         }
 

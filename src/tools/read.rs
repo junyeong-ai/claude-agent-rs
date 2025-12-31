@@ -105,7 +105,10 @@ impl Tool for ReadTool {
             .collect();
 
         let output = if selected.is_empty() {
-            format!("File is empty or offset {} exceeds file length {}", offset, total_lines)
+            format!(
+                "File is empty or offset {} exceeds file length {}",
+                offset, total_lines
+            )
         } else {
             selected.join("\n")
         };
@@ -124,7 +127,9 @@ mod tests {
     async fn test_read_file() {
         let dir = tempdir().unwrap();
         let file_path = dir.path().join("test.txt");
-        fs::write(&file_path, "line 1\nline 2\nline 3").await.unwrap();
+        fs::write(&file_path, "line 1\nline 2\nline 3")
+            .await
+            .unwrap();
 
         let tool = ReadTool::new(dir.path().to_path_buf());
         let result = tool
@@ -147,7 +152,9 @@ mod tests {
     async fn test_read_with_offset() {
         let dir = tempdir().unwrap();
         let file_path = dir.path().join("test.txt");
-        fs::write(&file_path, "line 1\nline 2\nline 3").await.unwrap();
+        fs::write(&file_path, "line 1\nline 2\nline 3")
+            .await
+            .unwrap();
 
         let tool = ReadTool::new(dir.path().to_path_buf());
         let result = tool

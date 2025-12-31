@@ -150,7 +150,10 @@ impl Agent {
 
             for tool_use in tool_uses {
                 tool_calls += 1;
-                let result = self.tools.execute(&tool_use.name, tool_use.input.clone()).await;
+                let result = self
+                    .tools
+                    .execute(&tool_use.name, tool_use.input.clone())
+                    .await;
                 results.push(ToolResultBlock::from_output(&tool_use.id, result));
             }
 
@@ -189,15 +192,16 @@ impl Agent {
 
         let client = self.client.clone();
         let options = self.options.clone();
-        let tools = Arc::new(ToolRegistry::default_tools(&self.options.tool_access, self.options.working_dir.clone()));
+        let tools = Arc::new(ToolRegistry::default_tools(
+            &self.options.tool_access,
+            self.options.working_dir.clone(),
+        ));
         let system_prompt = self.build_system_prompt();
 
         // Create an async stream that yields AgentEvents
         let event_stream = stream::unfold(
             StreamState::new(context, client, options, tools, system_prompt),
-            |mut state| async move {
-                state.next_event().await.map(|event| (event, state))
-            },
+            |mut state| async move { state.next_event().await.map(|event| (event, state)) },
         );
 
         Ok(event_stream)
@@ -314,7 +318,10 @@ impl StreamState {
             }));
 
             // Execute the tool
-            let result = self.tools.execute(&tool_use.name, tool_use.input.clone()).await;
+            let result = self
+                .tools
+                .execute(&tool_use.name, tool_use.input.clone())
+                .await;
             let (output, is_error) = match &result {
                 crate::tools::ToolResult::Success(s) => (s.clone(), false),
                 crate::tools::ToolResult::Error(s) => (s.clone(), true),
@@ -329,7 +336,8 @@ impl StreamState {
             }));
 
             // Store tool result
-            self.pending_tool_results.push(ToolResultBlock::from_output(&tool_use.id, result));
+            self.pending_tool_results
+                .push(ToolResultBlock::from_output(&tool_use.id, result));
 
             // If no more pending tool uses, add tool results to context and continue
             if self.pending_tool_uses.is_empty() && !self.pending_tool_results.is_empty() {
@@ -398,7 +406,8 @@ impl StreamState {
             match block {
                 ContentBlock::Text { text } => {
                     text_content.push_str(text);
-                    self.pending_events.push_back(Ok(AgentEvent::Text(text.clone())));
+                    self.pending_events
+                        .push_back(Ok(AgentEvent::Text(text.clone())));
                 }
                 ContentBlock::ToolUse(tool_use) => {
                     tool_uses.push(tool_use.clone());
@@ -425,13 +434,14 @@ impl StreamState {
             // Done - no more tool calls
             self.done = true;
             let ctx = self.context.lock().await;
-            self.pending_events.push_back(Ok(AgentEvent::Complete(AgentResult {
-                text: self.final_text.clone(),
-                usage: *ctx.total_usage(),
-                tool_calls: self.tool_calls,
-                iterations: self.iterations,
-                stop_reason: response.stop_reason.unwrap_or(StopReason::EndTurn),
-            })));
+            self.pending_events
+                .push_back(Ok(AgentEvent::Complete(AgentResult {
+                    text: self.final_text.clone(),
+                    usage: *ctx.total_usage(),
+                    tool_calls: self.tool_calls,
+                    iterations: self.iterations,
+                    stop_reason: response.stop_reason.unwrap_or(StopReason::EndTurn),
+                })));
         }
 
         self.pending_events.pop_front()

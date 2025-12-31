@@ -47,7 +47,10 @@ impl ClientError {
             self,
             ClientError::RateLimited { .. }
                 | ClientError::Http(_)
-                | ClientError::ApiError { status: 500..=599, .. }
+                | ClientError::ApiError {
+                    status: 500..=599,
+                    ..
+                }
         )
     }
 

@@ -26,7 +26,10 @@ async fn test_basic_query_with_cli_auth() {
         .build()
         .expect("Failed to create client with CLI credentials");
 
-    println!("Authentication type: {}", client.config().auth_strategy.name());
+    println!(
+        "Authentication type: {}",
+        client.config().auth_strategy.name()
+    );
     assert_eq!(
         client.config().auth_strategy.name(),
         "oauth",
@@ -86,7 +89,11 @@ async fn test_streaming_with_cli_auth() {
     }
     println!();
 
-    println!("Total events: {}, Text chunks: {}", event_count, text_chunks.len());
+    println!(
+        "Total events: {}, Text chunks: {}",
+        event_count,
+        text_chunks.len()
+    );
 
     assert!(event_count > 0, "Should receive at least one event");
     assert!(!text_chunks.is_empty(), "Should receive text chunks");
@@ -132,7 +139,10 @@ async fn test_messages_api_full_flow() {
 
     assert!(!response.text().is_empty(), "Response should not be empty");
     assert!(response.usage.input_tokens > 0, "Should have input tokens");
-    assert!(response.usage.output_tokens > 0, "Should have output tokens");
+    assert!(
+        response.usage.output_tokens > 0,
+        "Should have output tokens"
+    );
 }
 
 // =============================================================================
@@ -197,15 +207,24 @@ async fn test_agent_with_tools_cli_auth() {
         test_file.display()
     );
 
-    let result = agent.execute(&prompt).await.expect("Agent execution failed");
+    let result = agent
+        .execute(&prompt)
+        .await
+        .expect("Agent execution failed");
 
     println!("Agent result: {}", result.text());
     println!("Tool calls: {}", result.tool_calls);
     println!("Iterations: {}", result.iterations);
     println!("Total tokens: {}", result.total_tokens());
 
-    assert!(result.tool_calls >= 1, "Should have made at least one tool call");
-    assert!(result.text().contains("42"), "Should find the secret number");
+    assert!(
+        result.tool_calls >= 1,
+        "Should have made at least one tool call"
+    );
+    assert!(
+        result.text().contains("42"),
+        "Should find the secret number"
+    );
 }
 
 // =============================================================================
@@ -262,11 +281,8 @@ async fn test_prompt_caching_active() {
         .expect("Failed to create client");
 
     // First request - should cache the system prompt
-    let request1 = CreateMessageRequest::new(
-        &client.config().model,
-        vec![Message::user("Hello!")],
-    )
-    .with_max_tokens(50);
+    let request1 = CreateMessageRequest::new(&client.config().model, vec![Message::user("Hello!")])
+        .with_max_tokens(50);
 
     let response1 = claude_agent::client::MessagesClient::new(&client)
         .create(request1)
@@ -284,11 +300,9 @@ async fn test_prompt_caching_active() {
     );
 
     // Second request - should benefit from cached system prompt
-    let request2 = CreateMessageRequest::new(
-        &client.config().model,
-        vec![Message::user("Goodbye!")],
-    )
-    .with_max_tokens(50);
+    let request2 =
+        CreateMessageRequest::new(&client.config().model, vec![Message::user("Goodbye!")])
+            .with_max_tokens(50);
 
     let response2 = claude_agent::client::MessagesClient::new(&client)
         .create(request2)
@@ -360,11 +374,8 @@ async fn test_error_handling_cli_auth() {
         .expect("Failed to create client");
 
     // Test with invalid model (should fail gracefully)
-    let request = CreateMessageRequest::new(
-        "invalid-model-name",
-        vec![Message::user("Hello")],
-    )
-    .with_max_tokens(100);
+    let request = CreateMessageRequest::new("invalid-model-name", vec![Message::user("Hello")])
+        .with_max_tokens(100);
 
     let result = claude_agent::client::MessagesClient::new(&client)
         .create(request)
@@ -436,10 +447,7 @@ async fn test_custom_beta_flags() {
         .build()
         .expect("Failed to create client");
 
-    let response = client
-        .query("Hello!")
-        .await
-        .expect("Query failed");
+    let response = client.query("Hello!").await.expect("Query failed");
 
     println!("Response with custom beta flag: {}", response);
     assert!(!response.is_empty());

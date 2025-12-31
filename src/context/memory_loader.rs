@@ -138,11 +138,12 @@ impl MemoryLoader {
             }
             self.loaded_paths.insert(canonical.clone());
 
-            let content = tokio::fs::read_to_string(path)
-                .await
-                .map_err(|e| ContextError::Source {
-                    message: format!("Failed to read {}: {}", path.display(), e),
-                })?;
+            let content =
+                tokio::fs::read_to_string(path)
+                    .await
+                    .map_err(|e| ContextError::Source {
+                        message: format!("Failed to read {}: {}", path.display(), e),
+                    })?;
 
             // Process @import directives
             self.process_imports(&content, path.parent().unwrap_or(Path::new(".")))
@@ -224,9 +225,13 @@ impl MemoryLoader {
                 message: format!("Failed to read rules directory: {}", e),
             })?;
 
-        while let Some(entry) = entries.next_entry().await.map_err(|e| ContextError::Source {
-            message: format!("Failed to read directory entry: {}", e),
-        })? {
+        while let Some(entry) = entries
+            .next_entry()
+            .await
+            .map_err(|e| ContextError::Source {
+                message: format!("Failed to read directory entry: {}", e),
+            })?
+        {
             let path = entry.path();
             if path.extension().map(|e| e == "md").unwrap_or(false) {
                 let name = path
@@ -237,7 +242,11 @@ impl MemoryLoader {
 
                 let content = self.load_file_with_imports(&path).await?;
 
-                rules.push(RuleFile { name, content, path });
+                rules.push(RuleFile {
+                    name,
+                    content,
+                    path,
+                });
             }
         }
 

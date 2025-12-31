@@ -84,7 +84,7 @@ impl Tool for BashTool {
         if Self::is_dangerous(&input.command) {
             return ToolResult::error(
                 "This command appears dangerous and has been blocked for safety. \
-                 If you believe this is safe, please ask the user for explicit approval."
+                 If you believe this is safe, please ask the user for explicit approval.",
             );
         }
 

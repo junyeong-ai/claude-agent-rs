@@ -3,8 +3,8 @@
 //! StaticContext contains content that is cached for the entire session,
 //! leveraging Anthropic's Prompt Caching feature for token efficiency.
 
-use serde::{Deserialize, Serialize};
 use crate::types::ToolDefinition;
+use serde::{Deserialize, Serialize};
 
 /// Cache control directive for Anthropic's Prompt Caching
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]

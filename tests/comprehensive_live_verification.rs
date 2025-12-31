@@ -46,7 +46,10 @@ async fn test_1_cli_oauth_authentication() {
     println!("Response: {}", response.trim());
     assert!(response.contains("AUTH_OK"), "Should get valid response");
 
-    println!("✅ CLI OAuth authentication: PASSED ({} ms)", start.elapsed().as_millis());
+    println!(
+        "✅ CLI OAuth authentication: PASSED ({} ms)",
+        start.elapsed().as_millis()
+    );
 }
 
 #[tokio::test]
@@ -59,8 +62,8 @@ async fn test_2_bedrock_strategy_structure() {
     let start = Instant::now();
 
     // Test strategy creation
-    let strategy = BedrockStrategy::new("us-west-2")
-        .with_base_url("https://bedrock-gateway.example.com");
+    let strategy =
+        BedrockStrategy::new("us-west-2").with_base_url("https://bedrock-gateway.example.com");
 
     println!("Region: {}", strategy.region());
     println!("Base URL: {}", strategy.get_base_url());
@@ -75,7 +78,10 @@ async fn test_2_bedrock_strategy_structure() {
     let gateway_strategy = BedrockStrategy::new("us-east-1").skip_auth();
     println!("Skip auth mode: {:?}", gateway_strategy);
 
-    println!("✅ Bedrock strategy: PASSED ({} ms)", start.elapsed().as_millis());
+    println!(
+        "✅ Bedrock strategy: PASSED ({} ms)",
+        start.elapsed().as_millis()
+    );
 }
 
 #[tokio::test]
@@ -98,7 +104,10 @@ async fn test_3_vertex_strategy_structure() {
     assert_eq!(strategy.region(), "us-central1");
     assert_eq!(strategy.name(), "vertex");
 
-    println!("✅ Vertex AI strategy: PASSED ({} ms)", start.elapsed().as_millis());
+    println!(
+        "✅ Vertex AI strategy: PASSED ({} ms)",
+        start.elapsed().as_millis()
+    );
 }
 
 #[tokio::test]
@@ -124,7 +133,10 @@ async fn test_4_foundry_strategy_structure() {
     assert_eq!(strategy.deployment_name(), "claude-deployment");
     assert_eq!(strategy.name(), "foundry");
 
-    println!("✅ Foundry strategy: PASSED ({} ms)", start.elapsed().as_millis());
+    println!(
+        "✅ Foundry strategy: PASSED ({} ms)",
+        start.elapsed().as_millis()
+    );
 }
 
 // =============================================================================
@@ -156,9 +168,12 @@ async fn test_5_claude_md_recursive_loading() {
     // Create docs directory with imported file
     let docs_dir = dir.path().join("docs");
     fs::create_dir_all(&docs_dir).await.unwrap();
-    fs::write(docs_dir.join("api.md"), "## API Documentation\n\nEndpoints: /api/v1/*")
-        .await
-        .unwrap();
+    fs::write(
+        docs_dir.join("api.md"),
+        "## API Documentation\n\nEndpoints: /api/v1/*",
+    )
+    .await
+    .unwrap();
 
     // CLAUDE.local.md (private settings)
     fs::write(
@@ -171,12 +186,18 @@ async fn test_5_claude_md_recursive_loading() {
     // Rules directory
     let rules_dir = dir.path().join(".claude").join("rules");
     fs::create_dir_all(&rules_dir).await.unwrap();
-    fs::write(rules_dir.join("rust.md"), "# Rust Rules\n- Use snake_case\n- No unwrap in production")
-        .await
-        .unwrap();
-    fs::write(rules_dir.join("security.md"), "# Security\n- Never expose secrets\n- Validate all inputs")
-        .await
-        .unwrap();
+    fs::write(
+        rules_dir.join("rust.md"),
+        "# Rust Rules\n- Use snake_case\n- No unwrap in production",
+    )
+    .await
+    .unwrap();
+    fs::write(
+        rules_dir.join("security.md"),
+        "# Security\n- Never expose secrets\n- Validate all inputs",
+    )
+    .await
+    .unwrap();
 
     // Load all memory
     let mut loader = MemoryLoader::new();
@@ -187,15 +208,30 @@ async fn test_5_claude_md_recursive_loading() {
     println!("Rules: {}", content.rules.len());
 
     let combined = content.combined();
-    println!("\nCombined content preview:\n{}", &combined[..combined.len().min(500)]);
+    println!(
+        "\nCombined content preview:\n{}",
+        &combined[..combined.len().min(500)]
+    );
 
-    assert!(combined.contains("Root Project"), "Should load root CLAUDE.md");
-    assert!(combined.contains("API Documentation"), "Should import docs/api.md");
-    assert!(combined.contains("Local Settings"), "Should load CLAUDE.local.md");
+    assert!(
+        combined.contains("Root Project"),
+        "Should load root CLAUDE.md"
+    );
+    assert!(
+        combined.contains("API Documentation"),
+        "Should import docs/api.md"
+    );
+    assert!(
+        combined.contains("Local Settings"),
+        "Should load CLAUDE.local.md"
+    );
     assert!(combined.contains("Rust Rules"), "Should load rules");
     assert_eq!(content.rules.len(), 2, "Should load 2 rules");
 
-    println!("\n✅ CLAUDE.md recursive loading: PASSED ({} ms)", start.elapsed().as_millis());
+    println!(
+        "\n✅ CLAUDE.md recursive loading: PASSED ({} ms)",
+        start.elapsed().as_millis()
+    );
 }
 
 #[tokio::test]
@@ -236,10 +272,16 @@ End of file"#,
 
     println!("Content:\n{}", combined);
 
-    assert!(combined.contains("Relative import content"), "Should resolve relative imports");
+    assert!(
+        combined.contains("Relative import content"),
+        "Should resolve relative imports"
+    );
     assert!(combined.contains("@@escaped"), "Should preserve escaped @@");
 
-    println!("\n✅ Import syntax: PASSED ({} ms)", start.elapsed().as_millis());
+    println!(
+        "\n✅ Import syntax: PASSED ({} ms)",
+        start.elapsed().as_millis()
+    );
 }
 
 // =============================================================================
@@ -300,7 +342,10 @@ async fn test_7_skill_registration_and_execution() {
     println!("Registered skills: {:?}", skills);
     assert_eq!(skills.len(), 3);
 
-    println!("\n✅ Skill registration: PASSED ({} ms)", start.elapsed().as_millis());
+    println!(
+        "\n✅ Skill registration: PASSED ({} ms)",
+        start.elapsed().as_millis()
+    );
 }
 
 #[tokio::test]
@@ -415,7 +460,10 @@ Deploy to $ARGUMENTS environment:
     println!("\nDeploy command output:\n{}", executed);
     assert!(executed.contains("production"));
 
-    println!("\n✅ Slash commands: PASSED ({} ms)", start.elapsed().as_millis());
+    println!(
+        "\n✅ Slash commands: PASSED ({} ms)",
+        start.elapsed().as_millis()
+    );
 }
 
 // =============================================================================
@@ -480,17 +528,29 @@ async fn test_10_settings_loading() {
     }
 
     // Verify settings
-    assert_eq!(settings.env.get("PROJECT_NAME"), Some(&"test-project".to_string()));
+    assert_eq!(
+        settings.env.get("PROJECT_NAME"),
+        Some(&"test-project".to_string())
+    );
     assert_eq!(settings.env.get("LOG_LEVEL"), Some(&"debug".to_string())); // Overridden
     assert_eq!(settings.env.get("LOCAL_ONLY"), Some(&"true".to_string()));
-    assert!(settings.permissions.deny.contains(&"Read(./.env)".to_string()));
+    assert!(settings
+        .permissions
+        .deny
+        .contains(&"Read(./.env)".to_string()));
 
     // Test permission checking - patterns are stored, checking logic may vary
     println!("\nPermission check test:");
     println!("  is_denied('.env'): {}", loader.is_denied(".env"));
-    println!("  is_denied('README.md'): {}", loader.is_denied("README.md"));
+    println!(
+        "  is_denied('README.md'): {}",
+        loader.is_denied("README.md")
+    );
 
-    println!("\n✅ Settings system: PASSED ({} ms)", start.elapsed().as_millis());
+    println!(
+        "\n✅ Settings system: PASSED ({} ms)",
+        start.elapsed().as_millis()
+    );
 }
 
 // =============================================================================
@@ -512,12 +572,24 @@ async fn test_11_context_builder_integration() {
     let rules_dir = claude_dir.join("rules");
     fs::create_dir_all(&rules_dir).await.unwrap();
 
-    fs::write(dir.path().join("CLAUDE.md"), "# Main Project\nCore instructions here.")
-        .await.unwrap();
-    fs::write(dir.path().join("CLAUDE.local.md"), "# Local\nPrivate settings.")
-        .await.unwrap();
-    fs::write(rules_dir.join("coding.md"), "# Coding Standards\nFollow best practices.")
-        .await.unwrap();
+    fs::write(
+        dir.path().join("CLAUDE.md"),
+        "# Main Project\nCore instructions here.",
+    )
+    .await
+    .unwrap();
+    fs::write(
+        dir.path().join("CLAUDE.local.md"),
+        "# Local\nPrivate settings.",
+    )
+    .await
+    .unwrap();
+    fs::write(
+        rules_dir.join("coding.md"),
+        "# Coding Standards\nFollow best practices.",
+    )
+    .await
+    .unwrap();
 
     // Build context
     let context = ContextBuilder::new()
@@ -529,13 +601,19 @@ async fn test_11_context_builder_integration() {
     let static_ctx = context.static_context();
     println!("Static context loaded:");
     println!("  Claude MD length: {} chars", static_ctx.claude_md.len());
-    println!("  Preview: {}...", &static_ctx.claude_md[..100.min(static_ctx.claude_md.len())]);
+    println!(
+        "  Preview: {}...",
+        &static_ctx.claude_md[..100.min(static_ctx.claude_md.len())]
+    );
 
     assert!(static_ctx.claude_md.contains("Main Project"));
     assert!(static_ctx.claude_md.contains("Local"));
     assert!(static_ctx.claude_md.contains("Coding Standards"));
 
-    println!("\n✅ Context builder: PASSED ({} ms)", start.elapsed().as_millis());
+    println!(
+        "\n✅ Context builder: PASSED ({} ms)",
+        start.elapsed().as_millis()
+    );
 }
 
 // =============================================================================
@@ -553,8 +631,12 @@ async fn test_12_full_agent_with_tools_and_skills() {
     let dir = tempdir().unwrap();
 
     // Create test files
-    fs::write(dir.path().join("data.json"), r#"{"users": 42, "active": true}"#)
-        .await.unwrap();
+    fs::write(
+        dir.path().join("data.json"),
+        r#"{"users": 42, "active": true}"#,
+    )
+    .await
+    .unwrap();
 
     // Create agent with skills and file tools
     let agent = Agent::builder()
@@ -584,7 +666,10 @@ async fn test_12_full_agent_with_tools_and_skills() {
 
     assert!(result.text().contains("42") || result.text().contains("users"));
 
-    println!("\n✅ Full agent integration: PASSED ({} ms)", start.elapsed().as_millis());
+    println!(
+        "\n✅ Full agent integration: PASSED ({} ms)",
+        start.elapsed().as_millis()
+    );
 }
 
 #[tokio::test]
@@ -611,7 +696,10 @@ async fn test_13_agent_with_bash_tool() {
     println!("Result:\n{}", result.text());
     assert!(result.text().contains("Hello") || result.text().contains("Bash"));
 
-    println!("\n✅ Bash tool: PASSED ({} ms)", start.elapsed().as_millis());
+    println!(
+        "\n✅ Bash tool: PASSED ({} ms)",
+        start.elapsed().as_millis()
+    );
 }
 
 // =============================================================================
@@ -643,7 +731,10 @@ async fn test_14_cloud_provider_selection() {
     println!("  - Vertex (GCP)");
     println!("  - Foundry (Azure)");
 
-    println!("\n✅ Cloud provider selection: PASSED ({} ms)", start.elapsed().as_millis());
+    println!(
+        "\n✅ Cloud provider selection: PASSED ({} ms)",
+        start.elapsed().as_millis()
+    );
 }
 
 #[tokio::test]
@@ -669,7 +760,10 @@ async fn test_15_model_configuration() {
     assert!(client.config().model.contains("sonnet"));
     assert!(client.config().small_model.contains("haiku"));
 
-    println!("\n✅ Model configuration: PASSED ({} ms)", start.elapsed().as_millis());
+    println!(
+        "\n✅ Model configuration: PASSED ({} ms)",
+        start.elapsed().as_millis()
+    );
 }
 
 // =============================================================================

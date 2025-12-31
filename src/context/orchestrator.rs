@@ -199,11 +199,12 @@ impl ContextOrchestrator {
             })?;
 
         // Load the full skill
-        let skill = loader.load_skill(name).await.map_err(|e| {
-            ContextError::Source {
+        let skill = loader
+            .load_skill(name)
+            .await
+            .map_err(|e| ContextError::Source {
                 message: e.to_string(),
-            }
-        })?;
+            })?;
 
         // Check token budget (rough estimate)
         let skill_tokens = (skill.content.len() / 4) as u64;
@@ -228,10 +229,7 @@ impl ContextOrchestrator {
     /// Evaluate rules for the current file
     ///
     /// Returns rule content for matching rules.
-    pub async fn evaluate_rules(
-        &mut self,
-        loader: &dyn RuleLoader,
-    ) -> ContextResult<Vec<String>> {
+    pub async fn evaluate_rules(&mut self, loader: &dyn RuleLoader) -> ContextResult<Vec<String>> {
         let file_path = match &self.current_file {
             Some(p) => p.clone(),
             None => return Ok(Vec::new()),
@@ -255,11 +253,12 @@ impl ContextOrchestrator {
             }
 
             // Load and cache
-            let content = loader.load_rule(&name).await.map_err(|e| {
-                ContextError::Source {
+            let content = loader
+                .load_rule(&name)
+                .await
+                .map_err(|e| ContextError::Source {
                     message: e.to_string(),
-                }
-            })?;
+                })?;
 
             let loaded = LoadedRule::new(rule_index.clone(), content.clone());
             self.rules_engine.cache_rule(loaded);
@@ -305,17 +304,27 @@ impl ContextOrchestrator {
 #[async_trait::async_trait]
 pub trait SkillLoader: Send + Sync {
     /// Load the full skill definition by name
-    async fn load_skill(&self, name: &str) -> Result<SkillDefinition, Box<dyn std::error::Error + Send + Sync>>;
+    async fn load_skill(
+        &self,
+        name: &str,
+    ) -> Result<SkillDefinition, Box<dyn std::error::Error + Send + Sync>>;
 
     /// Load a reference file for a skill
-    async fn load_reference(&self, skill: &str, path: &str) -> Result<String, Box<dyn std::error::Error + Send + Sync>>;
+    async fn load_reference(
+        &self,
+        skill: &str,
+        path: &str,
+    ) -> Result<String, Box<dyn std::error::Error + Send + Sync>>;
 }
 
 /// Trait for loading rule content
 #[async_trait::async_trait]
 pub trait RuleLoader: Send + Sync {
     /// Load the full rule content by name
-    async fn load_rule(&self, name: &str) -> Result<String, Box<dyn std::error::Error + Send + Sync>>;
+    async fn load_rule(
+        &self,
+        name: &str,
+    ) -> Result<String, Box<dyn std::error::Error + Send + Sync>>;
 }
 
 #[cfg(test)]

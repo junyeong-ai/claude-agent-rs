@@ -64,7 +64,11 @@ pub struct SkillDefinition {
 
 impl SkillDefinition {
     /// Create a new skill definition
-    pub fn new(name: impl Into<String>, description: impl Into<String>, content: impl Into<String>) -> Self {
+    pub fn new(
+        name: impl Into<String>,
+        description: impl Into<String>,
+        content: impl Into<String>,
+    ) -> Self {
         Self {
             name: name.into(),
             description: description.into(),
@@ -103,7 +107,10 @@ impl SkillDefinition {
     }
 
     /// Set allowed tools for this skill (security boundary)
-    pub fn with_allowed_tools(mut self, tools: impl IntoIterator<Item = impl Into<String>>) -> Self {
+    pub fn with_allowed_tools(
+        mut self,
+        tools: impl IntoIterator<Item = impl Into<String>>,
+    ) -> Self {
         self.allowed_tools = tools.into_iter().map(Into::into).collect();
         self
     }
@@ -148,9 +155,9 @@ impl SkillDefinition {
     /// Check if this skill matches a trigger
     pub fn matches_trigger(&self, input: &str) -> bool {
         // Check if any trigger pattern matches
-        self.triggers.iter().any(|t| {
-            input.to_lowercase().contains(&t.to_lowercase())
-        })
+        self.triggers
+            .iter()
+            .any(|t| input.to_lowercase().contains(&t.to_lowercase()))
     }
 }
 
@@ -259,7 +266,7 @@ mod tests {
         let skill = SkillDefinition::new("git-helper", "Git commands", "Git: $ARGUMENTS")
             .with_allowed_tools(["Bash(git:*)", "Read"]);
 
-        assert!(skill.is_tool_allowed("Bash"));  // Base tool name
+        assert!(skill.is_tool_allowed("Bash")); // Base tool name
         assert!(skill.is_tool_allowed("Read"));
         assert!(!skill.is_tool_allowed("Write"));
     }

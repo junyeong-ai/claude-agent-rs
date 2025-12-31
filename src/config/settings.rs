@@ -118,16 +118,20 @@ impl SettingsLoader {
 
     /// Check if a pattern should be denied.
     pub fn is_denied(&self, pattern: &str) -> bool {
-        self.settings.permissions.deny.iter().any(|p| {
-            Self::matches_pattern(p, pattern)
-        })
+        self.settings
+            .permissions
+            .deny
+            .iter()
+            .any(|p| Self::matches_pattern(p, pattern))
     }
 
     /// Check if a pattern is allowed (overrides deny).
     pub fn is_allowed(&self, pattern: &str) -> bool {
-        self.settings.permissions.allow.iter().any(|p| {
-            Self::matches_pattern(p, pattern)
-        })
+        self.settings
+            .permissions
+            .allow
+            .iter()
+            .any(|p| Self::matches_pattern(p, pattern))
     }
 
     /// Match a permission pattern against a target.

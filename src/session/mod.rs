@@ -7,15 +7,15 @@ pub mod persistence;
 pub mod state;
 
 // Re-exports
+pub use crate::types::TokenUsage;
 pub use cache::SessionCacheManager;
 pub use compact::{CompactExecutor, CompactResult, CompactStrategy};
 pub use manager::SessionManager;
 pub use persistence::{MemoryPersistence, Persistence};
 pub use state::{
-    MessageId, MessageMetadata, PermissionPolicy, Session, SessionConfig, SessionId, SessionMessage,
-    SessionMode, SessionState,
+    MessageId, MessageMetadata, PermissionPolicy, Session, SessionConfig, SessionId,
+    SessionMessage, SessionMode, SessionState,
 };
-pub use crate::types::TokenUsage;
 
 use thiserror::Error;
 

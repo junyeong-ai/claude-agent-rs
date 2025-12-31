@@ -53,7 +53,10 @@ impl VertexStrategy {
 
         Some(Self {
             project_id,
-            region: env_with_fallbacks_or(&["CLOUD_ML_REGION", "GOOGLE_CLOUD_REGION"], "us-central1"),
+            region: env_with_fallbacks_or(
+                &["CLOUD_ML_REGION", "GOOGLE_CLOUD_REGION"],
+                "us-central1",
+            ),
             base_url: env_opt("ANTHROPIC_VERTEX_BASE_URL"),
             skip_auth: env_bool("CLAUDE_CODE_SKIP_VERTEX_AUTH"),
             access_token: None,
@@ -121,19 +124,14 @@ impl AuthStrategy for VertexStrategy {
     }
 
     fn extra_headers(&self) -> Vec<(String, String)> {
-        vec![
-            ("x-goog-user-project".to_string(), self.project_id.clone()),
-        ]
+        vec![("x-goog-user-project".to_string(), self.project_id.clone())]
     }
 
     fn url_query_string(&self) -> Option<String> {
         None
     }
 
-    fn prepare_system_prompt(
-        &self,
-        existing: Option<SystemPrompt>,
-    ) -> Option<SystemPrompt> {
+    fn prepare_system_prompt(&self, existing: Option<SystemPrompt>) -> Option<SystemPrompt> {
         // Vertex AI doesn't require special system prompt handling
         existing
     }
@@ -185,6 +183,8 @@ mod tests {
     fn test_vertex_extra_headers() {
         let strategy = VertexStrategy::new("my-project", "us-central1");
         let headers = strategy.extra_headers();
-        assert!(headers.iter().any(|(k, v)| k == "x-goog-user-project" && v == "my-project"));
+        assert!(headers
+            .iter()
+            .any(|(k, v)| k == "x-goog-user-project" && v == "my-project"));
     }
 }

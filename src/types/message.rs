@@ -28,9 +28,7 @@ impl Message {
     pub fn user(text: impl Into<String>) -> Self {
         Self {
             role: Role::User,
-            content: vec![ContentBlock::Text {
-                text: text.into(),
-            }],
+            content: vec![ContentBlock::Text { text: text.into() }],
         }
     }
 
@@ -38,9 +36,7 @@ impl Message {
     pub fn assistant(text: impl Into<String>) -> Self {
         Self {
             role: Role::Assistant,
-            content: vec![ContentBlock::Text {
-                text: text.into(),
-            }],
+            content: vec![ContentBlock::Text { text: text.into() }],
         }
     }
 

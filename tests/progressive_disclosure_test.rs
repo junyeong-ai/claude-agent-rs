@@ -5,7 +5,9 @@
 //! Run: cargo test --test progressive_disclosure_test -- --nocapture
 
 use claude_agent::{
-    skills::{CommandLoader, ExecutionMode, SkillDefinition, SkillExecutor, SkillRegistry, SkillTool},
+    skills::{
+        CommandLoader, ExecutionMode, SkillDefinition, SkillExecutor, SkillRegistry, SkillTool,
+    },
     tools::{Tool, ToolRegistry, ToolResult},
     Agent, ToolAccess,
 };
@@ -24,7 +26,10 @@ mod skill_tool_tests {
         let registry = ToolRegistry::default_tools(&ToolAccess::All, None);
 
         // Skill tool should be in the default registry
-        assert!(registry.contains("Skill"), "Skill tool should be in default registry");
+        assert!(
+            registry.contains("Skill"),
+            "Skill tool should be in default registry"
+        );
     }
 
     #[tokio::test]
@@ -189,7 +194,9 @@ Execute the appropriate docker-compose command using Bash.
         ));
 
         let executor = SkillExecutor::new(skill_registry);
-        let result = executor.execute("docker-compose", Some("start the web service")).await;
+        let result = executor
+            .execute("docker-compose", Some("start the web service"))
+            .await;
 
         assert!(result.success);
         assert!(result.output.contains("docker-compose"));
@@ -202,9 +209,13 @@ Execute the appropriate docker-compose command using Bash.
         let mut skill_registry = SkillRegistry::new();
 
         skill_registry.register(
-            SkillDefinition::new("rust-analyzer", "Rust code analysis", "Analyze Rust: $ARGUMENTS")
-                .with_trigger("rust")
-                .with_trigger("cargo"),
+            SkillDefinition::new(
+                "rust-analyzer",
+                "Rust code analysis",
+                "Analyze Rust: $ARGUMENTS",
+            )
+            .with_trigger("rust")
+            .with_trigger("cargo"),
         );
 
         skill_registry.register(
@@ -251,13 +262,19 @@ mod execution_mode_tests {
     #[tokio::test]
     async fn test_inline_prompt_mode() {
         let mut registry = SkillRegistry::new();
-        registry.register(SkillDefinition::new("analyze", "Analyze code", "Analyze: $ARGUMENTS"));
+        registry.register(SkillDefinition::new(
+            "analyze",
+            "Analyze code",
+            "Analyze: $ARGUMENTS",
+        ));
 
         let executor = SkillExecutor::new(registry).with_mode(ExecutionMode::InlinePrompt);
         let result = executor.execute("analyze", Some("main.rs")).await;
 
         assert!(result.success);
-        assert!(result.output.contains("Execute the following skill instructions"));
+        assert!(result
+            .output
+            .contains("Execute the following skill instructions"));
         println!("Inline prompt output:\n{}", result.output);
     }
 }
@@ -304,10 +321,11 @@ mod live_agent_tests {
         // Simulate atlassian-cli skill
         let agent = Agent::builder()
             .from_claude_cli()
-            .skill(SkillDefinition::new(
-                "jira",
-                "Interact with Jira issues",
-                r#"
+            .skill(
+                SkillDefinition::new(
+                    "jira",
+                    "Interact with Jira issues",
+                    r#"
 You can interact with Jira using bash commands:
 - List issues: echo "PROJ-123: Fix login bug (Open)"
 - Create issue: echo "Created PROJ-456"
@@ -316,7 +334,10 @@ User request: $ARGUMENTS
 
 Execute the simulated Jira command.
 "#,
-            ).with_trigger("jira").with_trigger("issue"))
+                )
+                .with_trigger("jira")
+                .with_trigger("issue"),
+            )
             .tools(ToolAccess::only(["Skill", "Bash"]))
             .max_iterations(5)
             .build()

@@ -59,7 +59,10 @@ where
             if let Some(json_str) = line.strip_prefix("data: ") {
                 let json_str = json_str.trim();
                 // Skip [DONE] marker and ping events
-                if json_str == "[DONE]" || json_str.contains("\"type\": \"ping\"") || json_str.contains("\"type\":\"ping\"") {
+                if json_str == "[DONE]"
+                    || json_str.contains("\"type\": \"ping\"")
+                    || json_str.contains("\"type\":\"ping\"")
+                {
                     return None;
                 }
                 if !json_str.is_empty() {
@@ -124,17 +127,15 @@ where
 
             // Need more data from the underlying stream
             match this.inner.as_mut().poll_next(cx) {
-                Poll::Ready(Some(Ok(bytes))) => {
-                    match std::str::from_utf8(&bytes) {
-                        Ok(s) => this.buffer.push_str(s),
-                        Err(e) => {
-                            return Poll::Ready(Some(Err(crate::Error::Config(format!(
-                                "Invalid UTF-8 in stream: {}",
-                                e
-                            )))));
-                        }
+                Poll::Ready(Some(Ok(bytes))) => match std::str::from_utf8(&bytes) {
+                    Ok(s) => this.buffer.push_str(s),
+                    Err(e) => {
+                        return Poll::Ready(Some(Err(crate::Error::Config(format!(
+                            "Invalid UTF-8 in stream: {}",
+                            e
+                        )))));
                     }
-                }
+                },
                 Poll::Ready(Some(Err(e))) => {
                     return Poll::Ready(Some(Err(crate::Error::Network(e))));
                 }
@@ -224,7 +225,8 @@ data: {"type":"message_start","message":{"model":"claude-sonnet-4-5","id":"msg_1
         assert_eq!(json, Some("{\"foo\":\"bar\"}"));
 
         // With event type
-        let json = StreamParser::<EmptyStream>::extract_json_data("event: test\ndata: {\"foo\":\"bar\"}");
+        let json =
+            StreamParser::<EmptyStream>::extract_json_data("event: test\ndata: {\"foo\":\"bar\"}");
         assert_eq!(json, Some("{\"foo\":\"bar\"}"));
 
         // Skip [DONE]
@@ -232,7 +234,9 @@ data: {"type":"message_start","message":{"model":"claude-sonnet-4-5","id":"msg_1
         assert!(json.is_none());
 
         // Skip ping
-        let json = StreamParser::<EmptyStream>::extract_json_data("event: ping\ndata: {\"type\": \"ping\"}");
+        let json = StreamParser::<EmptyStream>::extract_json_data(
+            "event: ping\ndata: {\"type\": \"ping\"}",
+        );
         assert!(json.is_none());
     }
 }

@@ -247,7 +247,6 @@ pub enum PreparedCompact {
     },
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -306,9 +305,7 @@ mod tests {
     #[test]
     fn test_prepare_compact_not_needed() {
         let session = create_test_session(3);
-        let executor = CompactExecutor::new(
-            CompactStrategy::default().with_keep_recent(4),
-        );
+        let executor = CompactExecutor::new(CompactStrategy::default().with_keep_recent(4));
 
         let result = executor.prepare_compact(&session).unwrap();
         assert!(matches!(result, PreparedCompact::NotNeeded));
@@ -317,9 +314,7 @@ mod tests {
     #[test]
     fn test_prepare_compact_ready() {
         let session = create_test_session(10);
-        let executor = CompactExecutor::new(
-            CompactStrategy::default().with_keep_recent(4),
-        );
+        let executor = CompactExecutor::new(CompactStrategy::default().with_keep_recent(4));
 
         let result = executor.prepare_compact(&session).unwrap();
 
@@ -340,9 +335,7 @@ mod tests {
     #[test]
     fn test_apply_compact() {
         let mut session = create_test_session(10);
-        let executor = CompactExecutor::new(
-            CompactStrategy::default().with_keep_recent(4),
-        );
+        let executor = CompactExecutor::new(CompactStrategy::default().with_keep_recent(4));
 
         let prepared = executor.prepare_compact(&session).unwrap();
 
@@ -372,8 +365,7 @@ mod tests {
 
             // Check session state
             assert!(session.summary.is_some());
-            assert!(session.messages[0]
-                .content[0]
+            assert!(session.messages[0].content[0]
                 .as_text()
                 .unwrap()
                 .contains("summary"));

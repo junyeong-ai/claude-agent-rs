@@ -121,10 +121,10 @@ impl Usage {
     /// Estimated cost in USD (rough approximation)
     pub fn estimated_cost(&self, model: &str) -> f64 {
         let (input_rate, output_rate) = match model {
-            m if m.contains("opus") => (15.0, 75.0),    // per 1M tokens
-            m if m.contains("sonnet") => (3.0, 15.0),   // per 1M tokens
-            m if m.contains("haiku") => (0.25, 1.25),   // per 1M tokens
-            _ => (3.0, 15.0),                           // default to Sonnet
+            m if m.contains("opus") => (15.0, 75.0),  // per 1M tokens
+            m if m.contains("sonnet") => (3.0, 15.0), // per 1M tokens
+            m if m.contains("haiku") => (0.25, 1.25), // per 1M tokens
+            _ => (3.0, 15.0),                         // default to Sonnet
         };
 
         let input_cost = (self.input_tokens as f64 / 1_000_000.0) * input_rate;

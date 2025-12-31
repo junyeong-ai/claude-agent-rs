@@ -197,9 +197,9 @@ impl CommandLoader {
 
     /// Load a single command file.
     async fn load_file(&self, path: &Path, namespace: &str) -> Result<SlashCommand> {
-        let content = tokio::fs::read_to_string(path).await.map_err(|e| {
-            crate::Error::Config(format!("Failed to read command file: {}", e))
-        })?;
+        let content = tokio::fs::read_to_string(path)
+            .await
+            .map_err(|e| crate::Error::Config(format!("Failed to read command file: {}", e)))?;
 
         let file_name = path
             .file_stem()

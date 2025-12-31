@@ -38,9 +38,8 @@ impl ConversationContext {
         self.total_usage.input_tokens += usage.input_tokens;
         self.total_usage.output_tokens += usage.output_tokens;
         if let Some(cache_read) = usage.cache_read_input_tokens {
-            self.total_usage.cache_read_input_tokens = Some(
-                self.total_usage.cache_read_input_tokens.unwrap_or(0) + cache_read,
-            );
+            self.total_usage.cache_read_input_tokens =
+                Some(self.total_usage.cache_read_input_tokens.unwrap_or(0) + cache_read);
         }
     }
 

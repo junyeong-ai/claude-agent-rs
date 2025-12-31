@@ -109,7 +109,10 @@ mod oauth_strategy_tests {
 
         assert_eq!(strategy.config().system_prompt, "Custom Agent Prompt");
         assert_eq!(strategy.config().user_agent, "my-agent/2.0");
-        assert!(strategy.config().beta_flags.contains(&"custom-flag-2025".to_string()));
+        assert!(strategy
+            .config()
+            .beta_flags
+            .contains(&"custom-flag-2025".to_string()));
     }
 }
 
@@ -142,7 +145,10 @@ mod prompt_caching_tests {
         if let Some(SystemPrompt::Blocks(blocks)) = result {
             assert_eq!(blocks.len(), 1);
             assert!(blocks[0].text.contains("Claude Code"));
-            assert!(blocks[0].cache_control.is_some(), "Cache control should be set");
+            assert!(
+                blocks[0].cache_control.is_some(),
+                "Cache control should be set"
+            );
             assert_eq!(
                 blocks[0].cache_control.as_ref().unwrap().cache_type,
                 "ephemeral"
@@ -192,7 +198,10 @@ mod prompt_caching_tests {
 
         if let Some(SystemPrompt::Blocks(blocks)) = result {
             assert_eq!(blocks.len(), 2, "Should prepend to existing blocks");
-            assert!(blocks[0].text.contains("Claude Code"), "Claude Code should be first");
+            assert!(
+                blocks[0].text.contains("Claude Code"),
+                "Claude Code should be first"
+            );
             assert_eq!(blocks[1].text, "Existing block 1");
         } else {
             panic!("Expected Blocks variant");
@@ -290,10 +299,8 @@ mod request_preparation_tests {
     fn test_prepare_request_adds_system_and_metadata() {
         let strategy = create_test_oauth_strategy();
 
-        let request = CreateMessageRequest::new(
-            "claude-sonnet-4-5-20250929",
-            vec![Message::user("Hello")],
-        );
+        let request =
+            CreateMessageRequest::new("claude-sonnet-4-5-20250929", vec![Message::user("Hello")]);
 
         let prepared = strategy.prepare_request(request);
 
@@ -313,11 +320,9 @@ mod request_preparation_tests {
             extra: Default::default(),
         };
 
-        let request = CreateMessageRequest::new(
-            "claude-sonnet-4-5-20250929",
-            vec![Message::user("Hello")],
-        )
-        .with_metadata(custom_metadata);
+        let request =
+            CreateMessageRequest::new("claude-sonnet-4-5-20250929", vec![Message::user("Hello")])
+                .with_metadata(custom_metadata);
 
         let prepared = strategy.prepare_request(request);
 
@@ -330,10 +335,8 @@ mod request_preparation_tests {
     fn test_api_key_minimal_request() {
         let strategy = ApiKeyStrategy::new("test-key");
 
-        let request = CreateMessageRequest::new(
-            "claude-sonnet-4-5-20250929",
-            vec![Message::user("Hello")],
-        );
+        let request =
+            CreateMessageRequest::new("claude-sonnet-4-5-20250929", vec![Message::user("Hello")]);
 
         let prepared = strategy.prepare_request(request);
 
@@ -357,7 +360,10 @@ mod tool_registry_tests {
 
         // Core file tools
         assert!(registry.contains("Read"), "Read tool should be registered");
-        assert!(registry.contains("Write"), "Write tool should be registered");
+        assert!(
+            registry.contains("Write"),
+            "Write tool should be registered"
+        );
         assert!(registry.contains("Edit"), "Edit tool should be registered");
         assert!(registry.contains("Glob"), "Glob tool should be registered");
         assert!(registry.contains("Grep"), "Grep tool should be registered");
@@ -443,7 +449,10 @@ mod tool_registry_tests {
 
         let required = schema.get("required").expect("Should have required");
         assert!(
-            required.as_array().unwrap().contains(&serde_json::json!("file_path")),
+            required
+                .as_array()
+                .unwrap()
+                .contains(&serde_json::json!("file_path")),
             "file_path should be required"
         );
     }
@@ -472,13 +481,22 @@ mod tool_registry_tests {
         let props = schema.get("properties").expect("Should have properties");
 
         // Required properties
-        assert!(props.get("command").is_some(), "Bash should have command property");
-        assert!(props.get("timeout").is_some(), "Bash should have timeout property");
+        assert!(
+            props.get("command").is_some(),
+            "Bash should have command property"
+        );
+        assert!(
+            props.get("timeout").is_some(),
+            "Bash should have timeout property"
+        );
 
         // command should be required
         let required = schema.get("required").expect("Should have required");
         assert!(
-            required.as_array().unwrap().contains(&serde_json::json!("command")),
+            required
+                .as_array()
+                .unwrap()
+                .contains(&serde_json::json!("command")),
             "command should be required"
         );
     }
@@ -588,9 +606,12 @@ mod tool_execution_tests {
     async fn test_read_tool_execution() {
         let dir = tempdir().unwrap();
         let file_path = dir.path().join("test.txt");
-        fs::write(&file_path, "Hello, World!\nLine 2").await.unwrap();
+        fs::write(&file_path, "Hello, World!\nLine 2")
+            .await
+            .unwrap();
 
-        let registry = ToolRegistry::default_tools(&ToolAccess::All, Some(dir.path().to_path_buf()));
+        let registry =
+            ToolRegistry::default_tools(&ToolAccess::All, Some(dir.path().to_path_buf()));
 
         let result = registry
             .execute(
@@ -615,7 +636,8 @@ mod tool_execution_tests {
         let dir = tempdir().unwrap();
         let file_path = dir.path().join("new_file.txt");
 
-        let registry = ToolRegistry::default_tools(&ToolAccess::All, Some(dir.path().to_path_buf()));
+        let registry =
+            ToolRegistry::default_tools(&ToolAccess::All, Some(dir.path().to_path_buf()));
 
         let result = registry
             .execute(
@@ -635,11 +657,18 @@ mod tool_execution_tests {
     #[tokio::test]
     async fn test_glob_tool_execution() {
         let dir = tempdir().unwrap();
-        fs::write(dir.path().join("file1.txt"), "content").await.unwrap();
-        fs::write(dir.path().join("file2.txt"), "content").await.unwrap();
-        fs::write(dir.path().join("file3.rs"), "content").await.unwrap();
+        fs::write(dir.path().join("file1.txt"), "content")
+            .await
+            .unwrap();
+        fs::write(dir.path().join("file2.txt"), "content")
+            .await
+            .unwrap();
+        fs::write(dir.path().join("file3.rs"), "content")
+            .await
+            .unwrap();
 
-        let registry = ToolRegistry::default_tools(&ToolAccess::All, Some(dir.path().to_path_buf()));
+        let registry =
+            ToolRegistry::default_tools(&ToolAccess::All, Some(dir.path().to_path_buf()));
 
         let result = registry
             .execute(
@@ -664,11 +693,15 @@ mod tool_execution_tests {
     #[tokio::test]
     async fn test_grep_tool_execution() {
         let dir = tempdir().unwrap();
-        fs::write(dir.path().join("file.txt"), "Hello World\nfoo bar\nWorld Hello")
-            .await
-            .unwrap();
+        fs::write(
+            dir.path().join("file.txt"),
+            "Hello World\nfoo bar\nWorld Hello",
+        )
+        .await
+        .unwrap();
 
-        let registry = ToolRegistry::default_tools(&ToolAccess::All, Some(dir.path().to_path_buf()));
+        let registry =
+            ToolRegistry::default_tools(&ToolAccess::All, Some(dir.path().to_path_buf()));
 
         let result = registry
             .execute(
@@ -694,7 +727,8 @@ mod tool_execution_tests {
         let file_path = dir.path().join("edit_test.txt");
         fs::write(&file_path, "Hello OLD World").await.unwrap();
 
-        let registry = ToolRegistry::default_tools(&ToolAccess::All, Some(dir.path().to_path_buf()));
+        let registry =
+            ToolRegistry::default_tools(&ToolAccess::All, Some(dir.path().to_path_buf()));
 
         let result = registry
             .execute(
@@ -820,11 +854,7 @@ mod progressive_disclosure_tests {
         let tool_count = registry.names().len();
 
         // Should have reasonable number of tools for progressive disclosure
-        assert!(
-            tool_count >= 5,
-            "Too few tools registered: {}",
-            tool_count
-        );
+        assert!(tool_count >= 5, "Too few tools registered: {}", tool_count);
         assert!(
             tool_count <= 20,
             "Too many tools may hurt progressive disclosure: {}",

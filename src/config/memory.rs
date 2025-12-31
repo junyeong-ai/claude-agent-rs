@@ -150,7 +150,9 @@ mod tests {
         let provider = MemoryConfigProvider::new();
 
         // Set typed value
-        ConfigProviderExt::set(&provider, "count", &42i32).await.unwrap();
+        ConfigProviderExt::set(&provider, "count", &42i32)
+            .await
+            .unwrap();
 
         // Get typed value
         let count: Option<i32> = ConfigProviderExt::get(&provider, "count").await.unwrap();

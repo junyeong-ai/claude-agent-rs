@@ -98,9 +98,9 @@ impl RuleIndex {
     pub fn matches_path(&self, file_path: &Path) -> bool {
         match &self.paths {
             None => true, // No path restriction = applies to all
-            Some(patterns) => patterns.iter().any(|pattern| {
-                Self::glob_match(pattern, file_path)
-            }),
+            Some(patterns) => patterns
+                .iter()
+                .any(|pattern| Self::glob_match(pattern, file_path)),
         }
     }
 
@@ -225,8 +225,7 @@ mod tests {
 
     #[test]
     fn test_path_matching() {
-        let rule = RuleIndex::new("rust")
-            .with_paths(vec!["**/*.rs".into()]);
+        let rule = RuleIndex::new("rust").with_paths(vec!["**/*.rs".into()]);
 
         assert!(rule.matches_path(Path::new("src/lib.rs")));
         assert!(rule.matches_path(Path::new("src/context/mod.rs")));

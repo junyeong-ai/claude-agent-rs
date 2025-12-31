@@ -80,7 +80,6 @@ impl Default for ExitPlanModeTool {
     }
 }
 
-
 #[async_trait]
 impl Tool for ExitPlanModeTool {
     fn name(&self) -> &str {

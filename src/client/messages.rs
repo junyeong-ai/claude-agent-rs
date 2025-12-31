@@ -252,10 +252,9 @@ mod tests {
 
     #[test]
     fn test_create_request() {
-        let request =
-            CreateMessageRequest::new("claude-sonnet-4-5", vec![Message::user("Hello")])
-                .with_max_tokens(1000)
-                .with_temperature(0.7);
+        let request = CreateMessageRequest::new("claude-sonnet-4-5", vec![Message::user("Hello")])
+            .with_max_tokens(1000)
+            .with_temperature(0.7);
 
         assert_eq!(request.model, "claude-sonnet-4-5");
         assert_eq!(request.max_tokens, 1000);

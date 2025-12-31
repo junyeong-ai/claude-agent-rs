@@ -100,7 +100,6 @@ impl SkillRouter {
         Self { mode }
     }
 
-
     /// Route user input to a skill
     pub fn route(&self, input: &str, skill_indices: &[SkillIndex]) -> RoutingStrategy {
         match &self.mode {
@@ -195,7 +194,9 @@ mod tests {
         let skills = test_skills();
 
         let result = router.route("/commit", &skills);
-        assert!(matches!(result, RoutingStrategy::Explicit { skill_name } if skill_name == "commit"));
+        assert!(
+            matches!(result, RoutingStrategy::Explicit { skill_name } if skill_name == "commit")
+        );
     }
 
     #[test]

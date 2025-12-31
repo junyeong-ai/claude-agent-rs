@@ -52,7 +52,11 @@ impl McpManager {
 
     /// Add and connect to an MCP server
     #[cfg(feature = "mcp")]
-    pub async fn add_server(&self, name: impl Into<String>, config: McpServerConfig) -> McpResult<()> {
+    pub async fn add_server(
+        &self,
+        name: impl Into<String>,
+        config: McpServerConfig,
+    ) -> McpResult<()> {
         let name = name.into();
 
         // Check if server already exists
@@ -78,7 +82,11 @@ impl McpManager {
 
     /// Add and connect to an MCP server (stub when feature disabled)
     #[cfg(not(feature = "mcp"))]
-    pub async fn add_server(&self, _name: impl Into<String>, _config: McpServerConfig) -> McpResult<()> {
+    pub async fn add_server(
+        &self,
+        _name: impl Into<String>,
+        _config: McpServerConfig,
+    ) -> McpResult<()> {
         Err(McpError::Protocol {
             message: "MCP feature not enabled".to_string(),
         })
@@ -158,20 +166,30 @@ impl McpManager {
 
     /// Call a tool by its qualified name (`mcp__{server}__{tool}`)
     #[cfg(feature = "mcp")]
-    pub async fn call_tool(&self, qualified_name: &str, arguments: serde_json::Value) -> McpResult<McpToolResult> {
+    pub async fn call_tool(
+        &self,
+        qualified_name: &str,
+        arguments: serde_json::Value,
+    ) -> McpResult<McpToolResult> {
         let (server_name, tool_name) = parse_qualified_name(qualified_name)?;
 
         let servers = self.servers.read().await;
-        let client = servers.get(&server_name).ok_or_else(|| McpError::ServerNotFound {
-            name: server_name.clone(),
-        })?;
+        let client = servers
+            .get(&server_name)
+            .ok_or_else(|| McpError::ServerNotFound {
+                name: server_name.clone(),
+            })?;
 
         client.call_tool(&tool_name, arguments).await
     }
 
     /// Call a tool by its qualified name (stub when feature disabled)
     #[cfg(not(feature = "mcp"))]
-    pub async fn call_tool(&self, _qualified_name: &str, _arguments: serde_json::Value) -> McpResult<McpToolResult> {
+    pub async fn call_tool(
+        &self,
+        _qualified_name: &str,
+        _arguments: serde_json::Value,
+    ) -> McpResult<McpToolResult> {
         Err(McpError::Protocol {
             message: "MCP feature not enabled".to_string(),
         })
@@ -202,16 +220,22 @@ impl McpManager {
     #[cfg(feature = "mcp")]
     pub async fn read_resource(&self, server_name: &str, uri: &str) -> McpResult<Vec<McpContent>> {
         let servers = self.servers.read().await;
-        let client = servers.get(server_name).ok_or_else(|| McpError::ServerNotFound {
-            name: server_name.to_string(),
-        })?;
+        let client = servers
+            .get(server_name)
+            .ok_or_else(|| McpError::ServerNotFound {
+                name: server_name.to_string(),
+            })?;
 
         client.read_resource(uri).await
     }
 
     /// Read a resource from a specific server (stub when feature disabled)
     #[cfg(not(feature = "mcp"))]
-    pub async fn read_resource(&self, _server_name: &str, _uri: &str) -> McpResult<Vec<McpContent>> {
+    pub async fn read_resource(
+        &self,
+        _server_name: &str,
+        _uri: &str,
+    ) -> McpResult<Vec<McpContent>> {
         Err(McpError::Protocol {
             message: "MCP feature not enabled".to_string(),
         })

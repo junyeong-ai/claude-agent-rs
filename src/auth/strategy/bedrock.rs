@@ -99,9 +99,9 @@ impl BedrockStrategy {
 
     /// Get the base URL for Bedrock API.
     pub fn get_base_url(&self) -> String {
-        self.base_url.clone().unwrap_or_else(|| {
-            format!("https://bedrock-runtime.{}.amazonaws.com", self.region)
-        })
+        self.base_url
+            .clone()
+            .unwrap_or_else(|| format!("https://bedrock-runtime.{}.amazonaws.com", self.region))
     }
 
     /// Get the region.
@@ -134,10 +134,7 @@ impl AuthStrategy for BedrockStrategy {
         None
     }
 
-    fn prepare_system_prompt(
-        &self,
-        existing: Option<SystemPrompt>,
-    ) -> Option<SystemPrompt> {
+    fn prepare_system_prompt(&self, existing: Option<SystemPrompt>) -> Option<SystemPrompt> {
         // Bedrock doesn't require special system prompt handling
         existing
     }
@@ -174,8 +171,8 @@ mod tests {
             "https://bedrock-runtime.us-east-1.amazonaws.com"
         );
 
-        let custom = BedrockStrategy::new("us-east-1")
-            .with_base_url("https://my-gateway.com/bedrock");
+        let custom =
+            BedrockStrategy::new("us-east-1").with_base_url("https://my-gateway.com/bedrock");
         assert_eq!(custom.get_base_url(), "https://my-gateway.com/bedrock");
     }
 

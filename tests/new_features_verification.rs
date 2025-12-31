@@ -11,7 +11,7 @@
 //! Run: cargo test --test new_features_verification -- --nocapture
 
 use claude_agent::{
-    auth::{BedrockStrategy, VertexStrategy, AuthStrategy},
+    auth::{AuthStrategy, BedrockStrategy, VertexStrategy},
     client::{ClientBuilder, CloudProvider},
     context::{ContextBuilder, MemoryLoader},
 };
@@ -43,8 +43,8 @@ mod bedrock_tests {
 
     #[test]
     fn test_bedrock_custom_base_url() {
-        let strategy = BedrockStrategy::new("us-east-1")
-            .with_base_url("https://my-gateway.com/bedrock");
+        let strategy =
+            BedrockStrategy::new("us-east-1").with_base_url("https://my-gateway.com/bedrock");
         assert_eq!(strategy.get_base_url(), "https://my-gateway.com/bedrock");
     }
 
@@ -57,8 +57,10 @@ mod bedrock_tests {
 
     #[test]
     fn test_bedrock_with_credentials() {
-        let strategy = BedrockStrategy::new("us-east-1")
-            .with_credentials("AKIAIOSFODNN7EXAMPLE", "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY");
+        let strategy = BedrockStrategy::new("us-east-1").with_credentials(
+            "AKIAIOSFODNN7EXAMPLE",
+            "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY",
+        );
         assert_eq!(strategy.name(), "bedrock");
     }
 
@@ -98,8 +100,7 @@ mod vertex_tests {
 
     #[test]
     fn test_vertex_custom_base_url() {
-        let strategy = VertexStrategy::new("p", "r")
-            .with_base_url("https://my-gateway.com/vertex");
+        let strategy = VertexStrategy::new("p", "r").with_base_url("https://my-gateway.com/vertex");
         assert_eq!(strategy.get_base_url(), "https://my-gateway.com/vertex");
     }
 
@@ -111,8 +112,7 @@ mod vertex_tests {
 
     #[test]
     fn test_vertex_with_access_token() {
-        let strategy = VertexStrategy::new("p", "r")
-            .with_access_token("ya29.example-token");
+        let strategy = VertexStrategy::new("p", "r").with_access_token("ya29.example-token");
         let (name, value) = strategy.auth_header();
         assert_eq!(name, "Authorization");
         assert!(value.starts_with("Bearer "));
@@ -123,7 +123,9 @@ mod vertex_tests {
     fn test_vertex_extra_headers() {
         let strategy = VertexStrategy::new("my-project", "us-central1");
         let headers = strategy.extra_headers();
-        assert!(headers.iter().any(|(k, v)| k == "x-goog-user-project" && v == "my-project"));
+        assert!(headers
+            .iter()
+            .any(|(k, v)| k == "x-goog-user-project" && v == "my-project"));
     }
 }
 
@@ -149,15 +151,13 @@ mod cloud_provider_tests {
 
     #[test]
     fn test_client_builder_bedrock() {
-        let _builder = ClientBuilder::default()
-            .bedrock("us-west-2");
+        let _builder = ClientBuilder::default().bedrock("us-west-2");
         // Just verify it doesn't panic
     }
 
     #[test]
     fn test_client_builder_vertex() {
-        let _builder = ClientBuilder::default()
-            .vertex("my-project", "us-central1");
+        let _builder = ClientBuilder::default().vertex("my-project", "us-central1");
     }
 
     #[test]
@@ -165,8 +165,7 @@ mod cloud_provider_tests {
         let strategy = BedrockStrategy::new("eu-west-1")
             .with_base_url("https://proxy.example.com")
             .skip_auth();
-        let _builder = ClientBuilder::default()
-            .bedrock_strategy(strategy);
+        let _builder = ClientBuilder::default().bedrock_strategy(strategy);
     }
 
     #[test]
@@ -174,8 +173,7 @@ mod cloud_provider_tests {
         let strategy = VertexStrategy::new("project", "region")
             .with_access_token("token")
             .skip_auth();
-        let _builder = ClientBuilder::default()
-            .vertex_strategy(strategy);
+        let _builder = ClientBuilder::default().vertex_strategy(strategy);
     }
 }
 
@@ -240,12 +238,18 @@ mod memory_loader_tests {
         fs::write(rules_dir.join("rust.md"), "# Rust Rules\nUse snake_case")
             .await
             .unwrap();
-        fs::write(rules_dir.join("security.md"), "# Security\nNo hardcoded secrets")
-            .await
-            .unwrap();
-        fs::write(rules_dir.join("typescript.md"), "# TypeScript\nUse strict mode")
-            .await
-            .unwrap();
+        fs::write(
+            rules_dir.join("security.md"),
+            "# Security\nNo hardcoded secrets",
+        )
+        .await
+        .unwrap();
+        fs::write(
+            rules_dir.join("typescript.md"),
+            "# TypeScript\nUse strict mode",
+        )
+        .await
+        .unwrap();
 
         let mut loader = MemoryLoader::new();
         let content = loader.load_all(dir.path()).await.unwrap();
@@ -265,9 +269,12 @@ mod memory_loader_tests {
         // Create docs directory with imported file
         let docs_dir = dir.path().join("docs");
         fs::create_dir_all(&docs_dir).await.unwrap();
-        fs::write(docs_dir.join("guidelines.md"), "## Guidelines\nFollow these rules")
-            .await
-            .unwrap();
+        fs::write(
+            docs_dir.join("guidelines.md"),
+            "## Guidelines\nFollow these rules",
+        )
+        .await
+        .unwrap();
 
         // Create main CLAUDE.md with import
         fs::write(
@@ -414,9 +421,12 @@ mod context_builder_tests {
     #[tokio::test]
     async fn test_context_builder_with_memory_loader() {
         let dir = tempdir().unwrap();
-        fs::write(dir.path().join("CLAUDE.md"), "# Project Context\nImportant info")
-            .await
-            .unwrap();
+        fs::write(
+            dir.path().join("CLAUDE.md"),
+            "# Project Context\nImportant info",
+        )
+        .await
+        .unwrap();
 
         let context = ContextBuilder::new()
             .load_memory_recursive(dir.path())
@@ -489,7 +499,7 @@ mod env_var_tests {
 
 mod live_tests {
     use super::*;
-    use claude_agent::{Client, Agent, ToolAccess};
+    use claude_agent::{Agent, Client, ToolAccess};
 
     #[tokio::test]
     #[ignore = "Requires CLI credentials"]
@@ -573,15 +583,14 @@ mod foundry_tests {
 
     #[test]
     fn test_foundry_custom_base_url() {
-        let strategy = FoundryStrategy::new("r", "d")
-            .with_base_url("https://my-gateway.com/foundry");
+        let strategy =
+            FoundryStrategy::new("r", "d").with_base_url("https://my-gateway.com/foundry");
         assert_eq!(strategy.get_base_url(), "https://my-gateway.com/foundry");
     }
 
     #[test]
     fn test_foundry_api_version() {
-        let strategy = FoundryStrategy::new("r", "d")
-            .with_api_version("2025-01-01");
+        let strategy = FoundryStrategy::new("r", "d").with_api_version("2025-01-01");
         let query = strategy.url_query_string();
         assert!(query.is_some());
         assert!(query.unwrap().contains("2025-01-01"));
@@ -743,8 +752,14 @@ mod settings_tests {
         let mut loader = SettingsLoader::new();
         let settings = loader.load(dir.path()).await.unwrap();
 
-        assert_eq!(settings.env.get("TEST_VAR"), Some(&"test_value".to_string()));
-        assert!(settings.permissions.deny.contains(&"Read(./.env)".to_string()));
+        assert_eq!(
+            settings.env.get("TEST_VAR"),
+            Some(&"test_value".to_string())
+        );
+        assert!(settings
+            .permissions
+            .deny
+            .contains(&"Read(./.env)".to_string()));
     }
 
     #[tokio::test]

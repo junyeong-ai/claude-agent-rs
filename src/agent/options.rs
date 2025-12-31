@@ -209,7 +209,10 @@ impl AgentBuilder {
 
     /// Get the configured skill executor.
     fn build_skill_executor(&mut self) -> SkillExecutor {
-        let registry = self.skill_registry.take().unwrap_or_else(SkillRegistry::with_defaults);
+        let registry = self
+            .skill_registry
+            .take()
+            .unwrap_or_else(SkillRegistry::with_defaults);
         SkillExecutor::new(registry)
     }
 
@@ -234,7 +237,11 @@ impl AgentBuilder {
         }
 
         let client = client_builder.build()?;
-        Ok(super::Agent::with_skills(client, self.options, skill_executor))
+        Ok(super::Agent::with_skills(
+            client,
+            self.options,
+            skill_executor,
+        ))
     }
 }
 

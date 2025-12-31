@@ -77,21 +77,21 @@ pub use auth::{
     OAuthConfigBuilder, OAuthStrategy, VertexStrategy,
 };
 pub use client::{Client, ClientBuilder, CloudProvider, Config};
+pub use context::{
+    ContextBuilder, ContextOrchestrator, MemoryContent, MemoryLoader, RoutingStrategy, RuleIndex,
+    SkillIndex, StaticContext,
+};
 pub use hooks::{Hook, HookContext, HookEvent, HookInput, HookManager, HookOutput};
 pub use permissions::{PermissionDecision, PermissionMode, PermissionPolicy, PermissionResult};
+pub use session::{
+    CompactExecutor, CompactStrategy, Session, SessionConfig, SessionId, SessionManager,
+};
 pub use skills::{
     CommandLoader, SkillDefinition, SkillExecutor, SkillRegistry, SkillResult, SkillSourceType,
     SkillTool, SlashCommand,
 };
 pub use tools::{Tool, ToolAccess, ToolRegistry, ToolResult};
 pub use types::{ContentBlock, Message, Role};
-pub use context::{
-    ContextBuilder, ContextOrchestrator, MemoryContent, MemoryLoader, RoutingStrategy, RuleIndex,
-    SkillIndex, StaticContext,
-};
-pub use session::{
-    CompactExecutor, CompactStrategy, SessionManager, Session, SessionConfig, SessionId,
-};
 
 /// Error type for claude-agent operations
 #[derive(Debug, thiserror::Error)]
@@ -190,9 +190,7 @@ pub async fn query(prompt: &str) -> Result<String> {
 /// # Ok(())
 /// # }
 /// ```
-pub async fn stream(
-    prompt: &str,
-) -> Result<impl futures::Stream<Item = Result<String>>> {
+pub async fn stream(prompt: &str) -> Result<impl futures::Stream<Item = Result<String>>> {
     let client = Client::from_env()?;
     client.stream(prompt).await
 }

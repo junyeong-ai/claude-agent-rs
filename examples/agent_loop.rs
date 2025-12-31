@@ -33,7 +33,9 @@ async fn main() -> Result<(), claude_agent::Error> {
             AgentEvent::ToolStart { name, .. } => {
                 println!("\n[Tool: {}]", name);
             }
-            AgentEvent::ToolEnd { output, is_error, .. } => {
+            AgentEvent::ToolEnd {
+                output, is_error, ..
+            } => {
                 if is_error {
                     println!("[Error: {}]", output);
                 } else {

@@ -38,7 +38,10 @@ impl ResourceManager {
 
     /// List resources from a specific server
     #[cfg(feature = "mcp")]
-    pub async fn list_from_server(&self, server_name: &str) -> McpResult<Vec<McpResourceDefinition>> {
+    pub async fn list_from_server(
+        &self,
+        server_name: &str,
+    ) -> McpResult<Vec<McpResourceDefinition>> {
         let all_resources = self.manager.list_resources().await;
         let resources: Vec<_> = all_resources
             .into_iter()
@@ -61,7 +64,10 @@ impl ResourceManager {
 
     /// List resources from a specific server (stub when feature disabled)
     #[cfg(not(feature = "mcp"))]
-    pub async fn list_from_server(&self, _server_name: &str) -> McpResult<Vec<McpResourceDefinition>> {
+    pub async fn list_from_server(
+        &self,
+        _server_name: &str,
+    ) -> McpResult<Vec<McpResourceDefinition>> {
         Ok(Vec::new())
     }
 
@@ -101,9 +107,8 @@ impl ResourceManager {
 
     /// Unsubscribe from resource changes
     pub fn unsubscribe(&mut self, server_name: &str, uri: &str) {
-        self.subscriptions.retain(|s| {
-            !(s.server_name == server_name && s.uri == uri)
-        });
+        self.subscriptions
+            .retain(|s| !(s.server_name == server_name && s.uri == uri));
     }
 
     /// Get active subscriptions
@@ -195,7 +200,10 @@ impl ResourceQuery {
         // Filter by MIME type
         if let Some(ref mime_type) = self.mime_type {
             results.retain(|(_, r)| {
-                r.mime_type.as_ref().map(|m| m == mime_type).unwrap_or(false)
+                r.mime_type
+                    .as_ref()
+                    .map(|m| m == mime_type)
+                    .unwrap_or(false)
             });
         }
 

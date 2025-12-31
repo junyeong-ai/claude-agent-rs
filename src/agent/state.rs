@@ -54,7 +54,6 @@ impl SubagentType {
     }
 }
 
-
 /// Definition of an agent that can be spawned
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AgentDefinition {
@@ -74,7 +73,11 @@ pub struct AgentDefinition {
 
 impl AgentDefinition {
     /// Create a new agent definition
-    pub fn new(subagent_type: SubagentType, description: impl Into<String>, prompt: impl Into<String>) -> Self {
+    pub fn new(
+        subagent_type: SubagentType,
+        description: impl Into<String>,
+        prompt: impl Into<String>,
+    ) -> Self {
         Self {
             subagent_type,
             description: description.into(),
@@ -105,7 +108,9 @@ impl AgentDefinition {
 
     /// Get the effective model (custom or default for type)
     pub fn effective_model(&self) -> &str {
-        self.model.as_deref().unwrap_or_else(|| self.subagent_type.default_model())
+        self.model
+            .as_deref()
+            .unwrap_or_else(|| self.subagent_type.default_model())
     }
 }
 
@@ -151,7 +156,6 @@ impl AgentState {
         matches!(self, Self::Running | Self::Initializing)
     }
 }
-
 
 /// Metrics collected during agent execution
 #[derive(Debug, Clone, Default)]

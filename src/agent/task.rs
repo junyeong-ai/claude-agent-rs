@@ -59,11 +59,7 @@ pub struct TaskInput {
 impl TaskInput {
     /// Convert to an AgentDefinition
     pub fn to_definition(&self) -> AgentDefinition {
-        let mut def = AgentDefinition::new(
-            self.subagent_type,
-            &self.description,
-            &self.prompt,
-        );
+        let mut def = AgentDefinition::new(self.subagent_type, &self.description, &self.prompt);
 
         if let Some(model) = &self.model {
             def = def.with_model(model);

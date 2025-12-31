@@ -38,7 +38,10 @@ mod auth_verification {
         assert_eq!(strategy_name, "oauth");
 
         // 2. Verify we can make authenticated requests
-        let response = client.query("Say 'auth works'").await.expect("Query failed");
+        let response = client
+            .query("Say 'auth works'")
+            .await
+            .expect("Query failed");
         println!("✓ Authenticated query successful: {}", response.trim());
         assert!(!response.is_empty());
 
@@ -66,13 +69,22 @@ mod auth_verification {
             ("anthropic-beta", "claude-code", "Beta flags"),
             ("user-agent", "claude-cli", "User agent"),
             ("x-app", "cli", "App identifier"),
-            ("anthropic-dangerous-direct-browser-access", "true", "Browser access"),
+            (
+                "anthropic-dangerous-direct-browser-access",
+                "true",
+                "Browser access",
+            ),
         ];
 
         for (key, contains, desc) in required_headers {
             assert!(header_map.contains_key(key), "Missing header: {}", key);
             let value = header_map.get(key).unwrap();
-            assert!(value.contains(contains), "{} should contain '{}'", desc, contains);
+            assert!(
+                value.contains(contains),
+                "{} should contain '{}'",
+                desc,
+                contains
+            );
             println!("✓ {}: {}", key, value);
         }
 
@@ -118,7 +130,10 @@ mod prompt_caching {
             assert_eq!(blocks.len(), 1);
             assert!(blocks[0].text.contains("Claude Code"));
             assert!(blocks[0].cache_control.is_some());
-            assert_eq!(blocks[0].cache_control.as_ref().unwrap().cache_type, "ephemeral");
+            assert_eq!(
+                blocks[0].cache_control.as_ref().unwrap().cache_type,
+                "ephemeral"
+            );
             println!("✓ System prompt has cache_control: ephemeral");
         } else {
             panic!("Expected Blocks variant");
@@ -155,11 +170,9 @@ mod prompt_caching {
             .expect("Failed to create client");
 
         // Make two requests to see caching in action
-        let request1 = CreateMessageRequest::new(
-            &client.config().model,
-            vec![Message::user("Say 'test1'")],
-        )
-        .with_max_tokens(20);
+        let request1 =
+            CreateMessageRequest::new(&client.config().model, vec![Message::user("Say 'test1'")])
+                .with_max_tokens(20);
 
         let response1 = claude_agent::client::MessagesClient::new(&client)
             .create(request1)
@@ -168,15 +181,19 @@ mod prompt_caching {
 
         println!("Request 1:");
         println!("  Input tokens: {}", response1.usage.input_tokens);
-        println!("  Cache creation: {:?}", response1.usage.cache_creation_input_tokens);
-        println!("  Cache read: {:?}", response1.usage.cache_read_input_tokens);
+        println!(
+            "  Cache creation: {:?}",
+            response1.usage.cache_creation_input_tokens
+        );
+        println!(
+            "  Cache read: {:?}",
+            response1.usage.cache_read_input_tokens
+        );
 
         // Second request should potentially use cache
-        let request2 = CreateMessageRequest::new(
-            &client.config().model,
-            vec![Message::user("Say 'test2'")],
-        )
-        .with_max_tokens(20);
+        let request2 =
+            CreateMessageRequest::new(&client.config().model, vec![Message::user("Say 'test2'")])
+                .with_max_tokens(20);
 
         let response2 = claude_agent::client::MessagesClient::new(&client)
             .create(request2)
@@ -185,13 +202,21 @@ mod prompt_caching {
 
         println!("Request 2:");
         println!("  Input tokens: {}", response2.usage.input_tokens);
-        println!("  Cache creation: {:?}", response2.usage.cache_creation_input_tokens);
-        println!("  Cache read: {:?}", response2.usage.cache_read_input_tokens);
+        println!(
+            "  Cache creation: {:?}",
+            response2.usage.cache_creation_input_tokens
+        );
+        println!(
+            "  Cache read: {:?}",
+            response2.usage.cache_read_input_tokens
+        );
 
         // Verify cache fields are present
-        assert!(response1.usage.cache_creation_input_tokens.is_some() ||
-                response1.usage.cache_read_input_tokens.is_some(),
-                "Cache fields should be present in response");
+        assert!(
+            response1.usage.cache_creation_input_tokens.is_some()
+                || response1.usage.cache_read_input_tokens.is_some(),
+            "Cache fields should be present in response"
+        );
 
         println!("\n✅ Prompt caching API verification complete\n");
     }
@@ -213,7 +238,10 @@ mod progressive_disclosure {
 
         println!("Total tools registered: {}", definitions.len());
         assert!(definitions.len() >= 5, "Should have at least 5 tools");
-        assert!(definitions.len() <= 20, "Should have reasonable number of tools");
+        assert!(
+            definitions.len() <= 20,
+            "Should have reasonable number of tools"
+        );
 
         let mut total_chars = 0;
         for def in &definitions {
@@ -231,7 +259,10 @@ mod progressive_disclosure {
         println!("\nAverage description length: {} chars", avg_chars);
 
         // Average should be reasonable for initial context loading
-        assert!(avg_chars < 500, "Average description too long for progressive disclosure");
+        assert!(
+            avg_chars < 500,
+            "Average description too long for progressive disclosure"
+        );
 
         println!("\n✅ Progressive disclosure verification complete\n");
     }
@@ -250,7 +281,11 @@ mod progressive_disclosure {
             assert_eq!(schema["type"], "object", "{} type must be object", def.name);
 
             // Must have properties
-            assert!(schema.get("properties").is_some(), "{} missing properties", def.name);
+            assert!(
+                schema.get("properties").is_some(),
+                "{} missing properties",
+                def.name
+            );
 
             println!("✓ {} schema valid", def.name);
         }
@@ -304,12 +339,20 @@ mod tool_execution {
         println!("\n=== Read Tool ===");
         let dir = tempdir().unwrap();
         let file = dir.path().join("test.txt");
-        fs::write(&file, "Hello World\nLine 2\nLine 3").await.unwrap();
+        fs::write(&file, "Hello World\nLine 2\nLine 3")
+            .await
+            .unwrap();
 
-        let registry = ToolRegistry::default_tools(&ToolAccess::All, Some(dir.path().to_path_buf()));
-        let result = registry.execute("Read", serde_json::json!({
-            "file_path": file.to_str().unwrap()
-        })).await;
+        let registry =
+            ToolRegistry::default_tools(&ToolAccess::All, Some(dir.path().to_path_buf()));
+        let result = registry
+            .execute(
+                "Read",
+                serde_json::json!({
+                    "file_path": file.to_str().unwrap()
+                }),
+            )
+            .await;
 
         assert!(!result.is_error());
         println!("✓ Read tool works");
@@ -321,11 +364,17 @@ mod tool_execution {
         let dir = tempdir().unwrap();
         let file = dir.path().join("new.txt");
 
-        let registry = ToolRegistry::default_tools(&ToolAccess::All, Some(dir.path().to_path_buf()));
-        let result = registry.execute("Write", serde_json::json!({
-            "file_path": file.to_str().unwrap(),
-            "content": "New content"
-        })).await;
+        let registry =
+            ToolRegistry::default_tools(&ToolAccess::All, Some(dir.path().to_path_buf()));
+        let result = registry
+            .execute(
+                "Write",
+                serde_json::json!({
+                    "file_path": file.to_str().unwrap(),
+                    "content": "New content"
+                }),
+            )
+            .await;
 
         assert!(!result.is_error());
         let content = fs::read_to_string(&file).await.unwrap();
@@ -340,12 +389,18 @@ mod tool_execution {
         let file = dir.path().join("edit.txt");
         fs::write(&file, "Hello OLD World").await.unwrap();
 
-        let registry = ToolRegistry::default_tools(&ToolAccess::All, Some(dir.path().to_path_buf()));
-        let result = registry.execute("Edit", serde_json::json!({
-            "file_path": file.to_str().unwrap(),
-            "old_string": "OLD",
-            "new_string": "NEW"
-        })).await;
+        let registry =
+            ToolRegistry::default_tools(&ToolAccess::All, Some(dir.path().to_path_buf()));
+        let result = registry
+            .execute(
+                "Edit",
+                serde_json::json!({
+                    "file_path": file.to_str().unwrap(),
+                    "old_string": "OLD",
+                    "new_string": "NEW"
+                }),
+            )
+            .await;
 
         assert!(!result.is_error());
         let content = fs::read_to_string(&file).await.unwrap();
@@ -361,11 +416,17 @@ mod tool_execution {
         fs::write(dir.path().join("b.txt"), "").await.unwrap();
         fs::write(dir.path().join("c.rs"), "").await.unwrap();
 
-        let registry = ToolRegistry::default_tools(&ToolAccess::All, Some(dir.path().to_path_buf()));
-        let result = registry.execute("Glob", serde_json::json!({
-            "pattern": "*.txt",
-            "path": dir.path().to_str().unwrap()
-        })).await;
+        let registry =
+            ToolRegistry::default_tools(&ToolAccess::All, Some(dir.path().to_path_buf()));
+        let result = registry
+            .execute(
+                "Glob",
+                serde_json::json!({
+                    "pattern": "*.txt",
+                    "path": dir.path().to_str().unwrap()
+                }),
+            )
+            .await;
 
         assert!(!result.is_error());
         if let claude_agent::tools::ToolResult::Success(output) = result {
@@ -380,13 +441,24 @@ mod tool_execution {
     async fn verify_grep_tool() {
         println!("\n=== Grep Tool ===");
         let dir = tempdir().unwrap();
-        fs::write(dir.path().join("file.txt"), "Hello World\nFoo Bar\nWorld Hello").await.unwrap();
+        fs::write(
+            dir.path().join("file.txt"),
+            "Hello World\nFoo Bar\nWorld Hello",
+        )
+        .await
+        .unwrap();
 
-        let registry = ToolRegistry::default_tools(&ToolAccess::All, Some(dir.path().to_path_buf()));
-        let result = registry.execute("Grep", serde_json::json!({
-            "pattern": "World",
-            "path": dir.path().to_str().unwrap()
-        })).await;
+        let registry =
+            ToolRegistry::default_tools(&ToolAccess::All, Some(dir.path().to_path_buf()));
+        let result = registry
+            .execute(
+                "Grep",
+                serde_json::json!({
+                    "pattern": "World",
+                    "path": dir.path().to_str().unwrap()
+                }),
+            )
+            .await;
 
         assert!(!result.is_error());
         println!("✓ Grep tool works");
@@ -396,9 +468,14 @@ mod tool_execution {
     async fn verify_bash_tool() {
         println!("\n=== Bash Tool ===");
         let registry = ToolRegistry::default_tools(&ToolAccess::All, None);
-        let result = registry.execute("Bash", serde_json::json!({
-            "command": "echo 'test output'"
-        })).await;
+        let result = registry
+            .execute(
+                "Bash",
+                serde_json::json!({
+                    "command": "echo 'test output'"
+                }),
+            )
+            .await;
 
         assert!(!result.is_error());
         if let claude_agent::tools::ToolResult::Success(output) = result {
@@ -411,11 +488,16 @@ mod tool_execution {
     async fn verify_todowrite_tool() {
         println!("\n=== TodoWrite Tool ===");
         let registry = ToolRegistry::default_tools(&ToolAccess::All, None);
-        let result = registry.execute("TodoWrite", serde_json::json!({
-            "todos": [
-                {"content": "Test task", "status": "pending", "activeForm": "Testing task"}
-            ]
-        })).await;
+        let result = registry
+            .execute(
+                "TodoWrite",
+                serde_json::json!({
+                    "todos": [
+                        {"content": "Test task", "status": "pending", "activeForm": "Testing task"}
+                    ]
+                }),
+            )
+            .await;
 
         assert!(!result.is_error());
         println!("✓ TodoWrite tool works");
@@ -635,7 +717,10 @@ mod multi_model {
             .build()
             .expect("Failed to create client");
 
-        let response = client.query("1+1=? Just the number.").await.expect("Failed");
+        let response = client
+            .query("1+1=? Just the number.")
+            .await
+            .expect("Failed");
         println!("Haiku: {}", response.trim());
         assert!(response.contains("2"));
 
@@ -653,7 +738,10 @@ mod multi_model {
             .build()
             .expect("Failed to create client");
 
-        let response = client.query("2+2=? Just the number.").await.expect("Failed");
+        let response = client
+            .query("2+2=? Just the number.")
+            .await
+            .expect("Failed");
         println!("Sonnet: {}", response.trim());
         assert!(response.contains("4"));
 
@@ -678,11 +766,8 @@ mod error_handling {
             .build()
             .expect("Failed to create client");
 
-        let request = CreateMessageRequest::new(
-            "invalid-model",
-            vec![Message::user("test")],
-        )
-        .with_max_tokens(10);
+        let request = CreateMessageRequest::new("invalid-model", vec![Message::user("test")])
+            .with_max_tokens(10);
 
         let result = claude_agent::client::MessagesClient::new(&client)
             .create(request)

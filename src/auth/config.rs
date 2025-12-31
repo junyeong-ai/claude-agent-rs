@@ -3,8 +3,7 @@
 use std::collections::HashMap;
 
 /// Default system prompt required for OAuth authentication.
-pub const DEFAULT_SYSTEM_PROMPT: &str =
-    "You are Claude Code, Anthropic's official CLI for Claude.";
+pub const DEFAULT_SYSTEM_PROMPT: &str = "You are Claude Code, Anthropic's official CLI for Claude.";
 
 /// Default beta flags for Claude Code CLI.
 pub const DEFAULT_BETA_FLAGS: &[&str] = &[

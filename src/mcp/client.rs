@@ -103,12 +103,12 @@ impl McpClient {
         })?;
 
         // Create client service using rmcp's serve pattern
-        let service: McpRunningService = ()
-            .serve(transport)
-            .await
-            .map_err(|e| McpError::ConnectionFailed {
-                message: format!("Failed to connect: {}", e),
-            })?;
+        let service: McpRunningService =
+            ().serve(transport)
+                .await
+                .map_err(|e| McpError::ConnectionFailed {
+                    message: format!("Failed to connect: {}", e),
+                })?;
 
         // Get server info
         if let Some(info) = service.peer_info() {
@@ -121,12 +121,13 @@ impl McpClient {
         self.state.status = McpConnectionStatus::Connected;
 
         // List and cache tools
-        let tools_result = service
-            .list_tools(Default::default())
-            .await
-            .map_err(|e| McpError::Protocol {
-                message: format!("Failed to list tools: {}", e),
-            })?;
+        let tools_result =
+            service
+                .list_tools(Default::default())
+                .await
+                .map_err(|e| McpError::Protocol {
+                    message: format!("Failed to list tools: {}", e),
+                })?;
 
         self.state.tools = tools_result
             .tools
@@ -234,22 +235,28 @@ impl McpClient {
                     rmcp::model::RawContent::Resource(r) => {
                         // ResourceContents is an enum with TextResourceContents and BlobResourceContents
                         match &r.resource {
-                            rmcp::model::ResourceContents::TextResourceContents { uri, mime_type, text, .. } => {
-                                McpContent::Resource {
-                                    uri: uri.clone(),
-                                    text: Some(text.clone()),
-                                    blob: None,
-                                    mime_type: mime_type.clone(),
-                                }
-                            }
-                            rmcp::model::ResourceContents::BlobResourceContents { uri, mime_type, blob, .. } => {
-                                McpContent::Resource {
-                                    uri: uri.clone(),
-                                    text: None,
-                                    blob: Some(blob.clone()),
-                                    mime_type: mime_type.clone(),
-                                }
-                            }
+                            rmcp::model::ResourceContents::TextResourceContents {
+                                uri,
+                                mime_type,
+                                text,
+                                ..
+                            } => McpContent::Resource {
+                                uri: uri.clone(),
+                                text: Some(text.clone()),
+                                blob: None,
+                                mime_type: mime_type.clone(),
+                            },
+                            rmcp::model::ResourceContents::BlobResourceContents {
+                                uri,
+                                mime_type,
+                                blob,
+                                ..
+                            } => McpContent::Resource {
+                                uri: uri.clone(),
+                                text: None,
+                                blob: Some(blob.clone()),
+                                mime_type: mime_type.clone(),
+                            },
                         }
                     }
                     rmcp::model::RawContent::Audio(_) => {
@@ -258,14 +265,12 @@ impl McpClient {
                             text: "[Audio content]".to_string(),
                         }
                     }
-                    rmcp::model::RawContent::ResourceLink(r) => {
-                        McpContent::Resource {
-                            uri: r.uri.clone(),
-                            text: None,
-                            blob: None,
-                            mime_type: r.mime_type.clone(),
-                        }
-                    }
+                    rmcp::model::RawContent::ResourceLink(r) => McpContent::Resource {
+                        uri: r.uri.clone(),
+                        text: None,
+                        blob: None,
+                        mime_type: r.mime_type.clone(),
+                    },
                 }
             })
             .collect();
@@ -310,22 +315,28 @@ impl McpClient {
             .contents
             .into_iter()
             .map(|c| match c {
-                rmcp::model::ResourceContents::TextResourceContents { uri, text, mime_type, .. } => {
-                    McpContent::Resource {
-                        uri,
-                        text: Some(text),
-                        blob: None,
-                        mime_type,
-                    }
-                }
-                rmcp::model::ResourceContents::BlobResourceContents { uri, blob, mime_type, .. } => {
-                    McpContent::Resource {
-                        uri,
-                        text: None,
-                        blob: Some(blob),
-                        mime_type,
-                    }
-                }
+                rmcp::model::ResourceContents::TextResourceContents {
+                    uri,
+                    text,
+                    mime_type,
+                    ..
+                } => McpContent::Resource {
+                    uri,
+                    text: Some(text),
+                    blob: None,
+                    mime_type,
+                },
+                rmcp::model::ResourceContents::BlobResourceContents {
+                    uri,
+                    blob,
+                    mime_type,
+                    ..
+                } => McpContent::Resource {
+                    uri,
+                    text: None,
+                    blob: Some(blob),
+                    mime_type,
+                },
             })
             .collect())
     }

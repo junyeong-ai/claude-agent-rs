@@ -49,8 +49,7 @@ impl Config {
             auth_strategy,
             base_url: std::env::var("ANTHROPIC_BASE_URL")
                 .unwrap_or_else(|_| DEFAULT_BASE_URL.to_string()),
-            model: std::env::var("ANTHROPIC_MODEL")
-                .unwrap_or_else(|_| DEFAULT_MODEL.to_string()),
+            model: std::env::var("ANTHROPIC_MODEL").unwrap_or_else(|_| DEFAULT_MODEL.to_string()),
             small_model: std::env::var("ANTHROPIC_SMALL_FAST_MODEL")
                 .unwrap_or_else(|_| DEFAULT_SMALL_MODEL.to_string()),
             max_tokens: DEFAULT_MAX_TOKENS,
@@ -305,8 +304,7 @@ impl ClientBuilder {
         match self.cloud_provider {
             Some(CloudProvider::Bedrock) => {
                 let strategy = self.bedrock_strategy.take().unwrap_or_else(|| {
-                    BedrockStrategy::from_env()
-                        .unwrap_or_else(|| BedrockStrategy::new("us-east-1"))
+                    BedrockStrategy::from_env().unwrap_or_else(|| BedrockStrategy::new("us-east-1"))
                 });
                 Some((Arc::new(strategy.clone()), strategy.get_base_url()))
             }

@@ -57,7 +57,11 @@ impl SkillLoader {
     /// Load a skill from a file path
     pub async fn load_file(&self, path: &Path) -> crate::Result<SkillDefinition> {
         let content = tokio::fs::read_to_string(path).await.map_err(|e| {
-            crate::Error::Config(format!("Failed to read skill file {}: {}", path.display(), e))
+            crate::Error::Config(format!(
+                "Failed to read skill file {}: {}",
+                path.display(),
+                e
+            ))
         })?;
 
         self.parse_skill_content(&content, Some(path))
@@ -71,9 +75,11 @@ impl SkillLoader {
             crate::Error::Config(format!("Failed to read directory {}: {}", dir.display(), e))
         })?;
 
-        while let Some(entry) = entries.next_entry().await.map_err(|e| {
-            crate::Error::Config(format!("Failed to read directory entry: {}", e))
-        })? {
+        while let Some(entry) = entries
+            .next_entry()
+            .await
+            .map_err(|e| crate::Error::Config(format!("Failed to read directory entry: {}", e)))?
+        {
             let path = entry.path();
 
             // Check for SKILL.md files or .skill.md suffix
@@ -93,23 +99,33 @@ impl SkillLoader {
     }
 
     /// Parse skill content from a string
-    pub fn parse_skill_content(&self, content: &str, path: Option<&Path>) -> crate::Result<SkillDefinition> {
+    pub fn parse_skill_content(
+        &self,
+        content: &str,
+        path: Option<&Path>,
+    ) -> crate::Result<SkillDefinition> {
         // Check for YAML frontmatter (--- delimited)
         if content.starts_with("---") {
             self.parse_with_frontmatter(content, path)
         } else {
             Err(crate::Error::Config(
-                "Skill file must have YAML frontmatter (starting with ---)".to_string()
+                "Skill file must have YAML frontmatter (starting with ---)".to_string(),
             ))
         }
     }
 
     /// Parse a skill with YAML frontmatter
-    fn parse_with_frontmatter(&self, content: &str, path: Option<&Path>) -> crate::Result<SkillDefinition> {
+    fn parse_with_frontmatter(
+        &self,
+        content: &str,
+        path: Option<&Path>,
+    ) -> crate::Result<SkillDefinition> {
         // Find the end of frontmatter
         let after_first_delimiter = &content[3..];
         let end_pos = after_first_delimiter.find("---").ok_or_else(|| {
-            crate::Error::Config("Skill file frontmatter not properly terminated with ---".to_string())
+            crate::Error::Config(
+                "Skill file frontmatter not properly terminated with ---".to_string(),
+            )
         })?;
 
         let frontmatter_str = &after_first_delimiter[..end_pos].trim();
@@ -128,12 +144,9 @@ impl SkillLoader {
             _ => SkillSourceType::User,
         };
 
-        let mut skill = SkillDefinition::new(
-            frontmatter.name,
-            frontmatter.description,
-            body.to_string(),
-        )
-        .with_source_type(source_type);
+        let mut skill =
+            SkillDefinition::new(frontmatter.name, frontmatter.description, body.to_string())
+                .with_source_type(source_type);
 
         // Add location if available
         if let Some(p) = path {

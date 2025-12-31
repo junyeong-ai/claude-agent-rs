@@ -106,7 +106,6 @@ pub struct AskUserQuestionInput {
     pub answers: Option<serde_json::Map<String, serde_json::Value>>,
 }
 
-
 #[async_trait]
 impl Tool for AskUserQuestionTool {
     fn name(&self) -> &str {
@@ -245,10 +244,7 @@ mod tests {
         let q = Question::single_choice(
             "Which auth method?",
             "Auth",
-            vec![
-                QuestionOption::new("JWT"),
-                QuestionOption::new("OAuth"),
-            ],
+            vec![QuestionOption::new("JWT"), QuestionOption::new("OAuth")],
         );
         assert!(!q.multi_select);
         assert_eq!(q.options.len(), 2);

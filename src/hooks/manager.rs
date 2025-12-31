@@ -375,11 +375,7 @@ mod tests {
     #[tokio::test]
     async fn test_hooks_for_event() {
         let mut manager = HookManager::new();
-        manager.register(TestHook::new(
-            "hook1",
-            vec![HookEvent::PreToolUse],
-            10,
-        ));
+        manager.register(TestHook::new("hook1", vec![HookEvent::PreToolUse], 10));
         manager.register(TestHook::new(
             "hook2",
             vec![HookEvent::PreToolUse, HookEvent::PostToolUse],
@@ -406,7 +402,10 @@ mod tests {
 
         let input = HookInput::pre_tool_use("session-1", "Read", serde_json::json!({}));
         let ctx = HookContext::new("session-1");
-        let output = manager.execute(HookEvent::PreToolUse, input, &ctx).await.unwrap();
+        let output = manager
+            .execute(HookEvent::PreToolUse, input, &ctx)
+            .await
+            .unwrap();
 
         assert!(output.continue_execution);
     }
@@ -423,7 +422,10 @@ mod tests {
 
         let input = HookInput::pre_tool_use("session-1", "Read", serde_json::json!({}));
         let ctx = HookContext::new("session-1");
-        let output = manager.execute(HookEvent::PreToolUse, input, &ctx).await.unwrap();
+        let output = manager
+            .execute(HookEvent::PreToolUse, input, &ctx)
+            .await
+            .unwrap();
 
         assert!(!output.continue_execution);
         assert_eq!(output.stop_reason, Some("Blocked by hook2".to_string()));
@@ -435,7 +437,10 @@ mod tests {
 
         let input = HookInput::pre_tool_use("session-1", "Read", serde_json::json!({}));
         let ctx = HookContext::new("session-1");
-        let output = manager.execute(HookEvent::PreToolUse, input, &ctx).await.unwrap();
+        let output = manager
+            .execute(HookEvent::PreToolUse, input, &ctx)
+            .await
+            .unwrap();
 
         assert!(output.continue_execution);
     }

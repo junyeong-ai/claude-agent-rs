@@ -8,8 +8,14 @@ use std::sync::Arc;
 use super::{SkillDefinition, SkillRegistry, SkillResult};
 
 /// Callback for executing skill prompts through an LLM
-pub type SkillExecutionCallback =
-    Arc<dyn Fn(String) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<String, String>> + Send>> + Send + Sync>;
+pub type SkillExecutionCallback = Arc<
+    dyn Fn(
+            String,
+        )
+            -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<String, String>> + Send>>
+        + Send
+        + Sync,
+>;
 
 /// Executor for running skills
 pub struct SkillExecutor {
@@ -95,12 +101,10 @@ impl SkillExecutor {
         let prompt = self.substitute_args(&skill.content, args);
 
         let base_result = match self.mode {
-            ExecutionMode::DryRun => {
-                SkillResult::success(format!(
-                    "[DRY RUN] Skill '{}' prompt:\n\n{}",
-                    skill.name, prompt
-                ))
-            }
+            ExecutionMode::DryRun => SkillResult::success(format!(
+                "[DRY RUN] Skill '{}' prompt:\n\n{}",
+                skill.name, prompt
+            )),
             ExecutionMode::Callback => {
                 if let Some(ref callback) = self.execution_callback {
                     match callback(prompt).await {
@@ -241,8 +245,7 @@ mod tests {
         let registry = SkillRegistry::new();
         let executor = SkillExecutor::new(registry);
 
-        let skill = SkillDefinition::new("test", "Test", "Content")
-            .with_trigger("/test");
+        let skill = SkillDefinition::new("test", "Test", "Content").with_trigger("/test");
 
         let args = executor.extract_args("/test some arguments here", &skill);
         assert_eq!(args, Some("some arguments here".to_string()));

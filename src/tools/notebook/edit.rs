@@ -122,7 +122,9 @@ impl NotebookEditTool {
 
     /// Get the cell ID from a cell
     fn get_cell_id(cell: &Value) -> Option<String> {
-        cell.get("id").and_then(|v| v.as_str()).map(|s| s.to_string())
+        cell.get("id")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string())
     }
 }
 
@@ -196,7 +198,8 @@ When using edit_mode=insert, cell_type is required (code or markdown)."#
         let path = self.resolve_path(&input.notebook_path);
 
         // Validate path extension
-        if path.extension().map(|e| e.to_string_lossy().to_lowercase()) != Some("ipynb".to_string()) {
+        if path.extension().map(|e| e.to_string_lossy().to_lowercase()) != Some("ipynb".to_string())
+        {
             return ToolResult::error("File must be a Jupyter notebook (.ipynb)");
         }
 
@@ -232,15 +235,17 @@ When using edit_mode=insert, cell_type is required (code or markdown)."#
                     None => return ToolResult::error("cell_id is required for replace mode"),
                 };
 
-                let cell_idx = cells.iter().position(|c| {
-                    Self::get_cell_id(c) == Some(cell_id.clone())
-                });
+                let cell_idx = cells
+                    .iter()
+                    .position(|c| Self::get_cell_id(c) == Some(cell_id.clone()));
 
                 match cell_idx {
                     Some(idx) => {
                         // Get current cell type if not specified
                         let cell_type = input.cell_type.unwrap_or_else(|| {
-                            if cells[idx].get("cell_type").and_then(|v| v.as_str()) == Some("markdown") {
+                            if cells[idx].get("cell_type").and_then(|v| v.as_str())
+                                == Some("markdown")
+                            {
                                 CellType::Markdown
                             } else {
                                 CellType::Code
@@ -251,7 +256,9 @@ When using edit_mode=insert, cell_type is required (code or markdown)."#
                         cells[idx] = Self::create_cell(cell_type, &input.new_source, &cell_id);
                         (format!("Replaced cell {}", cell_id), Some(cell_id))
                     }
-                    None => return ToolResult::error(format!("Cell with ID '{}' not found", cell_id)),
+                    None => {
+                        return ToolResult::error(format!("Cell with ID '{}' not found", cell_id))
+                    }
                 }
             }
 
@@ -263,22 +270,35 @@ When using edit_mode=insert, cell_type is required (code or markdown)."#
                 // Find insertion point
                 let insert_idx = match &input.cell_id {
                     Some(after_id) => {
-                        let idx = cells.iter().position(|c| {
-                            Self::get_cell_id(c) == Some(after_id.clone())
-                        });
+                        let idx = cells
+                            .iter()
+                            .position(|c| Self::get_cell_id(c) == Some(after_id.clone()));
                         match idx {
                             Some(i) => i + 1, // Insert after the found cell
-                            None => return ToolResult::error(format!("Cell with ID '{}' not found", after_id)),
+                            None => {
+                                return ToolResult::error(format!(
+                                    "Cell with ID '{}' not found",
+                                    after_id
+                                ))
+                            }
                         }
                     }
                     None => 0, // Insert at the beginning
                 };
 
                 cells.insert(insert_idx, new_cell);
-                (format!("Inserted new {} cell with ID {}",
-                    if cell_type == CellType::Code { "code" } else { "markdown" },
-                    new_id
-                ), Some(new_id))
+                (
+                    format!(
+                        "Inserted new {} cell with ID {}",
+                        if cell_type == CellType::Code {
+                            "code"
+                        } else {
+                            "markdown"
+                        },
+                        new_id
+                    ),
+                    Some(new_id),
+                )
             }
 
             EditMode::Delete => {
@@ -287,16 +307,18 @@ When using edit_mode=insert, cell_type is required (code or markdown)."#
                     None => return ToolResult::error("cell_id is required for delete mode"),
                 };
 
-                let cell_idx = cells.iter().position(|c| {
-                    Self::get_cell_id(c) == Some(cell_id.clone())
-                });
+                let cell_idx = cells
+                    .iter()
+                    .position(|c| Self::get_cell_id(c) == Some(cell_id.clone()));
 
                 match cell_idx {
                     Some(idx) => {
                         cells.remove(idx);
                         (format!("Deleted cell {}", cell_id), Some(cell_id))
                     }
-                    None => return ToolResult::error(format!("Cell with ID '{}' not found", cell_id)),
+                    None => {
+                        return ToolResult::error(format!("Cell with ID '{}' not found", cell_id))
+                    }
                 }
             }
         };
@@ -323,8 +345,7 @@ When using edit_mode=insert, cell_type is required (code or markdown)."#
 
         ToolResult::success(format!(
             "{}\nTotal cells: {}",
-            output.message,
-            output.total_cells
+            output.message, output.total_cells
         ))
     }
 }

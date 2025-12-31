@@ -151,10 +151,8 @@ mod tests {
     fn test_registry_trigger_lookup() {
         let mut registry = SkillRegistry::new();
 
-        registry.register(
-            SkillDefinition::new("commit", "Commit", "Content")
-                .with_trigger("/commit"),
-        );
+        registry
+            .register(SkillDefinition::new("commit", "Commit", "Content").with_trigger("/commit"));
 
         assert!(registry.get_by_trigger("/commit please").is_some());
         assert!(registry.get_by_trigger("something else").is_none());

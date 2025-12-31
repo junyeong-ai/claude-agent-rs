@@ -9,6 +9,7 @@ pub mod skill_index;
 pub mod static_context;
 
 // Re-exports
+pub use crate::types::TokenUsage;
 pub use builder::ContextBuilder;
 pub use memory_loader::{MemoryContent, MemoryLoader, RuleFile};
 pub use orchestrator::{ContextOrchestrator, ContextWindowState, OrchestratorState};
@@ -16,7 +17,6 @@ pub use routing::RoutingStrategy;
 pub use rule_index::{LoadedRule, RuleIndex, RuleSource};
 pub use skill_index::{SkillIndex, SkillScope, SkillSource};
 pub use static_context::{CacheControl, StaticContext, StaticContextPart, SystemBlock};
-pub use crate::types::TokenUsage;
 
 use thiserror::Error;
 

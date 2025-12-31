@@ -120,7 +120,7 @@ impl Tool for TodoWriteTool {
 
         if in_progress_count > 1 {
             return ToolResult::error(
-                "Only one task can be in_progress at a time. Complete the current task first."
+                "Only one task can be in_progress at a time. Complete the current task first.",
             );
         }
 
@@ -135,12 +135,7 @@ impl Tool for TodoWriteTool {
                 TodoStatus::InProgress => "◐",
                 TodoStatus::Completed => "●",
             };
-            response.push_str(&format!(
-                "{}. {} {}\n",
-                i + 1,
-                status_icon,
-                todo.content
-            ));
+            response.push_str(&format!("{}. {} {}\n", i + 1, status_icon, todo.content));
         }
 
         ToolResult::success(response)

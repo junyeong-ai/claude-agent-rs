@@ -144,7 +144,11 @@ pub struct HookInput {
 
 impl HookInput {
     /// Create a new hook input for a pre-tool-use event
-    pub fn pre_tool_use(session_id: impl Into<String>, tool_name: impl Into<String>, input: Value) -> Self {
+    pub fn pre_tool_use(
+        session_id: impl Into<String>,
+        tool_name: impl Into<String>,
+        input: Value,
+    ) -> Self {
         Self {
             event: Some(HookEvent::PreToolUse),
             tool_name: Some(tool_name.into()),
@@ -429,7 +433,11 @@ pub trait Hook: Send + Sync {
     }
 
     /// Execute the hook
-    async fn execute(&self, input: HookInput, ctx: &HookContext) -> Result<HookOutput, crate::Error>;
+    async fn execute(
+        &self,
+        input: HookInput,
+        ctx: &HookContext,
+    ) -> Result<HookOutput, crate::Error>;
 }
 
 #[cfg(test)]
@@ -454,7 +462,8 @@ mod tests {
 
     #[test]
     fn test_hook_input_builders() {
-        let input = HookInput::pre_tool_use("session-1", "Read", serde_json::json!({"path": "/tmp"}));
+        let input =
+            HookInput::pre_tool_use("session-1", "Read", serde_json::json!({"path": "/tmp"}));
         assert_eq!(input.event, Some(HookEvent::PreToolUse));
         assert_eq!(input.tool_name, Some("Read".to_string()));
         assert_eq!(input.session_id, "session-1");

@@ -45,12 +45,18 @@ impl WebFetchTool {
     /// Create a new WebFetchTool
     pub fn new() -> Self {
         let mut headers = HeaderMap::new();
-        headers.insert(USER_AGENT, HeaderValue::from_static(
-            "Mozilla/5.0 (compatible; ClaudeAgent/1.0; +https://anthropic.com)"
-        ));
-        headers.insert(ACCEPT, HeaderValue::from_static(
-            "text/html,application/xhtml+xml,application/xml;q=0.9,text/plain;q=0.8,*/*;q=0.7"
-        ));
+        headers.insert(
+            USER_AGENT,
+            HeaderValue::from_static(
+                "Mozilla/5.0 (compatible; ClaudeAgent/1.0; +https://anthropic.com)",
+            ),
+        );
+        headers.insert(
+            ACCEPT,
+            HeaderValue::from_static(
+                "text/html,application/xhtml+xml,application/xml;q=0.9,text/plain;q=0.8,*/*;q=0.7",
+            ),
+        );
 
         let client = reqwest::Client::builder()
             .timeout(Duration::from_secs(30))
@@ -103,10 +109,9 @@ fn html_to_text(html: &str) -> String {
 
     // Replace common block elements with newlines
     let block_tags = [
-        "<br>", "<br/>", "<br />", "<p>", "</p>", "<div>", "</div>",
-        "<h1>", "</h1>", "<h2>", "</h2>", "<h3>", "</h3>",
-        "<h4>", "</h4>", "<h5>", "</h5>", "<h6>", "</h6>",
-        "<li>", "</li>", "<tr>", "</tr>",
+        "<br>", "<br/>", "<br />", "<p>", "</p>", "<div>", "</div>", "<h1>", "</h1>", "<h2>",
+        "</h2>", "<h3>", "</h3>", "<h4>", "</h4>", "<h5>", "</h5>", "<h6>", "</h6>", "<li>",
+        "</li>", "<tr>", "</tr>",
     ];
 
     for tag in block_tags {
@@ -150,7 +155,8 @@ fn html_to_text(html: &str) -> String {
     }
 
     // Clean up whitespace
-    let lines: Vec<&str> = result.lines()
+    let lines: Vec<&str> = result
+        .lines()
         .map(|line| line.trim())
         .filter(|line| !line.is_empty())
         .collect();
@@ -298,11 +304,12 @@ instead of this one, as it may have fewer restrictions."#
         };
 
         // Process content based on type
-        let processed_content = if content_type.contains("text/html") || content_type.contains("application/xhtml") {
-            html_to_text(&body)
-        } else {
-            body
-        };
+        let processed_content =
+            if content_type.contains("text/html") || content_type.contains("application/xhtml") {
+                html_to_text(&body)
+            } else {
+                body
+            };
 
         // Truncate if too large (max 50000 chars)
         let truncated_content = truncate_content(&processed_content, 50000);
@@ -311,7 +318,11 @@ instead of this one, as it may have fewer restrictions."#
         let output = WebFetchOutput {
             response: truncated_content.clone(),
             url: url.clone(),
-            final_url: if final_url != url { Some(final_url) } else { None },
+            final_url: if final_url != url {
+                Some(final_url)
+            } else {
+                None
+            },
             status_code: Some(status.as_u16()),
         };
 
@@ -319,7 +330,10 @@ instead of this one, as it may have fewer restrictions."#
         let result = format!(
             "URL: {}\n{}\nStatus: {}\nPrompt: {}\n\n---\nContent:\n{}",
             output.url,
-            output.final_url.as_ref().map_or(String::new(), |u| format!("Final URL: {}\n", u)),
+            output
+                .final_url
+                .as_ref()
+                .map_or(String::new(), |u| format!("Final URL: {}\n", u)),
             output.status_code.unwrap_or(0),
             input.prompt,
             output.response

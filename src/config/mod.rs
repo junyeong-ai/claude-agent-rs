@@ -99,8 +99,9 @@ impl ConfigBuilder {
 
     /// Add file provider
     pub fn file(mut self, path: impl AsRef<std::path::Path>) -> Self {
-        self.providers
-            .push(Box::new(FileConfigProvider::new(path.as_ref().to_path_buf())));
+        self.providers.push(Box::new(FileConfigProvider::new(
+            path.as_ref().to_path_buf(),
+        )));
         self
     }
 

@@ -87,10 +87,7 @@ impl Tool for KillShellTool {
                         }
                     }
                     Err(e) => {
-                        return ToolResult::error(format!(
-                            "Failed to execute kill command: {}",
-                            e
-                        ));
+                        return ToolResult::error(format!("Failed to execute kill command: {}", e));
                     }
                 }
             }
@@ -98,7 +95,7 @@ impl Tool for KillShellTool {
             #[cfg(not(unix))]
             {
                 return ToolResult::error(
-                    "KillShell is currently only supported on Unix systems".to_string()
+                    "KillShell is currently only supported on Unix systems".to_string(),
                 );
             }
         }

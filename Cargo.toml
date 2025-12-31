@@ -1,6 +1,6 @@
 [package]
 name = "claude-agent"
-version = "0.1.5"
+version = "0.1.6"
 edition = "2021"
 rust-version = "1.75"
 license = "MIT OR Apache-2.0"
@@ -84,6 +84,14 @@ path = "examples/streaming.rs"
 [[example]]
 name = "agent_loop"
 path = "examples/agent_loop.rs"
+
+[[example]]
+name = "integration_test"
+path = "examples/integration_test.rs"
+
+[[example]]
+name = "comprehensive_test"
+path = "examples/comprehensive_test.rs"
 
 [package.metadata.docs.rs]
 all-features = true

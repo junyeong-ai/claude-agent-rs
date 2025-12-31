@@ -1,10 +1,15 @@
 //! Agent configuration options.
 
 use std::path::PathBuf;
+use std::sync::Arc;
 use std::time::Duration;
 
 use crate::auth::{ChainProvider, ClaudeCliProvider, CredentialProvider, ExplicitProvider};
+use crate::context::{ChainMemoryProvider, ContextBuilder, MemoryProvider};
+use crate::extension::{Extension, ExtensionContext, ExtensionRegistry};
+use crate::hooks::{Hook, HookManager};
 use crate::skills::{SkillDefinition, SkillExecutor, SkillRegistry};
+use crate::tools::{Tool, ToolRegistry};
 
 /// Tool access configuration.
 #[derive(Debug, Clone, Default)]
@@ -92,156 +97,240 @@ impl Default for AgentOptions {
 }
 
 /// Builder for agent configuration.
-#[derive(Default)]
 pub struct AgentBuilder {
     options: AgentOptions,
     credential_provider: Option<Box<dyn CredentialProvider>>,
     skill_registry: Option<SkillRegistry>,
     skills_dir: Option<PathBuf>,
+    extensions: ExtensionRegistry,
+    hooks: HookManager,
+    custom_tools: Vec<Arc<dyn Tool>>,
+    memory_providers: Vec<Box<dyn MemoryProvider>>,
+}
+
+impl Default for AgentBuilder {
+    fn default() -> Self {
+        Self {
+            options: AgentOptions::default(),
+            credential_provider: None,
+            skill_registry: None,
+            skills_dir: None,
+            extensions: ExtensionRegistry::new(),
+            hooks: HookManager::new(),
+            custom_tools: Vec::new(),
+            memory_providers: Vec::new(),
+        }
+    }
 }
 
 impl AgentBuilder {
-    /// Create a new builder.
+    /// Creates a new builder.
     pub fn new() -> Self {
         Self::default()
     }
 
-    /// Set API key for authentication.
+    /// Sets API key for authentication.
     pub fn api_key(mut self, key: impl Into<String>) -> Self {
         self.credential_provider = Some(Box::new(ExplicitProvider::api_key(key)));
         self
     }
 
-    /// Set OAuth token for authentication.
+    /// Sets OAuth token for authentication.
     pub fn oauth_token(mut self, token: impl Into<String>) -> Self {
         self.credential_provider = Some(Box::new(ExplicitProvider::oauth(token)));
         self
     }
 
-    /// Use Claude Code CLI credentials.
+    /// Uses Claude Code CLI credentials.
     pub fn from_claude_cli(mut self) -> Self {
         self.credential_provider = Some(Box::new(ClaudeCliProvider::new()));
         self
     }
 
-    /// Auto-resolve credentials (environment → CLI).
+    /// Auto-resolves credentials (environment → CLI).
     pub fn auto_resolve(mut self) -> Self {
         self.credential_provider = Some(Box::new(ChainProvider::default()));
         self
     }
 
-    /// Use custom credential provider.
+    /// Uses custom credential provider.
     pub fn credential_provider<P: CredentialProvider + 'static>(mut self, provider: P) -> Self {
         self.credential_provider = Some(Box::new(provider));
         self
     }
 
-    /// Set the model.
+    /// Sets the model.
     pub fn model(mut self, model: impl Into<String>) -> Self {
         self.options.model = model.into();
         self
     }
 
-    /// Set max tokens.
+    /// Sets max tokens.
     pub fn max_tokens(mut self, tokens: u32) -> Self {
         self.options.max_tokens = tokens;
         self
     }
 
-    /// Set tool access.
+    /// Sets tool access configuration.
     pub fn tools(mut self, access: ToolAccess) -> Self {
         self.options.tool_access = access;
         self
     }
 
-    /// Set working directory.
+    /// Registers a custom tool.
+    pub fn tool<T: Tool + 'static>(mut self, tool: T) -> Self {
+        self.custom_tools.push(Arc::new(tool));
+        self
+    }
+
+    /// Sets working directory.
     pub fn working_dir(mut self, path: impl Into<PathBuf>) -> Self {
         self.options.working_dir = Some(path.into());
         self
     }
 
-    /// Set system prompt.
+    /// Sets system prompt.
     pub fn system_prompt(mut self, prompt: impl Into<String>) -> Self {
         self.options.system_prompt = Some(prompt.into());
         self
     }
 
-    /// Set max iterations.
+    /// Sets max iterations.
     pub fn max_iterations(mut self, max: usize) -> Self {
         self.options.max_iterations = max;
         self
     }
 
-    /// Set timeout.
+    /// Sets timeout.
     pub fn timeout(mut self, timeout: Duration) -> Self {
         self.options.timeout = Some(timeout);
         self
     }
 
-    /// Enable/disable auto compaction.
+    /// Enables/disables auto compaction.
     pub fn auto_compact(mut self, enabled: bool) -> Self {
         self.options.auto_compact = enabled;
         self
     }
 
-    /// Set a custom skill registry.
+    /// Sets a custom skill registry.
     pub fn skill_registry(mut self, registry: SkillRegistry) -> Self {
         self.skill_registry = Some(registry);
         self
     }
 
-    /// Register a skill.
+    /// Registers a skill.
     pub fn skill(mut self, skill: SkillDefinition) -> Self {
-        if self.skill_registry.is_none() {
-            self.skill_registry = Some(SkillRegistry::new());
-        }
-        if let Some(ref mut registry) = self.skill_registry {
-            registry.register(skill);
-        }
+        self.skill_registry
+            .get_or_insert_with(SkillRegistry::new)
+            .register(skill);
         self
     }
 
-    /// Load skills from a directory (.claude/skills/).
+    /// Loads skills from a directory (.claude/skills/).
     pub fn skills_dir(mut self, path: impl Into<PathBuf>) -> Self {
         self.skills_dir = Some(path.into());
         self
     }
 
-    /// Get the configured skill executor.
-    fn build_skill_executor(&mut self) -> SkillExecutor {
-        let registry = self
+    /// Registers an extension.
+    pub fn extension<E: Extension + 'static>(mut self, ext: E) -> Self {
+        self.extensions.add(ext);
+        self
+    }
+
+    /// Registers multiple extensions.
+    pub fn extensions<I, E>(mut self, exts: I) -> Self
+    where
+        I: IntoIterator<Item = E>,
+        E: Extension + 'static,
+    {
+        for ext in exts {
+            self.extensions.add(ext);
+        }
+        self
+    }
+
+    /// Registers a hook.
+    pub fn hook<H: Hook + 'static>(mut self, hook: H) -> Self {
+        self.hooks.register(hook);
+        self
+    }
+
+    /// Adds a memory provider.
+    pub fn memory_provider<M: MemoryProvider + 'static>(mut self, provider: M) -> Self {
+        self.memory_providers.push(Box::new(provider));
+        self
+    }
+
+    /// Builds the agent.
+    pub fn build(mut self) -> crate::Result<super::Agent> {
+        // Build client
+        let client = self.build_client()?;
+
+        // Initialize skill registry and executor
+        let skill_registry = self
             .skill_registry
             .take()
             .unwrap_or_else(SkillRegistry::with_defaults);
-        SkillExecutor::new(registry)
+
+        // Build tool registry with skills
+        let skill_executor = SkillExecutor::new(skill_registry);
+        let mut tools = ToolRegistry::with_skills(
+            &self.options.tool_access,
+            self.options.working_dir.clone(),
+            skill_executor,
+        );
+
+        // Register custom tools first
+        for tool in std::mem::take(&mut self.custom_tools) {
+            tools.register(tool);
+        }
+
+        // Build extension context and execute extensions
+        if !self.extensions.is_empty() {
+            let mut memory = ChainMemoryProvider::new();
+            let mut context_builder = ContextBuilder::new();
+            let mut dummy_skills = SkillRegistry::new();
+
+            let mut ext_ctx = ExtensionContext {
+                tools: &mut tools,
+                hooks: &mut self.hooks,
+                skills: &mut dummy_skills,
+                memory: &mut memory,
+                context: &mut context_builder,
+                options: &self.options,
+            };
+
+            self.extensions.build_all(&mut ext_ctx)?;
+        }
+
+        Ok(super::Agent::with_components(
+            client,
+            self.options,
+            tools,
+            self.hooks,
+            self.extensions,
+        ))
     }
 
-    /// Build the agent.
-    pub fn build(mut self) -> crate::Result<super::Agent> {
-        // Build skill executor first (before moving self)
-        let skill_executor = self.build_skill_executor();
+    /// Builds the client from credentials.
+    fn build_client(&self) -> crate::Result<crate::Client> {
+        let mut builder = crate::Client::builder();
 
-        let mut client_builder = crate::Client::builder();
-
-        if let Some(provider) = self.credential_provider {
+        if let Some(ref provider) = self.credential_provider {
             let credential = futures::executor::block_on(provider.resolve())?;
-            client_builder = crate::Client::builder();
             match credential {
                 crate::auth::Credential::ApiKey(key) => {
-                    client_builder = client_builder.api_key(key);
+                    builder = builder.api_key(key);
                 }
                 crate::auth::Credential::OAuth(oauth) => {
-                    client_builder = client_builder.oauth_token(oauth.access_token);
+                    builder = builder.oauth_token(oauth.access_token);
                 }
             }
         }
 
-        let client = client_builder.build()?;
-        Ok(super::Agent::with_skills(
-            client,
-            self.options,
-            skill_executor,
-        ))
+        builder.build()
     }
 }
 

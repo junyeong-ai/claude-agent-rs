@@ -57,6 +57,7 @@ pub mod auth;
 pub mod client;
 pub mod config;
 pub mod context;
+pub mod extension;
 pub mod hooks;
 pub mod mcp;
 pub mod permissions;
@@ -82,6 +83,7 @@ pub use context::{
     HttpMemoryProvider, InMemoryProvider, MemoryContent, MemoryLoader, MemoryProvider,
     RoutingStrategy, RuleIndex, SkillIndex, StaticContext, MAX_IMPORT_DEPTH,
 };
+pub use extension::{Extension, ExtensionContext, ExtensionMeta, ExtensionRegistry};
 pub use hooks::{Hook, HookContext, HookEvent, HookInput, HookManager, HookOutput};
 pub use permissions::{PermissionDecision, PermissionMode, PermissionPolicy, PermissionResult};
 pub use session::{

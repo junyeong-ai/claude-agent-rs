@@ -7,6 +7,8 @@ use futures::Stream;
 use tokio::sync::Mutex;
 
 use super::{AgentOptions, ConversationContext};
+use crate::extension::ExtensionRegistry;
+use crate::hooks::{HookContext, HookEvent, HookInput, HookManager};
 use crate::types::{ContentBlock, Message, StopReason, ToolResultBlock, ToolUseBlock, Usage};
 use crate::{Client, Result, ToolRegistry};
 
@@ -66,25 +68,31 @@ impl AgentResult {
     }
 }
 
-/// The main agent executor
+/// The main agent executor.
 pub struct Agent {
     client: Client,
     options: AgentOptions,
     tools: ToolRegistry,
+    hooks: HookManager,
+    extensions: ExtensionRegistry,
+    session_id: String,
 }
 
 impl Agent {
-    /// Create a new agent with default tools.
+    /// Creates a new agent with default tools and empty hooks.
     pub fn new(client: Client, options: AgentOptions) -> Self {
         let tools = ToolRegistry::default_tools(&options.tool_access, options.working_dir.clone());
         Self {
             client,
             options,
             tools,
+            hooks: HookManager::new(),
+            extensions: ExtensionRegistry::new(),
+            session_id: uuid::Uuid::new_v4().to_string(),
         }
     }
 
-    /// Create a new agent with custom skill executor.
+    /// Creates a new agent with custom skill executor.
     pub fn with_skills(
         client: Client,
         options: AgentOptions,
@@ -99,12 +107,49 @@ impl Agent {
             client,
             options,
             tools,
+            hooks: HookManager::new(),
+            extensions: ExtensionRegistry::new(),
+            session_id: uuid::Uuid::new_v4().to_string(),
         }
     }
 
-    /// Create an agent builder
+    /// Creates a new agent with all components.
+    pub fn with_components(
+        client: Client,
+        options: AgentOptions,
+        tools: ToolRegistry,
+        hooks: HookManager,
+        extensions: ExtensionRegistry,
+    ) -> Self {
+        Self {
+            client,
+            options,
+            tools,
+            hooks,
+            extensions,
+            session_id: uuid::Uuid::new_v4().to_string(),
+        }
+    }
+
+    /// Creates an agent builder.
     pub fn builder() -> super::AgentBuilder {
         super::AgentBuilder::new()
+    }
+
+    /// Returns the hook manager.
+    pub fn hooks(&self) -> &HookManager {
+        &self.hooks
+    }
+
+    /// Returns the session ID.
+    pub fn session_id(&self) -> &str {
+        &self.session_id
+    }
+
+    /// Creates a hook context for this agent.
+    fn hook_context(&self) -> HookContext {
+        HookContext::new(&self.session_id)
+            .with_cwd(self.options.working_dir.clone().unwrap_or_default())
     }
 
     /// Execute a prompt (non-streaming)
@@ -144,16 +189,42 @@ impl Agent {
                 break;
             }
 
-            // Execute tools
+            // Execute tools with hooks
             let tool_uses = response.tool_uses();
             let mut results = Vec::new();
+            let hook_ctx = self.hook_context();
 
             for tool_use in tool_uses {
+                // Pre-tool hook
+                let pre_input =
+                    HookInput::pre_tool_use(&self.session_id, &tool_use.name, tool_use.input.clone());
+                let pre_output = self
+                    .hooks
+                    .execute(HookEvent::PreToolUse, pre_input, &hook_ctx)
+                    .await?;
+
+                if !pre_output.continue_execution {
+                    results.push(ToolResultBlock::error(
+                        &tool_use.id,
+                        pre_output.stop_reason.unwrap_or_else(|| "Blocked by hook".into()),
+                    ));
+                    continue;
+                }
+
+                // Use updated input if provided
+                let input = pre_output.updated_input.unwrap_or(tool_use.input.clone());
+
                 tool_calls += 1;
-                let result = self
-                    .tools
-                    .execute(&tool_use.name, tool_use.input.clone())
+                let result = self.tools.execute(&tool_use.name, input).await;
+
+                // Post-tool hook
+                let post_input =
+                    HookInput::post_tool_use(&self.session_id, &tool_use.name, result.clone());
+                let _ = self
+                    .hooks
+                    .execute(HookEvent::PostToolUse, post_input, &hook_ctx)
                     .await;
+
                 results.push(ToolResultBlock::from_output(&tool_use.id, result));
             }
 
@@ -445,6 +516,12 @@ impl StreamState {
         }
 
         self.pending_events.pop_front()
+    }
+}
+
+impl Drop for Agent {
+    fn drop(&mut self) {
+        self.extensions.cleanup_all();
     }
 }
 

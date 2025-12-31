@@ -24,9 +24,7 @@ pub use composite::CompositeConfigProvider;
 pub use env::EnvConfigProvider;
 pub use file::FileConfigProvider;
 pub use memory::MemoryConfigProvider;
-pub use provider::{
-    ConfigChange, ConfigProvider, ConfigProviderExt, TenantAwareConfig, WatchableConfig,
-};
+pub use provider::{ConfigProvider, ConfigProviderExt};
 pub use settings::{PermissionSettings, Settings, SettingsLoader};
 
 use thiserror::Error;

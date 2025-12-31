@@ -9,7 +9,7 @@ use super::memory_loader::MemoryLoader;
 use super::orchestrator::ContextOrchestrator;
 use super::rule_index::RuleIndex;
 use super::skill_index::SkillIndex;
-use super::static_context::{StaticContext, StaticContextPart};
+use super::static_context::StaticContext;
 use super::{ContextError, ContextResult};
 
 /// Builder for constructing context configuration
@@ -314,114 +314,6 @@ impl ContextBuilder {
         }
 
         Ok(())
-    }
-}
-
-/// Source trait for loading context from different backends
-#[async_trait::async_trait]
-pub trait ContextSource: Send + Sync {
-    /// Source name for logging
-    fn name(&self) -> &str;
-
-    /// Load static context parts
-    async fn load_static(&self) -> ContextResult<Vec<StaticContextPart>>;
-
-    /// Load skill indices
-    async fn load_skill_indices(&self) -> ContextResult<Vec<SkillIndex>>;
-
-    /// Load rule indices
-    async fn load_rule_indices(&self) -> ContextResult<Vec<RuleIndex>>;
-}
-
-/// File-based context source (CLI compatible)
-pub struct FileContextSource {
-    /// Base path for .claude directory
-    base_path: PathBuf,
-}
-
-impl FileContextSource {
-    /// Create a new file context source
-    pub fn new(base_path: impl AsRef<Path>) -> Self {
-        Self {
-            base_path: base_path.as_ref().to_path_buf(),
-        }
-    }
-}
-
-#[async_trait::async_trait]
-impl ContextSource for FileContextSource {
-    fn name(&self) -> &str {
-        "file"
-    }
-
-    async fn load_static(&self) -> ContextResult<Vec<StaticContextPart>> {
-        let mut parts = Vec::new();
-
-        // Load CLAUDE.md
-        let claude_md_path = self.base_path.join("CLAUDE.md");
-        if claude_md_path.exists() {
-            let content = tokio::fs::read_to_string(&claude_md_path)
-                .await
-                .map_err(ContextError::Io)?;
-
-            parts.push(StaticContextPart::cacheable(content, 100));
-        }
-
-        Ok(parts)
-    }
-
-    async fn load_skill_indices(&self) -> ContextResult<Vec<SkillIndex>> {
-        Ok(Vec::new())
-    }
-
-    async fn load_rule_indices(&self) -> ContextResult<Vec<RuleIndex>> {
-        Ok(Vec::new())
-    }
-}
-
-/// In-memory context source for testing/code-defined context
-pub struct MemoryContextSource {
-    /// Static content
-    content: String,
-    /// Priority
-    priority: i32,
-}
-
-impl MemoryContextSource {
-    /// Create a new memory context source
-    pub fn new(content: impl Into<String>) -> Self {
-        Self {
-            content: content.into(),
-            priority: 50,
-        }
-    }
-
-    /// Set priority
-    pub fn with_priority(mut self, priority: i32) -> Self {
-        self.priority = priority;
-        self
-    }
-}
-
-#[async_trait::async_trait]
-impl ContextSource for MemoryContextSource {
-    fn name(&self) -> &str {
-        "memory"
-    }
-
-    async fn load_static(&self) -> ContextResult<Vec<StaticContextPart>> {
-        Ok(vec![StaticContextPart::cacheable(
-            &self.content,
-            self.priority,
-        )])
-    }
-
-    async fn load_skill_indices(&self) -> ContextResult<Vec<SkillIndex>> {
-        Ok(Vec::new())
-    }
-
-    async fn load_rule_indices(&self) -> ContextResult<Vec<RuleIndex>> {
-        Ok(Vec::new())
     }
 }
 

@@ -9,7 +9,6 @@ use crate::types::{context_window, TokenUsage, DEFAULT_COMPACT_THRESHOLD};
 use super::rule_index::{LoadedRule, RulesEngine};
 use super::skill_index::SkillIndex;
 use super::static_context::StaticContext;
-use super::{ContextError, ContextResult};
 
 /// Context window state tracking
 #[derive(Clone, Debug)]
@@ -176,49 +175,9 @@ impl ContextOrchestrator {
         self.skill_indices.iter().find(|s| s.matches_command(input))
     }
 
-    /// Activate a skill (load full definition)
-    ///
-    /// Returns the skill content if successful.
-    pub async fn activate_skill(
-        &mut self,
-        name: &str,
-        loader: &dyn SkillLoader,
-    ) -> ContextResult<String> {
-        // Already active?
-        if let Some(skill) = self.active_skills.get(name) {
-            return Ok(skill.content.clone());
-        }
-
-        // Find the index
-        let _index = self
-            .skill_indices
-            .iter()
-            .find(|s| s.name == name)
-            .ok_or_else(|| ContextError::SkillNotFound {
-                name: name.to_string(),
-            })?;
-
-        // Load the full skill
-        let skill = loader
-            .load_skill(name)
-            .await
-            .map_err(|e| ContextError::Source {
-                message: e.to_string(),
-            })?;
-
-        // Check token budget (rough estimate)
-        let skill_tokens = (skill.content.len() / 4) as u64;
-        if self.context_state.current_input_tokens + skill_tokens > self.context_state.max_tokens {
-            return Err(ContextError::TokenBudgetExceeded {
-                current: self.context_state.current_input_tokens + skill_tokens,
-                limit: self.context_state.max_tokens,
-            });
-        }
-
-        let content = skill.content.clone();
-        self.active_skills.insert(name.to_string(), skill);
-
-        Ok(content)
+    /// Activate a skill by adding it to active skills
+    pub fn activate_skill(&mut self, skill: SkillDefinition) {
+        self.active_skills.insert(skill.name.clone(), skill);
     }
 
     /// Deactivate a skill
@@ -226,49 +185,14 @@ impl ContextOrchestrator {
         self.active_skills.remove(name).is_some()
     }
 
-    /// Evaluate rules for the current file
-    ///
-    /// Returns rule content for matching rules.
-    pub async fn evaluate_rules(&mut self, loader: &dyn RuleLoader) -> ContextResult<Vec<String>> {
-        let file_path = match &self.current_file {
-            Some(p) => p.clone(),
-            None => return Ok(Vec::new()),
-        };
+    /// Get an active skill by name
+    pub fn get_active_skill(&self, name: &str) -> Option<&SkillDefinition> {
+        self.active_skills.get(name)
+    }
 
-        // Collect matching rule names first to avoid borrow issues
-        let matching_names: Vec<(String, super::rule_index::RuleIndex)> = self
-            .rules_engine
-            .find_matching(&file_path)
-            .into_iter()
-            .map(|r| (r.name.clone(), r.clone()))
-            .collect();
-
-        let mut rule_contents = Vec::new();
-
-        for (name, rule_index) in matching_names {
-            // Check cache first
-            if let Some(cached) = self.rules_engine.get_cached(&name) {
-                rule_contents.push(cached.content.clone());
-                continue;
-            }
-
-            // Load and cache
-            let content = loader
-                .load_rule(&name)
-                .await
-                .map_err(|e| ContextError::Source {
-                    message: e.to_string(),
-                })?;
-
-            let loaded = LoadedRule::new(rule_index.clone(), content.clone());
-            self.rules_engine.cache_rule(loaded);
-            self.active_rules
-                .insert(name.clone(), LoadedRule::new(rule_index, content.clone()));
-
-            rule_contents.push(content);
-        }
-
-        Ok(rule_contents)
+    /// Activate a rule by adding it to active rules
+    pub fn activate_rule(&mut self, rule: LoadedRule) {
+        self.active_rules.insert(rule.index.name.clone(), rule);
     }
 
     /// Get current orchestrator state snapshot
@@ -298,33 +222,6 @@ impl ContextOrchestrator {
     pub fn build_rules_summary(&self) -> String {
         self.rules_engine.summary()
     }
-}
-
-/// Trait for loading full skill definitions
-#[async_trait::async_trait]
-pub trait SkillLoader: Send + Sync {
-    /// Load the full skill definition by name
-    async fn load_skill(
-        &self,
-        name: &str,
-    ) -> Result<SkillDefinition, Box<dyn std::error::Error + Send + Sync>>;
-
-    /// Load a reference file for a skill
-    async fn load_reference(
-        &self,
-        skill: &str,
-        path: &str,
-    ) -> Result<String, Box<dyn std::error::Error + Send + Sync>>;
-}
-
-/// Trait for loading rule content
-#[async_trait::async_trait]
-pub trait RuleLoader: Send + Sync {
-    /// Load the full rule content by name
-    async fn load_rule(
-        &self,
-        name: &str,
-    ) -> Result<String, Box<dyn std::error::Error + Send + Sync>>;
 }
 
 #[cfg(test)]

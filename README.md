@@ -18,7 +18,7 @@ CLI 서브프로세스 없이 Claude API를 직접 호출하는 순수 Rust SDK�
 | **순수 Rust** | Node.js 의존성 없음, ~50MB 메모리 |
 | **네이티브 스트리밍** | `futures::Stream` 기반 실시간 응답 |
 | **멀티 클라우드** | Anthropic, Bedrock, Vertex AI, Foundry |
-| **11개 내장 도구** | Read, Write, Edit, Bash, Glob, Grep 등 |
+| **14개 내장 도구** | Read, Write, Edit, Bash, Glob, Grep, Task 등 |
 | **스킬 시스템** | YAML frontmatter 기반 재사용 워크플로우 |
 | **메모리 시스템** | CLAUDE.md, @import 구문, 계층적 로딩 |
 
@@ -153,19 +153,35 @@ export AZURE_API_KEY=...
 
 ## 내장 도구
 
+### 파일
 | 도구 | 설명 |
 |------|------|
-| `Read` | 파일 읽기 (offset/limit 지원) |
+| `Read` | 파일 읽기 (이미지, PDF, Jupyter 노트북 포함) |
 | `Write` | 파일 생성/덮어쓰기 |
 | `Edit` | 문자열 치환 기반 편집 |
-| `Bash` | 셸 명령 실행 (타임아웃, 백그라운드) |
+| `NotebookEdit` | Jupyter 노트북 셀 편집 |
 | `Glob` | 패턴 기반 파일 검색 |
 | `Grep` | 정규식 내용 검색 |
-| `TodoWrite` | 작업 목록 관리 |
+
+### 실행
+| 도구 | 설명 |
+|------|------|
+| `Bash` | 셸 명령 실행 (타임아웃, 백그라운드) |
+| `KillShell` | 백그라운드 프로세스 종료 |
+
+### 웹
+| 도구 | 설명 |
+|------|------|
 | `WebFetch` | URL 콘텐츠 가져오기 |
 | `WebSearch` | 웹 검색 |
-| `NotebookEdit` | Jupyter 노트북 편집 |
-| `KillShell` | 백그라운드 프로세스 종료 |
+
+### 에이전트
+| 도구 | 설명 |
+|------|------|
+| `Task` | 서브에이전트 실행 |
+| `TaskOutput` | 백그라운드 작업 결과 조회 |
+| `TodoWrite` | 작업 목록 관리 |
+| `Skill` | 등록된 스킬 실행 |
 
 ### 도구 접근 제어
 

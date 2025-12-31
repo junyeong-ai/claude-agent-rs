@@ -6,7 +6,7 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 
-use crate::agent::ToolAccess;
+use crate::agent::{TaskOutputTool, TaskTool, ToolAccess};
 use crate::types::ToolDefinition;
 
 /// Result of a tool execution
@@ -92,16 +92,19 @@ impl ToolRegistry {
             Arc::new(super::EditTool::new(wd.clone())),
             Arc::new(super::GlobTool::new(wd.clone())),
             Arc::new(super::GrepTool::new(wd.clone())),
+            Arc::new(super::NotebookEditTool::new(wd.clone())),
             // Shell tools
             Arc::new(super::BashTool::new(wd.clone())),
-            // Productivity tools
-            Arc::new(super::TodoWriteTool::new()),
+            Arc::new(super::KillShellTool),
             // Web tools
             Arc::new(super::WebSearchTool::new()),
             Arc::new(super::WebFetchTool::new()),
-            // Notebook tools
-            Arc::new(super::NotebookEditTool::new(wd.clone())),
-            // Skill tool for progressive disclosure
+            // Agent tools
+            Arc::new(TaskTool::new()),
+            Arc::new(TaskOutputTool::new()),
+            // Productivity tools
+            Arc::new(super::TodoWriteTool::new()),
+            // Skill tool
             Arc::new(crate::skills::SkillTool::with_defaults()),
         ];
 

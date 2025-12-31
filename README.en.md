@@ -18,7 +18,7 @@ A pure Rust SDK that calls the Claude API directly without CLI subprocess depend
 | **Pure Rust** | No Node.js dependency, ~50MB memory |
 | **Native Streaming** | Real-time responses via `futures::Stream` |
 | **Multi-Cloud** | Anthropic, Bedrock, Vertex AI, Foundry |
-| **11 Built-in Tools** | Read, Write, Edit, Bash, Glob, Grep, etc. |
+| **14 Built-in Tools** | Read, Write, Edit, Bash, Glob, Grep, Task, Skill, etc. |
 | **Skills System** | YAML frontmatter-based reusable workflows |
 | **Memory System** | CLAUDE.md, @import syntax, hierarchical loading |
 
@@ -161,11 +161,14 @@ export AZURE_API_KEY=...
 | `Bash` | Execute shell commands (timeout, background) |
 | `Glob` | Pattern-based file search |
 | `Grep` | Regex content search |
-| `TodoWrite` | Task list management |
-| `WebFetch` | Fetch URL content |
-| `WebSearch` | Web search |
 | `NotebookEdit` | Jupyter notebook editing |
 | `KillShell` | Terminate background processes |
+| `WebFetch` | Fetch URL content |
+| `WebSearch` | Web search |
+| `Task` | Spawn sub-agents for complex tasks |
+| `TaskOutput` | Retrieve sub-agent results |
+| `TodoWrite` | Task list management |
+| `Skill` | Execute predefined skill workflows |
 
 ### Tool Access Control
 

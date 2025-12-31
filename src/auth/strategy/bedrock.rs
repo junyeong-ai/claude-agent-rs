@@ -5,7 +5,7 @@ use std::fmt::Debug;
 use crate::client::messages::CreateMessageRequest;
 use crate::types::SystemPrompt;
 
-use super::env::{env_bool, env_with_fallbacks_or};
+use super::env::{env_bool, env_opt, env_with_fallbacks_or};
 use super::traits::AuthStrategy;
 
 /// AWS Bedrock authentication strategy.
@@ -48,11 +48,11 @@ impl BedrockStrategy {
 
         Some(Self {
             region: env_with_fallbacks_or(&["AWS_REGION", "AWS_DEFAULT_REGION"], "us-east-1"),
-            base_url: std::env::var("ANTHROPIC_BEDROCK_BASE_URL").ok(),
+            base_url: env_opt("ANTHROPIC_BEDROCK_BASE_URL"),
             skip_auth: env_bool("CLAUDE_CODE_SKIP_BEDROCK_AUTH"),
-            access_key_id: std::env::var("AWS_ACCESS_KEY_ID").ok(),
-            secret_access_key: std::env::var("AWS_SECRET_ACCESS_KEY").ok(),
-            session_token: std::env::var("AWS_SESSION_TOKEN").ok(),
+            access_key_id: env_opt("AWS_ACCESS_KEY_ID"),
+            secret_access_key: env_opt("AWS_SECRET_ACCESS_KEY"),
+            session_token: env_opt("AWS_SESSION_TOKEN"),
         })
     }
 

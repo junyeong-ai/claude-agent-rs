@@ -1,5 +1,10 @@
 //! Environment variable utilities for authentication strategies.
 
+/// Get an optional environment variable.
+pub fn env_opt(key: &str) -> Option<String> {
+    std::env::var(key).ok()
+}
+
 /// Parse a boolean environment variable.
 ///
 /// Returns `true` if the value is "1" or "true" (case-insensitive).
@@ -11,8 +16,7 @@ pub fn env_bool(key: &str) -> bool {
 
 /// Get an environment variable with fallback keys.
 pub fn env_with_fallbacks(keys: &[&str]) -> Option<String> {
-    keys.iter()
-        .find_map(|key| std::env::var(key).ok())
+    keys.iter().find_map(|key| env_opt(key))
 }
 
 /// Get an environment variable with fallback keys and a default value.

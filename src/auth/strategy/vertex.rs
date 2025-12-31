@@ -5,7 +5,7 @@ use std::fmt::Debug;
 use crate::client::messages::CreateMessageRequest;
 use crate::types::SystemPrompt;
 
-use super::env::{env_bool, env_with_fallbacks, env_with_fallbacks_or};
+use super::env::{env_bool, env_opt, env_with_fallbacks, env_with_fallbacks_or};
 use super::traits::AuthStrategy;
 
 /// Google Vertex AI authentication strategy.
@@ -54,7 +54,7 @@ impl VertexStrategy {
         Some(Self {
             project_id,
             region: env_with_fallbacks_or(&["CLOUD_ML_REGION", "GOOGLE_CLOUD_REGION"], "us-central1"),
-            base_url: std::env::var("ANTHROPIC_VERTEX_BASE_URL").ok(),
+            base_url: env_opt("ANTHROPIC_VERTEX_BASE_URL"),
             skip_auth: env_bool("CLAUDE_CODE_SKIP_VERTEX_AUTH"),
             access_token: None,
         })

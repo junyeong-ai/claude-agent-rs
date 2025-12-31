@@ -530,19 +530,15 @@ mod client_tests {
     /// Claude CLI 인증 빌더 테스트
     #[test]
     fn test_from_claude_cli_builder() {
-        let builder = Client::builder().from_claude_cli();
         // CLI credentials가 없어도 빌더 자체는 생성됨
-        assert!(true);
-        let _ = builder;
+        let _builder = Client::builder().from_claude_cli();
     }
 
     /// 자동 해결 빌더 테스트
     #[test]
     fn test_auto_resolve_builder() {
-        let builder = Client::builder().auto_resolve();
         // 빌더가 올바르게 설정되는지 확인
-        assert!(true);
-        let _ = builder;
+        let _builder = Client::builder().auto_resolve();
     }
 }
 

@@ -86,7 +86,7 @@ impl Default for AgentOptions {
             max_iterations: 100,
             timeout: Some(Duration::from_secs(600)),
             auto_compact: true,
-            compact_threshold: 0.85,
+            compact_threshold: crate::types::DEFAULT_COMPACT_THRESHOLD,
         }
     }
 }

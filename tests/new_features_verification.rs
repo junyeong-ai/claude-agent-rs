@@ -620,13 +620,11 @@ mod small_model_tests {
 
     #[test]
     fn test_small_model_builder() {
+        // Builder should accept small_model configuration
         let _builder = ClientBuilder::default()
             .api_key("test-key")
             .model("claude-sonnet-4-5")
             .small_model("claude-haiku-4-5");
-
-        // Builder should accept small_model configuration
-        assert!(true);
     }
 
     #[test]

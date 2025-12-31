@@ -5,7 +5,7 @@ use std::fmt::Debug;
 use crate::client::messages::CreateMessageRequest;
 use crate::types::SystemPrompt;
 
-use super::env::{env_bool, env_with_fallbacks};
+use super::env::{env_bool, env_opt, env_with_fallbacks};
 use super::traits::AuthStrategy;
 
 /// Microsoft Azure AI Foundry authentication strategy.
@@ -64,17 +64,17 @@ impl FoundryStrategy {
             "ANTHROPIC_FOUNDRY_DEPLOYMENT",
         ]).unwrap_or_else(|| "claude-sonnet".to_string());
 
-        let api_version = std::env::var("AZURE_API_VERSION")
-            .unwrap_or_else(|_| Self::DEFAULT_API_VERSION.to_string());
+        let api_version = env_opt("AZURE_API_VERSION")
+            .unwrap_or_else(|| Self::DEFAULT_API_VERSION.to_string());
 
         Some(Self {
             resource_name,
             deployment_name,
             api_version,
-            base_url: std::env::var("ANTHROPIC_FOUNDRY_BASE_URL").ok(),
+            base_url: env_opt("ANTHROPIC_FOUNDRY_BASE_URL"),
             skip_auth: env_bool("CLAUDE_CODE_SKIP_FOUNDRY_AUTH"),
-            api_key: std::env::var("AZURE_API_KEY").ok(),
-            access_token: std::env::var("AZURE_ACCESS_TOKEN").ok(),
+            api_key: env_opt("AZURE_API_KEY"),
+            access_token: env_opt("AZURE_ACCESS_TOKEN"),
         })
     }
 

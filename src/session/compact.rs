@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 
 use super::state::{Session, SessionMessage};
 use super::{SessionError, SessionResult};
-use crate::types::{ContentBlock, Role};
+use crate::types::{ContentBlock, Role, DEFAULT_COMPACT_THRESHOLD};
 
 /// Compact strategy configuration
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -29,7 +29,7 @@ impl Default for CompactStrategy {
     fn default() -> Self {
         Self {
             enabled: true,
-            threshold_percent: 0.8,
+            threshold_percent: DEFAULT_COMPACT_THRESHOLD,
             summary_model: "claude-haiku-4-5".to_string(),
             keep_recent_messages: 4,
             max_summary_tokens: 2000,

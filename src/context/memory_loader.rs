@@ -3,12 +3,13 @@
 //! Implements Claude Code CLI compatible memory loading:
 //! - Recursive loading from current directory to root
 //! - CLAUDE.local.md support (auto-gitignored)
-//! - @import syntax for file inclusion
+//! - @import syntax for file inclusion (max 5 hops)
 //! - .claude/rules/ directory loading
 
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
+use super::provider::MAX_IMPORT_DEPTH;
 use super::{ContextError, ContextResult};
 
 /// Memory loader for CLAUDE.md files.
@@ -16,6 +17,8 @@ use super::{ContextError, ContextResult};
 pub struct MemoryLoader {
     /// Loaded file paths (to prevent circular imports)
     loaded_paths: HashSet<PathBuf>,
+    /// Current import depth
+    current_depth: usize,
 }
 
 impl MemoryLoader {
@@ -130,6 +133,16 @@ impl MemoryLoader {
     ) -> std::pin::Pin<Box<dyn std::future::Future<Output = ContextResult<String>> + Send + 'a>>
     {
         Box::pin(async move {
+            // Check depth limit
+            if self.current_depth >= MAX_IMPORT_DEPTH {
+                tracing::warn!(
+                    "Import depth limit ({}) reached, skipping: {}",
+                    MAX_IMPORT_DEPTH,
+                    path.display()
+                );
+                return Ok(String::new());
+            }
+
             let canonical = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
 
             // Prevent circular imports
@@ -145,9 +158,14 @@ impl MemoryLoader {
                         message: format!("Failed to read {}: {}", path.display(), e),
                     })?;
 
-            // Process @import directives
-            self.process_imports(&content, path.parent().unwrap_or(Path::new(".")))
-                .await
+            // Increment depth before processing imports
+            self.current_depth += 1;
+            let result = self
+                .process_imports(&content, path.parent().unwrap_or(Path::new(".")))
+                .await;
+            self.current_depth -= 1;
+
+            result
         })
     }
 

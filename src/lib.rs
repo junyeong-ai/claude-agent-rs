@@ -78,8 +78,9 @@ pub use auth::{
 };
 pub use client::{Client, ClientBuilder, CloudProvider, Config};
 pub use context::{
-    ContextBuilder, ContextOrchestrator, MemoryContent, MemoryLoader, RoutingStrategy, RuleIndex,
-    SkillIndex, StaticContext,
+    ChainMemoryProvider, ContextBuilder, ContextOrchestrator, FileMemoryProvider,
+    HttpMemoryProvider, InMemoryProvider, MemoryContent, MemoryLoader, MemoryProvider,
+    RoutingStrategy, RuleIndex, SkillIndex, StaticContext, MAX_IMPORT_DEPTH,
 };
 pub use hooks::{Hook, HookContext, HookEvent, HookInput, HookManager, HookOutput};
 pub use permissions::{PermissionDecision, PermissionMode, PermissionPolicy, PermissionResult};
@@ -87,8 +88,9 @@ pub use session::{
     CompactExecutor, CompactStrategy, Session, SessionConfig, SessionId, SessionManager,
 };
 pub use skills::{
-    CommandLoader, SkillDefinition, SkillExecutor, SkillRegistry, SkillResult, SkillSourceType,
-    SkillTool, SlashCommand,
+    ChainSkillProvider, CommandLoader, FileSkillProvider, InMemorySkillProvider, SkillDefinition,
+    SkillExecutor, SkillProvider, SkillRegistry, SkillResult, SkillSourceType, SkillTool,
+    SlashCommand,
 };
 pub use tools::{Tool, ToolAccess, ToolRegistry, ToolResult};
 pub use types::{ContentBlock, Message, Role};

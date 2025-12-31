@@ -3,16 +3,27 @@
 //! This module provides the skill system that allows developers to register,
 //! discover, and execute skills (specialized workflows), as well as slash
 //! commands for user-defined shortcuts.
+//!
+//! Supports multiple skill sources:
+//! - File-based (.claude/skills/, ~/.claude/skills/)
+//! - Programmatic (in-memory registration)
+//! - Remote (HTTP/database)
+//! - Plugin bundles
 
 mod commands;
 mod executor;
 mod loader;
+pub mod provider;
 mod registry;
 mod skill_tool;
 
 pub use commands::{CommandLoader, SlashCommand};
 pub use executor::{ExecutionMode, SkillExecutionCallback, SkillExecutor};
 pub use loader::{SkillLoader, SkillSource};
+pub use provider::{
+    ChainSkillProvider, FileSkillProvider, InMemorySkillProvider, SkillProvider,
+    SkillProviderError, SkillProviderResult,
+};
 pub use registry::SkillRegistry;
 pub use skill_tool::SkillTool;
 

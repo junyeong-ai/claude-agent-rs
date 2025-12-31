@@ -3,6 +3,7 @@
 pub mod builder;
 pub mod memory_loader;
 pub mod orchestrator;
+pub mod provider;
 pub mod routing;
 pub mod rule_index;
 pub mod skill_index;
@@ -13,6 +14,10 @@ pub use crate::types::TokenUsage;
 pub use builder::ContextBuilder;
 pub use memory_loader::{MemoryContent, MemoryLoader, RuleFile};
 pub use orchestrator::{ContextOrchestrator, ContextWindowState, OrchestratorState};
+pub use provider::{
+    ChainMemoryProvider, FileMemoryProvider, HttpMemoryProvider, InMemoryProvider, MemoryProvider,
+    MAX_IMPORT_DEPTH,
+};
 pub use routing::RoutingStrategy;
 pub use rule_index::{LoadedRule, RuleIndex, RuleSource};
 pub use skill_index::{SkillIndex, SkillScope, SkillSource};

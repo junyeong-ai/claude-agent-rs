@@ -2,11 +2,14 @@
 
 use std::collections::VecDeque;
 use std::sync::Arc;
+use std::time::Instant;
 
 use futures::Stream;
 use tokio::sync::Mutex;
+use tracing::{debug, info, instrument, warn};
 
-use super::{AgentOptions, ConversationContext};
+use super::{AgentMetrics, AgentOptions, AgentState, ConversationContext};
+use crate::types::CompactResult;
 use crate::extension::ExtensionRegistry;
 use crate::hooks::{HookContext, HookEvent, HookInput, HookManager};
 use crate::types::{ContentBlock, Message, StopReason, ToolResultBlock, ToolUseBlock, Usage};
@@ -41,30 +44,42 @@ pub enum AgentEvent {
     Complete(AgentResult),
 }
 
-/// Result of agent execution
+/// Result of agent execution.
 #[derive(Debug, Clone)]
 pub struct AgentResult {
-    /// Final text response
+    /// Final text response.
     pub text: String,
-    /// Total token usage
+    /// Total token usage.
     pub usage: Usage,
-    /// Number of tool calls made
+    /// Number of tool calls made.
     pub tool_calls: usize,
-    /// Number of iterations
+    /// Number of iterations.
     pub iterations: usize,
-    /// Stop reason
+    /// Stop reason.
     pub stop_reason: StopReason,
+    /// Final agent state.
+    pub state: AgentState,
+    /// Detailed execution metrics.
+    pub metrics: AgentMetrics,
 }
 
 impl AgentResult {
-    /// Get the final text response
+    /// Get the final text response.
+    #[must_use]
     pub fn text(&self) -> &str {
         &self.text
     }
 
-    /// Get total tokens used
+    /// Get total tokens used.
+    #[must_use]
     pub fn total_tokens(&self) -> u32 {
         self.usage.total()
+    }
+
+    /// Get the detailed metrics.
+    #[must_use]
+    pub fn metrics(&self) -> &AgentMetrics {
+        &self.metrics
     }
 }
 
@@ -132,16 +147,19 @@ impl Agent {
     }
 
     /// Creates an agent builder.
+    #[must_use]
     pub fn builder() -> super::AgentBuilder {
         super::AgentBuilder::new()
     }
 
     /// Returns the hook manager.
+    #[must_use]
     pub fn hooks(&self) -> &HookManager {
         &self.hooks
     }
 
     /// Returns the session ID.
+    #[must_use]
     pub fn session_id(&self) -> &str {
         &self.session_id
     }
@@ -152,99 +170,155 @@ impl Agent {
             .with_cwd(self.options.working_dir.clone().unwrap_or_default())
     }
 
-    /// Execute a prompt (non-streaming)
+    /// Execute a prompt (non-streaming) with timeout enforcement.
     pub async fn execute(&self, prompt: &str) -> Result<AgentResult> {
+        let timeout = self
+            .options
+            .timeout
+            .unwrap_or(std::time::Duration::from_secs(600));
+
+        tokio::time::timeout(timeout, self.execute_inner(prompt))
+            .await
+            .map_err(|_| crate::Error::Timeout(timeout))?
+    }
+
+    /// Internal execution logic without timeout wrapper.
+    #[instrument(skip(self, prompt), fields(session_id = %self.session_id))]
+    async fn execute_inner(&self, prompt: &str) -> Result<AgentResult> {
+        let execution_start = Instant::now();
         let mut context = ConversationContext::new();
         context.push(Message::user(prompt));
 
-        let mut iterations = 0;
-        let mut tool_calls = 0;
+        let mut metrics = AgentMetrics::default();
         let mut final_text = String::new();
         let mut final_stop_reason = StopReason::EndTurn;
 
+        info!(prompt_len = prompt.len(), "Starting agent execution");
+
         loop {
-            iterations += 1;
-            if iterations > self.options.max_iterations {
+            metrics.iterations += 1;
+            if metrics.iterations > self.options.max_iterations {
+                warn!(max = self.options.max_iterations, "Max iterations reached");
                 break;
             }
 
-            // Build and send request
+            debug!(iteration = metrics.iterations, "Starting iteration");
+
+            let api_start = Instant::now();
             let request = self.build_request(&context);
             let response = crate::client::MessagesClient::new(&self.client)
                 .create(request)
                 .await?;
+            metrics.record_api_call();
+            debug!(api_time_ms = api_start.elapsed().as_millis(), "API call completed");
 
             context.update_usage(response.usage);
+            metrics.add_usage(response.usage.input_tokens, response.usage.output_tokens);
             final_text = response.text();
             final_stop_reason = response.stop_reason.unwrap_or(StopReason::EndTurn);
 
-            // Add assistant message to context
             context.push(Message {
                 role: crate::types::Role::Assistant,
                 content: response.content.clone(),
             });
 
-            // Check if we need to execute tools
             if !response.wants_tool_use() {
+                debug!("No tool use requested, ending loop");
                 break;
             }
 
-            // Execute tools with hooks
             let tool_uses = response.tool_uses();
-            let mut results = Vec::new();
             let hook_ctx = self.hook_context();
 
-            for tool_use in tool_uses {
-                // Pre-tool hook
-                let pre_input =
-                    HookInput::pre_tool_use(&self.session_id, &tool_use.name, tool_use.input.clone());
+            let mut prepared: Vec<(String, String, serde_json::Value)> = Vec::new();
+            let mut blocked: Vec<ToolResultBlock> = Vec::new();
+
+            for tool_use in &tool_uses {
+                let pre_input = HookInput::pre_tool_use(
+                    &self.session_id,
+                    &tool_use.name,
+                    tool_use.input.clone(),
+                );
                 let pre_output = self
                     .hooks
                     .execute(HookEvent::PreToolUse, pre_input, &hook_ctx)
                     .await?;
 
                 if !pre_output.continue_execution {
-                    results.push(ToolResultBlock::error(
+                    debug!(tool = %tool_use.name, "Tool blocked by hook");
+                    blocked.push(ToolResultBlock::error(
                         &tool_use.id,
                         pre_output.stop_reason.unwrap_or_else(|| "Blocked by hook".into()),
                     ));
-                    continue;
+                } else {
+                    let input = pre_output.updated_input.unwrap_or(tool_use.input.clone());
+                    prepared.push((tool_use.id.clone(), tool_use.name.clone(), input));
                 }
+            }
 
-                // Use updated input if provided
-                let input = pre_output.updated_input.unwrap_or(tool_use.input.clone());
+            let tool_futures = prepared.iter().map(|(id, name, input)| {
+                let id = id.clone();
+                let name = name.clone();
+                let input = input.clone();
+                let tools = &self.tools;
+                async move {
+                    let start = Instant::now();
+                    let result = tools.execute(&name, input).await;
+                    let duration_ms = start.elapsed().as_millis() as u64;
+                    (id, name, result, duration_ms)
+                }
+            });
 
-                tool_calls += 1;
-                let result = self.tools.execute(&tool_use.name, input).await;
+            let parallel_results: Vec<_> = futures::future::join_all(tool_futures).await;
 
-                // Post-tool hook
-                let post_input =
-                    HookInput::post_tool_use(&self.session_id, &tool_use.name, result.clone());
+            let mut results = blocked;
+            for (id, name, result, duration_ms) in parallel_results {
+                let is_error = result.is_error();
+                debug!(tool = %name, duration_ms, is_error, "Tool execution completed");
+                metrics.record_tool(&name, duration_ms, is_error);
+
+                let post_input = HookInput::post_tool_use(&self.session_id, &name, result.clone());
                 let _ = self
                     .hooks
                     .execute(HookEvent::PostToolUse, post_input, &hook_ctx)
                     .await;
-
-                results.push(ToolResultBlock::from_output(&tool_use.id, result));
+                results.push(ToolResultBlock::from_output(&id, result));
             }
 
-            // Add tool results to context
             context.push(Message::tool_results(results));
 
-            // Check for compaction
             if self.options.auto_compact
                 && context.should_compact(200_000, self.options.compact_threshold)
             {
-                context.compact(&self.client).await?;
+                debug!("Compacting context");
+                if let Ok(CompactResult::Compacted { saved_tokens, .. }) =
+                    context.compact(&self.client).await
+                {
+                    info!(saved_tokens, "Context compacted");
+                    metrics.record_compaction();
+                }
             }
         }
+
+        metrics.execution_time_ms = execution_start.elapsed().as_millis() as u64;
+
+        info!(
+            iterations = metrics.iterations,
+            tool_calls = metrics.tool_calls,
+            api_calls = metrics.api_calls,
+            total_tokens = metrics.total_tokens(),
+            execution_time_ms = metrics.execution_time_ms,
+            "Agent execution completed"
+        );
 
         Ok(AgentResult {
             text: final_text,
             usage: *context.total_usage(),
-            tool_calls,
-            iterations,
+            tool_calls: metrics.tool_calls,
+            iterations: metrics.iterations,
             stop_reason: final_stop_reason,
+            state: AgentState::Completed,
+            metrics,
         })
     }
 
@@ -263,10 +337,7 @@ impl Agent {
 
         let client = self.client.clone();
         let options = self.options.clone();
-        let tools = Arc::new(ToolRegistry::default_tools(
-            &self.options.tool_access,
-            self.options.working_dir.clone(),
-        ));
+        let tools = Arc::new(self.tools.clone());
         let system_prompt = self.build_system_prompt();
 
         // Create an async stream that yields AgentEvents
@@ -326,15 +397,15 @@ impl ToolResultBlock {
     }
 }
 
-/// Internal state machine for streaming agent execution
+/// Internal state machine for streaming agent execution.
 struct StreamState {
     context: Arc<Mutex<ConversationContext>>,
     client: Client,
     options: AgentOptions,
     tools: Arc<ToolRegistry>,
     system_prompt: String,
-    iterations: usize,
-    tool_calls: usize,
+    metrics: AgentMetrics,
+    start_time: Instant,
     pending_events: VecDeque<Result<AgentEvent>>,
     pending_tool_results: Vec<ToolResultBlock>,
     pending_tool_uses: Vec<ToolUseBlock>,
@@ -356,8 +427,8 @@ impl StreamState {
             options,
             tools,
             system_prompt,
-            iterations: 0,
-            tool_calls: 0,
+            metrics: AgentMetrics::default(),
+            start_time: Instant::now(),
             pending_events: VecDeque::new(),
             pending_tool_results: Vec::new(),
             pending_tool_uses: Vec::new(),
@@ -367,7 +438,6 @@ impl StreamState {
     }
 
     async fn next_event(&mut self) -> Option<Result<AgentEvent>> {
-        // Return any pending events first
         if let Some(event) = self.pending_events.pop_front() {
             return Some(event);
         }
@@ -376,41 +446,39 @@ impl StreamState {
             return None;
         }
 
-        // Execute any pending tool calls
         if !self.pending_tool_uses.is_empty() {
             let tool_use = self.pending_tool_uses.remove(0);
-            self.tool_calls += 1;
 
-            // Emit ToolStart event
             self.pending_events.push_back(Ok(AgentEvent::ToolStart {
                 id: tool_use.id.clone(),
                 name: tool_use.name.clone(),
                 input: tool_use.input.clone(),
             }));
 
-            // Execute the tool
+            let start = Instant::now();
             let result = self
                 .tools
                 .execute(&tool_use.name, tool_use.input.clone())
                 .await;
+            let duration_ms = start.elapsed().as_millis() as u64;
+
             let (output, is_error) = match &result {
                 crate::tools::ToolResult::Success(s) => (s.clone(), false),
                 crate::tools::ToolResult::Error(s) => (s.clone(), true),
                 crate::tools::ToolResult::Empty => (String::new(), false),
             };
 
-            // Queue ToolEnd event
+            self.metrics.record_tool(&tool_use.name, duration_ms, is_error);
+
             self.pending_events.push_back(Ok(AgentEvent::ToolEnd {
                 id: tool_use.id.clone(),
                 output: output.clone(),
                 is_error,
             }));
 
-            // Store tool result
             self.pending_tool_results
                 .push(ToolResultBlock::from_output(&tool_use.id, result));
 
-            // If no more pending tool uses, add tool results to context and continue
             if self.pending_tool_uses.is_empty() && !self.pending_tool_results.is_empty() {
                 let results = std::mem::take(&mut self.pending_tool_results);
                 let mut ctx = self.context.lock().await;
@@ -420,21 +488,22 @@ impl StreamState {
             return self.pending_events.pop_front();
         }
 
-        // Check iteration limit
-        self.iterations += 1;
-        if self.iterations > self.options.max_iterations {
+        self.metrics.iterations += 1;
+        if self.metrics.iterations > self.options.max_iterations {
             self.done = true;
+            self.metrics.execution_time_ms = self.start_time.elapsed().as_millis() as u64;
             let ctx = self.context.lock().await;
             return Some(Ok(AgentEvent::Complete(AgentResult {
                 text: self.final_text.clone(),
                 usage: *ctx.total_usage(),
-                tool_calls: self.tool_calls,
-                iterations: self.iterations - 1,
+                tool_calls: self.metrics.tool_calls,
+                iterations: self.metrics.iterations - 1,
                 stop_reason: StopReason::MaxTokens,
+                state: AgentState::Completed,
+                metrics: self.metrics.clone(),
             })));
         }
 
-        // Build and send request
         let request = {
             let ctx = self.context.lock().await;
             let mut req = crate::client::messages::CreateMessageRequest::new(
@@ -451,7 +520,6 @@ impl StreamState {
             req
         };
 
-        // Send request
         let response = match crate::client::MessagesClient::new(&self.client)
             .create(request)
             .await
@@ -463,13 +531,15 @@ impl StreamState {
             }
         };
 
-        // Update context with response
+        self.metrics.record_api_call();
+        self.metrics
+            .add_usage(response.usage.input_tokens, response.usage.output_tokens);
+
         {
             let mut ctx = self.context.lock().await;
             ctx.update_usage(response.usage);
         }
 
-        // Process response content
         let mut text_content = String::new();
         let mut tool_uses = Vec::new();
 
@@ -489,7 +559,6 @@ impl StreamState {
 
         self.final_text = text_content;
 
-        // Add assistant message to context
         {
             let mut ctx = self.context.lock().await;
             ctx.push(Message {
@@ -498,20 +567,21 @@ impl StreamState {
             });
         }
 
-        // Check if we need to execute tools
         if response.wants_tool_use() && !tool_uses.is_empty() {
             self.pending_tool_uses = tool_uses;
         } else {
-            // Done - no more tool calls
             self.done = true;
+            self.metrics.execution_time_ms = self.start_time.elapsed().as_millis() as u64;
             let ctx = self.context.lock().await;
             self.pending_events
                 .push_back(Ok(AgentEvent::Complete(AgentResult {
                     text: self.final_text.clone(),
                     usage: *ctx.total_usage(),
-                    tool_calls: self.tool_calls,
-                    iterations: self.iterations,
+                    tool_calls: self.metrics.tool_calls,
+                    iterations: self.metrics.iterations,
                     stop_reason: response.stop_reason.unwrap_or(StopReason::EndTurn),
+                    state: AgentState::Completed,
+                    metrics: self.metrics.clone(),
                 })));
         }
 
@@ -531,6 +601,10 @@ mod tests {
 
     #[test]
     fn test_agent_result() {
+        let mut metrics = AgentMetrics::default();
+        metrics.iterations = 3;
+        metrics.tool_calls = 2;
+
         let result = AgentResult {
             text: "Hello".to_string(),
             usage: Usage {
@@ -541,9 +615,13 @@ mod tests {
             tool_calls: 2,
             iterations: 3,
             stop_reason: StopReason::EndTurn,
+            state: AgentState::Completed,
+            metrics,
         };
 
         assert_eq!(result.text(), "Hello");
         assert_eq!(result.total_tokens(), 150);
+        assert!(result.state.is_terminal());
+        assert_eq!(result.metrics().iterations, 3);
     }
 }

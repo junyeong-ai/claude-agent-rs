@@ -157,33 +157,81 @@ impl AgentState {
     }
 }
 
-/// Metrics collected during agent execution
+/// Metrics collected during agent execution.
 #[derive(Debug, Clone, Default)]
 pub struct AgentMetrics {
-    /// Total iterations completed
+    /// Total iterations completed.
     pub iterations: usize,
-    /// Total tool calls made
+    /// Total tool calls made.
     pub tool_calls: usize,
-    /// Input tokens consumed
+    /// Input tokens consumed.
     pub input_tokens: u32,
-    /// Output tokens generated
+    /// Output tokens generated.
     pub output_tokens: u32,
-    /// Time spent in execution (milliseconds)
+    /// Total execution time in milliseconds.
     pub execution_time_ms: u64,
-    /// Number of errors encountered (non-fatal)
+    /// Number of errors encountered (non-fatal).
+    pub errors: usize,
+    /// Number of context compactions performed.
+    pub compactions: usize,
+    /// Total API calls made.
+    pub api_calls: usize,
+    /// Per-tool execution statistics.
+    pub tool_stats: std::collections::HashMap<String, ToolStats>,
+}
+
+/// Statistics for a single tool.
+#[derive(Debug, Clone, Default)]
+pub struct ToolStats {
+    /// Number of invocations.
+    pub calls: usize,
+    /// Total execution time in milliseconds.
+    pub total_time_ms: u64,
+    /// Number of errors.
     pub errors: usize,
 }
 
 impl AgentMetrics {
-    /// Get total tokens used
+    /// Get total tokens used.
     pub fn total_tokens(&self) -> u32 {
         self.input_tokens + self.output_tokens
     }
 
-    /// Add usage from another source
+    /// Add usage from another source.
     pub fn add_usage(&mut self, input: u32, output: u32) {
         self.input_tokens += input;
         self.output_tokens += output;
+    }
+
+    /// Record a tool execution.
+    pub fn record_tool(&mut self, name: &str, duration_ms: u64, is_error: bool) {
+        self.tool_calls += 1;
+        let stats = self.tool_stats.entry(name.to_string()).or_default();
+        stats.calls += 1;
+        stats.total_time_ms += duration_ms;
+        if is_error {
+            stats.errors += 1;
+            self.errors += 1;
+        }
+    }
+
+    /// Record an API call.
+    pub fn record_api_call(&mut self) {
+        self.api_calls += 1;
+    }
+
+    /// Record a compaction.
+    pub fn record_compaction(&mut self) {
+        self.compactions += 1;
+    }
+
+    /// Get average tool execution time in milliseconds.
+    pub fn avg_tool_time_ms(&self) -> f64 {
+        if self.tool_calls == 0 {
+            return 0.0;
+        }
+        let total: u64 = self.tool_stats.values().map(|s| s.total_time_ms).sum();
+        total as f64 / self.tool_calls as f64
     }
 }
 
@@ -236,5 +284,29 @@ mod tests {
         assert_eq!(metrics.input_tokens, 300);
         assert_eq!(metrics.output_tokens, 150);
         assert_eq!(metrics.total_tokens(), 450);
+    }
+
+    #[test]
+    fn test_agent_metrics_tool_recording() {
+        let mut metrics = AgentMetrics::default();
+        metrics.record_tool("Read", 50, false);
+        metrics.record_tool("Read", 30, false);
+        metrics.record_tool("Bash", 100, true);
+
+        assert_eq!(metrics.tool_calls, 3);
+        assert_eq!(metrics.errors, 1);
+        assert_eq!(metrics.tool_stats.get("Read").unwrap().calls, 2);
+        assert_eq!(metrics.tool_stats.get("Read").unwrap().total_time_ms, 80);
+        assert_eq!(metrics.tool_stats.get("Bash").unwrap().errors, 1);
+    }
+
+    #[test]
+    fn test_agent_metrics_avg_time() {
+        let mut metrics = AgentMetrics::default();
+        assert_eq!(metrics.avg_tool_time_ms(), 0.0);
+
+        metrics.record_tool("Read", 100, false);
+        metrics.record_tool("Write", 200, false);
+        assert!((metrics.avg_tool_time_ms() - 150.0).abs() < 0.1);
     }
 }

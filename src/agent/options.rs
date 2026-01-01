@@ -263,10 +263,13 @@ impl AgentBuilder {
         self
     }
 
-    /// Builds the agent.
-    pub fn build(mut self) -> crate::Result<super::Agent> {
-        // Build client
-        let client = self.build_client()?;
+    /// Builds the agent asynchronously.
+    ///
+    /// This is the primary build method that properly awaits credential resolution
+    /// without blocking the async runtime.
+    pub async fn build(mut self) -> crate::Result<super::Agent> {
+        // Build client asynchronously
+        let client = self.build_client_async().await?;
 
         // Initialize skill registry and executor
         let skill_registry = self
@@ -314,12 +317,12 @@ impl AgentBuilder {
         ))
     }
 
-    /// Builds the client from credentials.
-    fn build_client(&self) -> crate::Result<crate::Client> {
+    /// Builds the client asynchronously from credentials.
+    async fn build_client_async(&self) -> crate::Result<crate::Client> {
         let mut builder = crate::Client::builder();
 
         if let Some(ref provider) = self.credential_provider {
-            let credential = futures::executor::block_on(provider.resolve())?;
+            let credential = provider.resolve().await?;
             match credential {
                 crate::auth::Credential::ApiKey(key) => {
                     builder = builder.api_key(key);

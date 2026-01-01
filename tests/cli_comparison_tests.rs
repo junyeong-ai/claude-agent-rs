@@ -653,10 +653,10 @@ mod hook_tests {
             _ctx: &HookContext,
         ) -> Result<HookOutput, claude_agent::Error> {
             // PreToolUse 이벤트에서 Bash 도구 차단 예시
-            if let Some(tool_name) = &input.tool_name {
-                if tool_name == "Bash" {
-                    return Ok(HookOutput::block("Bash blocked by hook"));
-                }
+            if let Some(tool_name) = &input.tool_name
+                && tool_name == "Bash"
+            {
+                return Ok(HookOutput::block("Bash blocked by hook"));
             }
             Ok(HookOutput::allow())
         }

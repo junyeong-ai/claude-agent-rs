@@ -171,12 +171,13 @@ mod cloud_provider_tests {
         println!("TEST: Microsoft Azure AI Foundry Strategy Configuration");
         println!("{}", "═".repeat(70));
 
-        let strategy = FoundryStrategy::new("my-azure-resource", "claude-deployment")
+        let strategy = FoundryStrategy::new("my-azure-resource")
+            .with_deployment("claude-deployment")
             .with_api_key("azure-api-key-123")
             .with_api_version("2024-06-01");
 
         assert_eq!(strategy.resource_name(), "my-azure-resource");
-        assert_eq!(strategy.deployment_name(), "claude-deployment");
+        assert_eq!(strategy.deployment_name(), Some("claude-deployment"));
         assert_eq!(strategy.name(), "foundry");
 
         // Test URL query string
@@ -192,7 +193,9 @@ mod cloud_provider_tests {
         println!("✓ Auth header: api-key");
 
         // Test with Bearer token
-        let token_strategy = FoundryStrategy::new("r", "d").with_access_token("bearer-token");
+        let token_strategy = FoundryStrategy::new("r")
+            .with_deployment("d")
+            .with_access_token("bearer-token");
         let (header, value) = token_strategy.auth_header();
         assert_eq!(header, "Authorization");
         assert!(value.contains("Bearer"));
@@ -232,7 +235,7 @@ mod cloud_provider_tests {
 
         // Test Foundry with model override
         let _foundry_builder = ClientBuilder::default()
-            .foundry("resource", "deployment")
+            .foundry("resource")
             .model("claude-sonnet-4-5");
 
         println!("✓ Bedrock model redefinition supported");

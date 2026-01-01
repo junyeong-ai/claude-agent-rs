@@ -119,18 +119,19 @@ async fn test_4_foundry_strategy_structure() {
 
     let start = Instant::now();
 
-    let strategy = FoundryStrategy::new("my-resource", "claude-deployment")
+    let strategy = FoundryStrategy::new("my-resource")
+        .with_deployment("claude-deployment")
         .with_api_key("test-key")
         .with_api_version("2024-06-01");
 
     println!("Resource: {}", strategy.resource_name());
-    println!("Deployment: {}", strategy.deployment_name());
+    println!("Deployment: {:?}", strategy.deployment_name());
     println!("Base URL: {}", strategy.get_base_url());
     println!("Query string: {:?}", strategy.url_query_string());
     println!("Strategy name: {}", strategy.name());
 
     assert_eq!(strategy.resource_name(), "my-resource");
-    assert_eq!(strategy.deployment_name(), "claude-deployment");
+    assert_eq!(strategy.deployment_name(), Some("claude-deployment"));
     assert_eq!(strategy.name(), "foundry");
 
     println!(
@@ -728,7 +729,7 @@ async fn test_14_cloud_provider_selection() {
     // Test builder methods exist
     let _builder1 = ClientBuilder::default().bedrock("us-east-1");
     let _builder2 = ClientBuilder::default().vertex("project", "region");
-    let _builder3 = ClientBuilder::default().foundry("resource", "deployment");
+    let _builder3 = ClientBuilder::default().foundry("resource");
 
     println!("Cloud providers available:");
     println!("  - Anthropic (default)");

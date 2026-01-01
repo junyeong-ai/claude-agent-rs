@@ -215,8 +215,9 @@ impl<'a> MessagesClient<'a> {
 
     /// Build a configured HTTP request.
     fn build_request(&self, request: CreateMessageRequest) -> (reqwest::RequestBuilder, String) {
-        let strategy = &self.client.config().auth_strategy;
-        let base_url = &self.client.config().base_url;
+        let config = self.client.config();
+        let strategy = &config.auth_strategy;
+        let base_url = &config.base_url;
 
         let url = match strategy.url_query_string() {
             Some(query) => format!("{}/v1/messages?{}", base_url, query),
@@ -224,18 +225,38 @@ impl<'a> MessagesClient<'a> {
         };
 
         let request = strategy.prepare_request(request);
-        let (header_name, header_value) = strategy.auth_header();
+
+        // Gateway auth_token overrides strategy auth
+        let (header_name, header_value) = if let Some(ref gw) = config.gateway {
+            if let Some(ref token) = gw.auth_token {
+                ("Authorization", format!("Bearer {}", token))
+            } else {
+                let (n, v) = strategy.auth_header();
+                (n, v)
+            }
+        } else {
+            let (n, v) = strategy.auth_header();
+            (n, v)
+        };
 
         let mut req = self
             .client
             .http()
             .post(&url)
             .header(header_name, header_value)
-            .header("anthropic-version", &self.client.config().api_version)
+            .header("anthropic-version", &config.api_version)
             .header("content-type", "application/json");
 
+        // Apply strategy extra headers
         for (name, value) in strategy.extra_headers() {
             req = req.header(name, value);
+        }
+
+        // Apply gateway custom headers
+        if let Some(ref gw) = config.gateway {
+            for (name, value) in &gw.custom_headers {
+                req = req.header(name, value);
+            }
         }
 
         (req.json(&request), url)

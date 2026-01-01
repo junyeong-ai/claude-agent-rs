@@ -566,31 +566,33 @@ mod foundry_tests {
 
     #[test]
     fn test_foundry_strategy_creation() {
-        let strategy = FoundryStrategy::new("my-resource", "claude-sonnet");
+        let strategy = FoundryStrategy::new("my-resource").with_deployment("claude-sonnet");
         assert_eq!(strategy.resource_name(), "my-resource");
-        assert_eq!(strategy.deployment_name(), "claude-sonnet");
+        assert_eq!(strategy.deployment_name(), Some("claude-sonnet"));
         assert_eq!(strategy.name(), "foundry");
     }
 
     #[test]
     fn test_foundry_base_url_construction() {
-        let strategy = FoundryStrategy::new("my-resource", "claude-sonnet");
+        let strategy = FoundryStrategy::new("my-resource").with_deployment("claude-sonnet");
         let url = strategy.get_base_url();
         assert!(url.contains("my-resource"));
-        assert!(url.contains("claude-sonnet"));
-        assert!(url.contains("openai.azure.com"));
+        assert!(url.contains("services.ai.azure.com"));
     }
 
     #[test]
     fn test_foundry_custom_base_url() {
-        let strategy =
-            FoundryStrategy::new("r", "d").with_base_url("https://my-gateway.com/foundry");
+        let strategy = FoundryStrategy::new("r")
+            .with_deployment("d")
+            .with_base_url("https://my-gateway.com/foundry");
         assert_eq!(strategy.get_base_url(), "https://my-gateway.com/foundry");
     }
 
     #[test]
     fn test_foundry_api_version() {
-        let strategy = FoundryStrategy::new("r", "d").with_api_version("2025-01-01");
+        let strategy = FoundryStrategy::new("r")
+            .with_deployment("d")
+            .with_api_version("2025-01-01");
         let query = strategy.url_query_string();
         assert!(query.is_some());
         assert!(query.unwrap().contains("2025-01-01"));
@@ -598,7 +600,9 @@ mod foundry_tests {
 
     #[test]
     fn test_foundry_auth_with_api_key() {
-        let strategy = FoundryStrategy::new("r", "d").with_api_key("my-key");
+        let strategy = FoundryStrategy::new("r")
+            .with_deployment("d")
+            .with_api_key("my-key");
         let (header, value) = strategy.auth_header();
         assert_eq!(header, "api-key");
         assert_eq!(value, "my-key");
@@ -606,7 +610,9 @@ mod foundry_tests {
 
     #[test]
     fn test_foundry_auth_with_token() {
-        let strategy = FoundryStrategy::new("r", "d").with_access_token("my-token");
+        let strategy = FoundryStrategy::new("r")
+            .with_deployment("d")
+            .with_access_token("my-token");
         let (header, value) = strategy.auth_header();
         assert_eq!(header, "Authorization");
         assert!(value.contains("Bearer my-token"));

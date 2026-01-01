@@ -7,23 +7,18 @@ use super::traits::AuthStrategy;
 
 /// Microsoft Azure AI Foundry authentication strategy.
 ///
-/// Uses Azure credentials for authentication with Claude models
-/// deployed on Azure AI Foundry.
+/// Supports:
+/// - API key authentication
+/// - Microsoft Entra ID (Azure AD) token authentication
+/// - LLM gateway passthrough
 #[derive(Clone)]
 pub struct FoundryStrategy {
-    /// Azure resource name
     resource_name: String,
-    /// Deployment name
-    deployment_name: String,
-    /// API version
+    deployment_name: Option<String>,
     api_version: String,
-    /// Base URL (auto-constructed if not provided)
     base_url: Option<String>,
-    /// Skip Azure authentication (for LLM gateways)
     skip_auth: bool,
-    /// Azure API key
     api_key: Option<String>,
-    /// Azure AD token (alternative to API key)
     access_token: Option<String>,
 }
 
@@ -35,8 +30,8 @@ impl Debug for FoundryStrategy {
             .field("api_version", &self.api_version)
             .field("base_url", &self.base_url)
             .field("skip_auth", &self.skip_auth)
-            .field("api_key", &self.api_key.as_ref().map(|_| "***"))
-            .field("access_token", &self.access_token.as_ref().map(|_| "***"))
+            .field("has_api_key", &self.api_key.is_some())
+            .field("has_access_token", &self.access_token.is_some())
             .finish()
     }
 }
@@ -45,18 +40,20 @@ impl FoundryStrategy {
     /// Default API version for Azure AI Foundry.
     pub const DEFAULT_API_VERSION: &'static str = "2024-06-01";
 
-    /// Create a new Foundry strategy from environment variables.
+    /// Create from environment variables.
     pub fn from_env() -> Option<Self> {
         if !env_bool("CLAUDE_CODE_USE_FOUNDRY") {
             return None;
         }
 
         let resource_name =
-            env_with_fallbacks(&["AZURE_RESOURCE_NAME", "ANTHROPIC_FOUNDRY_RESOURCE"])?;
+            env_with_fallbacks(&["ANTHROPIC_FOUNDRY_RESOURCE", "AZURE_RESOURCE_NAME"])?;
 
-        let deployment_name =
-            env_with_fallbacks(&["AZURE_DEPLOYMENT_NAME", "ANTHROPIC_FOUNDRY_DEPLOYMENT"])
-                .unwrap_or_else(|| "claude-sonnet".to_string());
+        let deployment_name = env_with_fallbacks(&[
+            "ANTHROPIC_FOUNDRY_DEPLOYMENT",
+            "AZURE_DEPLOYMENT_NAME",
+            "ANTHROPIC_DEFAULT_SONNET_MODEL",
+        ]);
 
         let api_version =
             env_opt("AZURE_API_VERSION").unwrap_or_else(|| Self::DEFAULT_API_VERSION.to_string());
@@ -67,16 +64,16 @@ impl FoundryStrategy {
             api_version,
             base_url: env_opt("ANTHROPIC_FOUNDRY_BASE_URL"),
             skip_auth: env_bool("CLAUDE_CODE_SKIP_FOUNDRY_AUTH"),
-            api_key: env_opt("AZURE_API_KEY"),
+            api_key: env_with_fallbacks(&["ANTHROPIC_FOUNDRY_API_KEY", "AZURE_API_KEY"]),
             access_token: env_opt("AZURE_ACCESS_TOKEN"),
         })
     }
 
-    /// Create with explicit configuration.
-    pub fn new(resource_name: impl Into<String>, deployment_name: impl Into<String>) -> Self {
+    /// Create with explicit resource name.
+    pub fn new(resource_name: impl Into<String>) -> Self {
         Self {
             resource_name: resource_name.into(),
-            deployment_name: deployment_name.into(),
+            deployment_name: None,
             api_version: Self::DEFAULT_API_VERSION.to_string(),
             base_url: None,
             skip_auth: false,
@@ -85,19 +82,25 @@ impl FoundryStrategy {
         }
     }
 
+    /// Set the deployment name.
+    pub fn with_deployment(mut self, name: impl Into<String>) -> Self {
+        self.deployment_name = Some(name.into());
+        self
+    }
+
     /// Set the API version.
     pub fn with_api_version(mut self, version: impl Into<String>) -> Self {
         self.api_version = version.into();
         self
     }
 
-    /// Set the base URL (for LLM gateways).
+    /// Set base URL for LLM gateway.
     pub fn with_base_url(mut self, url: impl Into<String>) -> Self {
         self.base_url = Some(url.into());
         self
     }
 
-    /// Skip Azure authentication (for gateways that handle auth).
+    /// Skip Azure authentication (for gateways).
     pub fn skip_auth(mut self) -> Self {
         self.skip_auth = true;
         self
@@ -109,20 +112,25 @@ impl FoundryStrategy {
         self
     }
 
-    /// Set access token (Azure AD).
+    /// Set access token (Azure AD / Microsoft Entra ID).
     pub fn with_access_token(mut self, token: impl Into<String>) -> Self {
         self.access_token = Some(token.into());
         self
     }
 
-    /// Get the base URL for Azure AI Foundry API.
+    /// Get base URL for Azure AI Foundry API.
+    /// Uses services.ai.azure.com endpoint format.
     pub fn get_base_url(&self) -> String {
-        self.base_url.clone().unwrap_or_else(|| {
-            format!(
-                "https://{}.openai.azure.com/openai/deployments/{}",
-                self.resource_name, self.deployment_name
-            )
-        })
+        self.base_url
+            .clone()
+            .unwrap_or_else(|| format!("https://{}.services.ai.azure.com", self.resource_name))
+    }
+
+    /// Get full URL for a specific model/deployment.
+    pub fn get_model_url(&self, model: &str) -> String {
+        let base = self.get_base_url();
+        let deployment = self.deployment_name.as_deref().unwrap_or(model);
+        format!("{}/models/{}", base, deployment)
     }
 
     /// Get the resource name.
@@ -131,8 +139,8 @@ impl FoundryStrategy {
     }
 
     /// Get the deployment name.
-    pub fn deployment_name(&self) -> &str {
-        &self.deployment_name
+    pub fn deployment_name(&self) -> Option<&str> {
+        self.deployment_name.as_deref()
     }
 }
 
@@ -162,26 +170,29 @@ mod tests {
 
     #[test]
     fn test_foundry_strategy_creation() {
-        let strategy = FoundryStrategy::new("my-resource", "claude-sonnet");
+        let strategy = FoundryStrategy::new("my-resource");
         assert_eq!(strategy.resource_name(), "my-resource");
-        assert_eq!(strategy.deployment_name(), "claude-sonnet");
         assert_eq!(strategy.name(), "foundry");
     }
 
     #[test]
     fn test_foundry_base_url() {
-        let strategy = FoundryStrategy::new("my-resource", "claude-sonnet");
+        let strategy = FoundryStrategy::new("my-resource");
         let url = strategy.get_base_url();
+        // Must use services.ai.azure.com format
+        assert!(url.contains("services.ai.azure.com"));
         assert!(url.contains("my-resource"));
-        assert!(url.contains("claude-sonnet"));
+    }
 
-        let custom = FoundryStrategy::new("r", "d").with_base_url("https://my-gateway.com/foundry");
-        assert_eq!(custom.get_base_url(), "https://my-gateway.com/foundry");
+    #[test]
+    fn test_foundry_custom_base_url() {
+        let strategy = FoundryStrategy::new("r").with_base_url("https://my-gateway.com");
+        assert_eq!(strategy.get_base_url(), "https://my-gateway.com");
     }
 
     #[test]
     fn test_foundry_url_query() {
-        let strategy = FoundryStrategy::new("r", "d");
+        let strategy = FoundryStrategy::new("r");
         let query = strategy.url_query_string();
         assert!(query.is_some());
         assert!(query.unwrap().contains("api-version"));
@@ -189,7 +200,7 @@ mod tests {
 
     #[test]
     fn test_foundry_auth_with_api_key() {
-        let strategy = FoundryStrategy::new("r", "d").with_api_key("my-key");
+        let strategy = FoundryStrategy::new("r").with_api_key("my-key");
         let (header, value) = strategy.auth_header();
         assert_eq!(header, "api-key");
         assert_eq!(value, "my-key");
@@ -197,9 +208,16 @@ mod tests {
 
     #[test]
     fn test_foundry_auth_with_token() {
-        let strategy = FoundryStrategy::new("r", "d").with_access_token("my-token");
+        let strategy = FoundryStrategy::new("r").with_access_token("my-token");
         let (header, value) = strategy.auth_header();
         assert_eq!(header, "Authorization");
         assert!(value.contains("Bearer"));
+    }
+
+    #[test]
+    fn test_foundry_model_url() {
+        let strategy = FoundryStrategy::new("my-resource").with_deployment("claude-sonnet");
+        let url = strategy.get_model_url("claude-sonnet-4-5");
+        assert!(url.contains("models/claude-sonnet"));
     }
 }

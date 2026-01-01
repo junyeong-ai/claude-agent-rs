@@ -607,9 +607,11 @@ mod tests {
 
     #[test]
     fn test_agent_result() {
-        let mut metrics = AgentMetrics::default();
-        metrics.iterations = 3;
-        metrics.tool_calls = 2;
+        let metrics = AgentMetrics {
+            iterations: 3,
+            tool_calls: 2,
+            ..Default::default()
+        };
 
         let result = AgentResult {
             text: "Hello".to_string(),

@@ -78,7 +78,10 @@ pub use auth::{
     CredentialProvider, EnvironmentProvider, ExplicitProvider, FoundryStrategy, OAuthConfig,
     OAuthConfigBuilder, OAuthStrategy, VertexStrategy,
 };
-pub use client::{Client, ClientBuilder, CloudProvider, Config};
+pub use client::{
+    Client, ClientBuilder, ClientCertConfig, CloudProvider, Config, GatewayConfig, ModelConfig,
+    NetworkConfig, ProxyConfig,
+};
 pub use context::{
     ChainMemoryProvider, ContextBuilder, ContextOrchestrator, FileMemoryProvider,
     HttpMemoryProvider, InMemoryProvider, MAX_IMPORT_DEPTH, MemoryContent, MemoryLoader,

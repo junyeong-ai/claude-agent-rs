@@ -12,9 +12,12 @@ use crate::auth::{
 };
 use crate::mcp::McpServerConfig;
 
+use super::gateway::GatewayConfig;
+use super::models::{DEFAULT_MODEL, DEFAULT_SMALL_MODEL, ModelConfig};
+use super::network::NetworkConfig;
+
+/// Default Anthropic API base URL.
 pub const DEFAULT_BASE_URL: &str = "https://api.anthropic.com";
-pub const DEFAULT_MODEL: &str = "claude-sonnet-4-5-20250929";
-pub const DEFAULT_SMALL_MODEL: &str = "claude-haiku-4-5-20251001";
 pub const DEFAULT_MAX_TOKENS: u32 = 8192;
 pub const DEFAULT_TIMEOUT: Duration = Duration::from_secs(300);
 pub const DEFAULT_API_VERSION: &str = "2023-06-01";
@@ -36,6 +39,8 @@ pub struct Config {
     pub timeout: Duration,
     /// API version header.
     pub api_version: String,
+    /// Gateway configuration (custom headers, auth override).
+    pub gateway: Option<GatewayConfig>,
 }
 
 impl Config {
@@ -44,17 +49,24 @@ impl Config {
         let provider = ChainProvider::default();
         let credential = provider.resolve().await?;
         let auth_strategy = credential_to_strategy(credential, None);
+        let gateway = GatewayConfig::from_env();
 
         Ok(Self {
             auth_strategy,
-            base_url: std::env::var("ANTHROPIC_BASE_URL")
-                .unwrap_or_else(|_| DEFAULT_BASE_URL.to_string()),
+            base_url: gateway
+                .as_ref()
+                .and_then(|g| g.base_url.clone())
+                .unwrap_or_else(|| {
+                    std::env::var("ANTHROPIC_BASE_URL")
+                        .unwrap_or_else(|_| DEFAULT_BASE_URL.to_string())
+                }),
             model: std::env::var("ANTHROPIC_MODEL").unwrap_or_else(|_| DEFAULT_MODEL.to_string()),
             small_model: std::env::var("ANTHROPIC_SMALL_FAST_MODEL")
                 .unwrap_or_else(|_| DEFAULT_SMALL_MODEL.to_string()),
             max_tokens: DEFAULT_MAX_TOKENS,
             timeout: DEFAULT_TIMEOUT,
             api_version: DEFAULT_API_VERSION.to_string(),
+            gateway,
         })
     }
 }
@@ -96,6 +108,8 @@ pub struct ClientBuilder {
     bedrock_strategy: Option<BedrockStrategy>,
     vertex_strategy: Option<VertexStrategy>,
     foundry_strategy: Option<FoundryStrategy>,
+    gateway_config: Option<GatewayConfig>,
+    network_config: Option<NetworkConfig>,
     base_url: Option<String>,
     model: Option<String>,
     small_model: Option<String>,
@@ -203,13 +217,21 @@ impl ClientBuilder {
     }
 
     /// Use Microsoft Azure AI Foundry with explicit configuration.
-    pub fn foundry(
+    pub fn foundry(mut self, resource_name: impl Into<String>) -> Self {
+        self.cloud_provider = Some(CloudProvider::Foundry);
+        self.foundry_strategy = Some(FoundryStrategy::new(resource_name));
+        self
+    }
+
+    /// Use Microsoft Azure AI Foundry with resource and deployment.
+    pub fn foundry_with_deployment(
         mut self,
         resource_name: impl Into<String>,
         deployment_name: impl Into<String>,
     ) -> Self {
         self.cloud_provider = Some(CloudProvider::Foundry);
-        self.foundry_strategy = Some(FoundryStrategy::new(resource_name, deployment_name));
+        self.foundry_strategy =
+            Some(FoundryStrategy::new(resource_name).with_deployment(deployment_name));
         self
     }
 
@@ -289,6 +311,32 @@ impl ClientBuilder {
         self
     }
 
+    /// Configure LLM gateway (custom endpoint, headers, auth).
+    pub fn gateway(mut self, config: GatewayConfig) -> Self {
+        // Gateway base_url overrides provider base_url
+        if let Some(ref url) = config.base_url {
+            self.base_url = Some(url.clone());
+        }
+        self.gateway_config = Some(config);
+        self
+    }
+
+    /// Configure network settings (proxy, TLS, certificates).
+    pub fn network(mut self, config: NetworkConfig) -> Self {
+        self.network_config = Some(config);
+        self
+    }
+
+    /// Set proxy for network requests.
+    pub fn proxy(mut self, https_url: impl Into<String>) -> Self {
+        let proxy = super::network::ProxyConfig::https(https_url);
+        let network = self
+            .network_config
+            .get_or_insert_with(NetworkConfig::default);
+        network.proxy = Some(proxy);
+        self
+    }
+
     /// Get MCP server configurations.
     pub fn mcp_servers(&self) -> &HashMap<String, McpServerConfig> {
         &self.mcp_servers
@@ -317,8 +365,7 @@ impl ClientBuilder {
             }
             Some(CloudProvider::Foundry) => {
                 let strategy = self.foundry_strategy.take().unwrap_or_else(|| {
-                    FoundryStrategy::from_env()
-                        .unwrap_or_else(|| FoundryStrategy::new("default", "claude-sonnet"))
+                    FoundryStrategy::from_env().unwrap_or_else(|| FoundryStrategy::new("default"))
                 });
                 Some((Arc::new(strategy.clone()), strategy.get_base_url()))
             }
@@ -328,13 +375,15 @@ impl ClientBuilder {
 
     /// Resolve model configuration from builder or environment.
     fn resolve_models(&mut self) -> (String, String) {
-        let model = self.model.take().unwrap_or_else(|| {
-            std::env::var("ANTHROPIC_MODEL").unwrap_or_else(|_| DEFAULT_MODEL.to_string())
-        });
-        let small_model = self.small_model.take().unwrap_or_else(|| {
-            std::env::var("ANTHROPIC_SMALL_FAST_MODEL")
-                .unwrap_or_else(|_| DEFAULT_SMALL_MODEL.to_string())
-        });
+        // Get provider-specific defaults
+        let defaults = match self.cloud_provider {
+            Some(CloudProvider::Bedrock) => ModelConfig::for_bedrock(),
+            Some(CloudProvider::Vertex) => ModelConfig::for_vertex(),
+            _ => ModelConfig::from_env(),
+        };
+
+        let model = self.model.take().unwrap_or(defaults.primary);
+        let small_model = self.small_model.take().unwrap_or(defaults.small);
         (model, small_model)
     }
 
@@ -353,6 +402,7 @@ impl ClientBuilder {
             max_tokens: self.max_tokens.unwrap_or(DEFAULT_MAX_TOKENS),
             timeout: self.timeout.unwrap_or(DEFAULT_TIMEOUT),
             api_version: DEFAULT_API_VERSION.to_string(),
+            gateway: self.gateway_config.take(),
         }
     }
 
@@ -372,7 +422,12 @@ impl ClientBuilder {
             };
 
         let config = self.build_config(auth_strategy, default_base_url);
-        super::Client::new(config)
+
+        if let Some(network) = self.network_config.take() {
+            super::Client::with_network(config, &network)
+        } else {
+            super::Client::new(config)
+        }
     }
 
     /// Build the client asynchronously.
@@ -391,7 +446,12 @@ impl ClientBuilder {
             };
 
         let config = self.build_config(auth_strategy, default_base_url);
-        super::Client::new(config)
+
+        if let Some(network) = self.network_config.take() {
+            super::Client::with_network(config, &network)
+        } else {
+            super::Client::new(config)
+        }
     }
 }
 

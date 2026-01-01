@@ -3,9 +3,10 @@
 **Claude Code CLI와 완벽 호환되는 프로덕션 레디 Rust SDK**
 
 [![Crates.io](https://img.shields.io/crates/v/claude-agent.svg)](https://crates.io/crates/claude-agent)
-[![Docs.rs](https://docs.rs/claude-agent/badge.svg)](https://docs.rs/claude-agent)
-[![License: MIT/Apache-2.0](https://img.shields.io/badge/license-MIT%2FApache--2.0-blue.svg)](LICENSE)
-[![Tests](https://img.shields.io/badge/tests-516%20passing-brightgreen.svg)]()
+[![Docs.rs](https://img.shields.io/docsrs/claude-agent)](https://docs.rs/claude-agent)
+[![Rust](https://img.shields.io/badge/rust-1.92%2B_2024-orange.svg)](https://www.rust-lang.org)
+[![License](https://img.shields.io/crates/l/claude-agent.svg)](LICENSE)
+[![Tests](https://img.shields.io/badge/tests-516%20passing-brightgreen.svg)](https://github.com/junyeong-ai/claude-agent-rs)
 
 [English](README.en.md) | 한국어
 

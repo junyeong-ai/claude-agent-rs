@@ -251,14 +251,37 @@ pub struct MessageDeltaData {
     pub stop_sequence: Option<String>,
 }
 
-/// Error in stream
+/// Error in stream.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StreamError {
-    /// Error type
+    /// Error type.
     #[serde(rename = "type")]
     pub error_type: String,
-    /// Error message
+    /// Error message.
     pub message: String,
+}
+
+/// Result of a context compaction operation.
+#[derive(Debug, Clone)]
+pub enum CompactResult {
+    /// Compaction was not needed (too few messages or below threshold).
+    NotNeeded,
+    /// Compaction was performed successfully.
+    Compacted {
+        /// Original message count before compaction.
+        original_count: usize,
+        /// New message count after compaction.
+        new_count: usize,
+        /// Estimated tokens saved.
+        saved_tokens: usize,
+        /// Generated summary text.
+        summary: String,
+    },
+    /// Compaction was skipped.
+    Skipped {
+        /// Reason for skipping.
+        reason: String,
+    },
 }
 
 #[cfg(test)]

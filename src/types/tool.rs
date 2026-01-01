@@ -2,7 +2,7 @@
 
 use serde::{Deserialize, Serialize};
 
-/// Definition of a tool for the API
+/// Definition of a custom tool for the API
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ToolDefinition {
     /// Tool name
@@ -11,6 +11,123 @@ pub struct ToolDefinition {
     pub description: String,
     /// JSON Schema for input parameters
     pub input_schema: serde_json::Value,
+}
+
+/// Anthropic built-in web search tool configuration.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WebSearchTool {
+    /// Tool type identifier.
+    #[serde(rename = "type")]
+    pub tool_type: String,
+    /// Tool name.
+    pub name: String,
+    /// Maximum search uses per request.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max_uses: Option<u32>,
+    /// Only include results from these domains.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub allowed_domains: Option<Vec<String>>,
+    /// Exclude results from these domains.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub blocked_domains: Option<Vec<String>>,
+    /// User location for localized results.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub user_location: Option<UserLocation>,
+}
+
+/// User location for web search localization.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UserLocation {
+    /// Location type (e.g., "approximate").
+    #[serde(rename = "type")]
+    pub location_type: String,
+    /// City name.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub city: Option<String>,
+    /// Region/state name.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub region: Option<String>,
+    /// Country code or name.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub country: Option<String>,
+    /// IANA timezone identifier.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub timezone: Option<String>,
+}
+
+impl Default for WebSearchTool {
+    fn default() -> Self {
+        Self {
+            tool_type: "web_search_20250305".to_string(),
+            name: "web_search".to_string(),
+            max_uses: None,
+            allowed_domains: None,
+            blocked_domains: None,
+            user_location: None,
+        }
+    }
+}
+
+impl WebSearchTool {
+    /// Create a new web search tool with defaults.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Set maximum search uses per request.
+    pub fn with_max_uses(mut self, max_uses: u32) -> Self {
+        self.max_uses = Some(max_uses);
+        self
+    }
+
+    /// Only include results from these domains.
+    pub fn with_allowed_domains(mut self, domains: Vec<String>) -> Self {
+        self.allowed_domains = Some(domains);
+        self
+    }
+
+    /// Exclude results from these domains.
+    pub fn with_blocked_domains(mut self, domains: Vec<String>) -> Self {
+        self.blocked_domains = Some(domains);
+        self
+    }
+
+    /// Set user location for localized results.
+    pub fn with_user_location(mut self, location: UserLocation) -> Self {
+        self.user_location = Some(location);
+        self
+    }
+}
+
+impl UserLocation {
+    /// Create approximate location with country.
+    pub fn approximate(country: impl Into<String>) -> Self {
+        Self {
+            location_type: "approximate".to_string(),
+            city: None,
+            region: None,
+            country: Some(country.into()),
+            timezone: None,
+        }
+    }
+
+    /// Set city.
+    pub fn with_city(mut self, city: impl Into<String>) -> Self {
+        self.city = Some(city.into());
+        self
+    }
+
+    /// Set region/state.
+    pub fn with_region(mut self, region: impl Into<String>) -> Self {
+        self.region = Some(region.into());
+        self
+    }
+
+    /// Set timezone.
+    pub fn with_timezone(mut self, timezone: impl Into<String>) -> Self {
+        self.timezone = Some(timezone.into());
+        self
+    }
 }
 
 impl ToolDefinition {

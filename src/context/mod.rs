@@ -21,7 +21,7 @@ pub use provider::{
 pub use routing::RoutingStrategy;
 pub use rule_index::{LoadedRule, RuleIndex, RuleSource};
 pub use skill_index::{SkillIndex, SkillScope, SkillSource};
-pub use static_context::{CacheControl, StaticContext, StaticContextPart, SystemBlock};
+pub use static_context::{McpToolMeta, StaticContext, StaticContextPart};
 
 use thiserror::Error;
 

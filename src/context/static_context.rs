@@ -3,51 +3,8 @@
 //! StaticContext contains content that is cached for the entire session,
 //! leveraging Anthropic's Prompt Caching feature for token efficiency.
 
-use crate::types::ToolDefinition;
+use crate::types::{SystemBlock, ToolDefinition};
 use serde::{Deserialize, Serialize};
-
-/// Cache control directive for Anthropic's Prompt Caching
-#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
-pub enum CacheControl {
-    /// Ephemeral cache (5 minute TTL)
-    Ephemeral,
-}
-
-/// A system message block with optional cache control
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct SystemBlock {
-    /// Block type (always "text")
-    #[serde(rename = "type")]
-    pub block_type: String,
-
-    /// Text content
-    pub text: String,
-
-    /// Cache control directive
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub cache_control: Option<CacheControl>,
-}
-
-impl SystemBlock {
-    /// Create a new system block with caching enabled
-    pub fn cached(text: impl Into<String>) -> Self {
-        Self {
-            block_type: "text".to_string(),
-            text: text.into(),
-            cache_control: Some(CacheControl::Ephemeral),
-        }
-    }
-
-    /// Create a new system block without caching
-    pub fn uncached(text: impl Into<String>) -> Self {
-        Self {
-            block_type: "text".to_string(),
-            text: text.into(),
-            cache_control: None,
-        }
-    }
-}
 
 /// Static context that is always loaded (Layer 1)
 ///
@@ -238,7 +195,9 @@ mod tests {
     #[test]
     fn test_system_block_cached() {
         let block = SystemBlock::cached("Hello");
-        assert_eq!(block.cache_control, Some(CacheControl::Ephemeral));
+        assert!(block.cache_control.is_some());
+        let cache_ctrl = block.cache_control.unwrap();
+        assert_eq!(cache_ctrl.cache_type, "ephemeral");
         assert_eq!(block.block_type, "text");
     }
 

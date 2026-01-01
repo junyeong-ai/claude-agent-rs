@@ -89,25 +89,54 @@ pub enum SystemPrompt {
     Blocks(Vec<SystemBlock>),
 }
 
-/// A block in a structured system prompt
+/// A block in a structured system prompt.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SystemBlock {
-    /// Type of the block (always "text" for now)
+    /// Type of the block (always "text" for now).
     #[serde(rename = "type")]
     pub block_type: String,
-    /// Text content
+    /// Text content.
     pub text: String,
-    /// Optional cache control
+    /// Optional cache control.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub cache_control: Option<CacheControl>,
 }
 
-/// Cache control for prompt caching
+impl SystemBlock {
+    /// Create a new system block with caching enabled.
+    pub fn cached(text: impl Into<String>) -> Self {
+        Self {
+            block_type: "text".to_string(),
+            text: text.into(),
+            cache_control: Some(CacheControl::ephemeral()),
+        }
+    }
+
+    /// Create a new system block without caching.
+    pub fn uncached(text: impl Into<String>) -> Self {
+        Self {
+            block_type: "text".to_string(),
+            text: text.into(),
+            cache_control: None,
+        }
+    }
+}
+
+/// Cache control for prompt caching.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CacheControl {
-    /// Cache type
+    /// Cache type.
     #[serde(rename = "type")]
     pub cache_type: String,
+}
+
+impl CacheControl {
+    /// Create ephemeral cache control (5 minute TTL).
+    pub fn ephemeral() -> Self {
+        Self {
+            cache_type: "ephemeral".to_string(),
+        }
+    }
 }
 
 impl SystemPrompt {

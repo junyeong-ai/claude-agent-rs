@@ -10,7 +10,7 @@ pub use content::{ContentBlock, ImageSource, TextBlock, ToolResultBlock, ToolUse
 pub use message::{CacheControl, Message, Role, SystemBlock, SystemPrompt};
 pub use models::{context_window, DEFAULT_COMPACT_THRESHOLD};
 pub use response::{
-    ApiResponse, ContentDelta, MessageDeltaData, MessageStartData, StopReason, StreamError,
-    StreamEvent, TokenUsage, Usage,
+    ApiResponse, CompactResult, ContentDelta, MessageDeltaData, MessageStartData, StopReason,
+    StreamError, StreamEvent, TokenUsage, Usage,
 };
-pub use tool::{ToolDefinition, ToolInput, ToolOutput};
+pub use tool::{ToolDefinition, ToolInput, ToolOutput, UserLocation, WebSearchTool};

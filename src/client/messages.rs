@@ -4,7 +4,7 @@ use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
 
-use crate::types::{ApiResponse, Message, SystemPrompt, ToolDefinition};
+use crate::types::{ApiResponse, Message, SystemPrompt, ToolDefinition, WebSearchTool};
 
 /// Metadata for the Messages API request.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -43,6 +43,28 @@ fn simple_hash(data: &[u8]) -> u128 {
     hash
 }
 
+/// A tool that can be provided to the API (custom or built-in).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum ApiTool {
+    /// Custom tool with schema.
+    Custom(ToolDefinition),
+    /// Built-in web search.
+    WebSearch(WebSearchTool),
+}
+
+impl From<ToolDefinition> for ApiTool {
+    fn from(tool: ToolDefinition) -> Self {
+        Self::Custom(tool)
+    }
+}
+
+impl From<WebSearchTool> for ApiTool {
+    fn from(tool: WebSearchTool) -> Self {
+        Self::WebSearch(tool)
+    }
+}
+
 /// Request body for the Messages API.
 #[derive(Debug, Clone, Serialize)]
 pub struct CreateMessageRequest {
@@ -55,9 +77,9 @@ pub struct CreateMessageRequest {
     /// System prompt.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub system: Option<SystemPrompt>,
-    /// Available tools.
+    /// Available tools (custom and built-in).
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub tools: Option<Vec<ToolDefinition>>,
+    pub tools: Option<Vec<ApiTool>>,
     /// Enable streaming.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub stream: Option<bool>,
@@ -110,6 +132,21 @@ impl CreateMessageRequest {
 
     /// Set available tools.
     pub fn with_tools(mut self, tools: Vec<ToolDefinition>) -> Self {
+        let api_tools: Vec<ApiTool> = tools.into_iter().map(ApiTool::Custom).collect();
+        self.tools = Some(api_tools);
+        self
+    }
+
+    /// Add web search capability (Anthropic built-in).
+    pub fn with_web_search(mut self, config: WebSearchTool) -> Self {
+        let mut tools = self.tools.unwrap_or_default();
+        tools.push(ApiTool::WebSearch(config));
+        self.tools = Some(tools);
+        self
+    }
+
+    /// Set all tools (custom and built-in).
+    pub fn with_api_tools(mut self, tools: Vec<ApiTool>) -> Self {
         self.tools = Some(tools);
         self
     }

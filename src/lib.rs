@@ -31,7 +31,8 @@
 //!         .model("claude-sonnet-4-5")
 //!         .tools(ToolAccess::all())
 //!         .working_dir("./project")
-//!         .build()?;
+//!         .build()
+//!         .await?;
 //!
 //!     let stream = agent.execute_stream("Fix the bug").await?;
 //!     let mut stream = pin!(stream);
@@ -70,7 +71,7 @@ pub mod types;
 // Re-exports for convenience
 pub use agent::{
     Agent, AgentBuilder, AgentDefinition, AgentEvent, AgentMetrics, AgentOptions, AgentResult,
-    AgentState, SubagentType,
+    AgentState, SubagentType, ToolStats,
 };
 pub use auth::{
     ApiKeyStrategy, AuthStrategy, BedrockStrategy, ChainProvider, ClaudeCliProvider, Credential,
@@ -95,7 +96,7 @@ pub use skills::{
     SlashCommand,
 };
 pub use tools::{Tool, ToolAccess, ToolRegistry, ToolResult};
-pub use types::{ContentBlock, Message, Role};
+pub use types::{CompactResult, ContentBlock, Message, Role, UserLocation, WebSearchTool};
 
 /// Error type for claude-agent operations
 #[derive(Debug, thiserror::Error)]
@@ -153,6 +154,10 @@ pub enum Error {
         /// Maximum allowed tokens
         max: usize,
     },
+
+    /// Execution timed out
+    #[error("Execution timed out after {0:?}")]
+    Timeout(std::time::Duration),
 }
 
 /// Result type alias for claude-agent operations
@@ -172,7 +177,7 @@ pub type Result<T> = std::result::Result<T, Error>;
 /// # }
 /// ```
 pub async fn query(prompt: &str) -> Result<String> {
-    let client = Client::from_env()?;
+    let client = Client::from_env_async().await?;
     client.query(prompt).await
 }
 
@@ -195,7 +200,7 @@ pub async fn query(prompt: &str) -> Result<String> {
 /// # }
 /// ```
 pub async fn stream(prompt: &str) -> Result<impl futures::Stream<Item = Result<String>>> {
-    let client = Client::from_env()?;
+    let client = Client::from_env_async().await?;
     client.stream(prompt).await
 }
 

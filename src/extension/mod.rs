@@ -126,7 +126,7 @@ pub trait Extension: Send + Sync {
     }
 }
 
-/// Wrapper for Arc<dyn Extension> to enable cloning.
+/// Wrapper for `Arc<dyn Extension>` to enable cloning.
 #[derive(Clone)]
 pub struct ExtensionRef(pub Arc<dyn Extension>);
 

@@ -1,64 +1,84 @@
 # claude-agent-rs
 
-Rust SDK for Claude API. 449 tests, 0 warnings.
+Rust SDK for Claude API. 516 tests.
 
 ## Architecture
 
 ```
 src/
-├── agent/          # Agent loop, executor, state machine
+├── agent/          # Agent, AgentBuilder, executor, state
 ├── auth/           # AuthStrategy: ApiKey, OAuth, Bedrock, Vertex, Foundry
-├── client/         # HTTP client, streaming, messages
-├── tools/          # Tool trait, 11 built-in tools
-├── skills/         # SkillDefinition, YAML frontmatter, triggers
-├── context/        # MemoryLoader (CLAUDE.md, @import), orchestrator
-├── config/         # Settings, permissions
-├── session/        # Persistence, compaction
+├── client/         # Client, streaming, messages
+├── tools/          # Tool trait, 13 built-in, ProcessManager
+├── skills/         # SkillDefinition, triggers, CommandLoader
+├── context/        # MemoryLoader, ContextOrchestrator, StaticContext
+├── session/        # SessionCacheManager, CacheStats, compaction
+├── extension/      # Extension trait (Bevy-style lifecycle)
 ├── hooks/          # Pre/post execution hooks
-├── mcp/            # MCP server integration (stdio, http, sse)
+├── mcp/            # MCP server (stdio, http, sse)
 └── permissions/    # PermissionMode, rules
 ```
 
 ## Key Types
 
-| Type | Location | Purpose |
-|------|----------|---------|
-| `Agent` | agent/mod.rs | Main entry, builder pattern |
-| `Client` | client/mod.rs | API client, streaming |
-| `AuthStrategy` | auth/strategy/traits.rs | Auth abstraction |
-| `Tool` | tools/mod.rs:47 | Tool trait |
-| `SkillDefinition` | skills/mod.rs | Skill with frontmatter |
-| `MemoryLoader` | context/memory_loader.rs | CLAUDE.md loader |
+| Type | File:Line | Purpose |
+|------|-----------|---------|
+| `Agent` | agent/mod.rs:50 | Builder pattern entry |
+| `Tool` | tools/registry.rs:52 | `name()`, `description()`, `input_schema()`, `execute()` |
+| `TypedTool` | tools/registry.rs:87 | Internal: auto schema from `schemars` |
+| `AuthStrategy` | auth/strategy/traits.rs:15 | `auth_header()`, `prepare_request()` |
+| `SkillDefinition` | skills/mod.rs:45 | `with_trigger()`, `$ARGUMENTS` |
+| `ProcessManager` | tools/process.rs:20 | Shared bash/kill state |
+| `CacheStats` | session/cache.rs:32 | `hit_rate()`, `tokens_saved()` |
 
-## Patterns
+## 13 Built-in Tools
 
-**AuthStrategy**: `auth_header()`, `extra_headers()`, `prepare_request()`
-**Tool**: `name()`, `description()`, `input_schema()`, `execute()`
-**Builder**: `Client::builder()`, `Agent::builder()`
+`ToolRegistry::default_tools()` in `tools/registry.rs:145`:
+```
+Read, Write, Edit, Glob, Grep, NotebookEdit,
+Bash, KillShell (shared ProcessManager),
+WebFetch, Task, TaskOutput, TodoWrite, Skill
+```
 
 ## Modification Points
 
 | Task | Files |
 |------|-------|
-| Add cloud provider | `auth/strategy/` + `client/config.rs` |
-| Add built-in tool | `tools/` + `tools/mod.rs` (register) |
-| Modify agent loop | `agent/executor.rs` |
+| Add tool | `tools/*.rs` + `tools/registry.rs:152` (register) |
+| Add auth provider | `auth/strategy/` + `auth/providers/` |
+| Modify executor | `agent/executor.rs` |
 | Add skill feature | `skills/mod.rs`, `skills/loader.rs` |
+| Add extension | impl `Extension` trait |
+
+## Key Patterns
+
+```rust
+// Tool: TypedTool auto-implements Tool via blanket impl
+#[async_trait]
+impl TypedTool for MyTool {
+    type Input = MyInput;  // derives JsonSchema
+    const NAME: &'static str = "MyTool";
+    async fn handle(&self, input: Self::Input) -> ToolResult;
+}
+
+// Auth: prepare_request modifies request before send
+fn prepare_request(&self, req: CreateMessageRequest) -> CreateMessageRequest;
+
+// Builder: async for Agent, sync for Client
+Agent::builder().from_claude_cli().build().await?;
+Client::builder().from_claude_cli().build()?;
+```
+
+## CLI Auth Flow
+
+`from_claude_cli()` → `ClaudeCliProvider` → `~/.claude/credentials.json` → `OAuthStrategy`
+
+OAuth adds: `Authorization: Bearer`, `anthropic-beta`, `cache_control: ephemeral`
 
 ## Commands
 
 ```bash
-cargo test
+cargo test                    # unit tests
+cargo test -- --ignored       # + live API tests
 cargo clippy --all-features
-cargo doc --open
-```
-
-## Exports (lib.rs)
-
-```rust
-pub use agent::{Agent, AgentBuilder, AgentEvent, AgentResult};
-pub use auth::{AuthStrategy, BedrockStrategy, VertexStrategy, FoundryStrategy};
-pub use client::{Client, ClientBuilder, CloudProvider};
-pub use tools::{Tool, ToolAccess, ToolRegistry, ToolResult};
-pub use skills::{SkillDefinition, SkillExecutor};
 ```

@@ -1,26 +1,28 @@
 # claude-agent-rs
 
-**Production-Ready Rust SDK for Anthropic Claude API**
+**Production-Ready Rust SDK with Full Claude Code CLI Compatibility**
 
 [![Crates.io](https://img.shields.io/crates/v/claude-agent.svg)](https://crates.io/crates/claude-agent)
 [![Docs.rs](https://docs.rs/claude-agent/badge.svg)](https://docs.rs/claude-agent)
-[![CI](https://github.com/anthropics/claude-agent-rs/actions/workflows/ci.yml/badge.svg)](https://github.com/anthropics/claude-agent-rs/actions/workflows/ci.yml)
 [![License: MIT/Apache-2.0](https://img.shields.io/badge/license-MIT%2FApache--2.0-blue.svg)](LICENSE)
+[![Tests](https://img.shields.io/badge/tests-516%20passing-brightgreen.svg)]()
 
-A pure Rust SDK that calls the Claude API directly without CLI subprocess dependencies. Memory-efficient, native async/await support, with built-in AWS Bedrock, Google Vertex AI, and Azure Foundry integration.
+English | [한국어](README.md)
+
+A pure Rust SDK that seamlessly uses Claude Code CLI's OAuth tokens. Directly calls the Claude API without Node.js subprocess, with full support for Prompt Caching and Progressive Disclosure.
 
 ---
 
-## Features
+## Why claude-agent-rs?
 
 | Feature | Description |
 |---------|-------------|
+| **Claude Code CLI Compatible** | Use existing auth with just `from_claude_cli()` |
+| **Prompt Caching** | Automatic system prompt caching saves 90% token costs |
 | **Pure Rust** | No Node.js dependency, ~50MB memory |
-| **Native Streaming** | Real-time responses via `futures::Stream` |
-| **Multi-Cloud** | Anthropic, Bedrock, Vertex AI, Foundry |
-| **14 Built-in Tools** | Read, Write, Edit, Bash, Glob, Grep, Task, Skill, etc. |
-| **Skills System** | YAML frontmatter-based reusable workflows |
-| **Memory System** | CLAUDE.md, @import syntax, hierarchical loading |
+| **13 Built-in Tools** | Read, Write, Edit, Bash, Glob, Grep, Task, and more |
+| **Progressive Disclosure** | On-demand skill/rule loading for context optimization |
+| **Multi-Cloud** | Anthropic, AWS Bedrock, Google Vertex AI, Azure Foundry |
 
 ---
 
@@ -36,20 +38,20 @@ tokio = { version = "1", features = ["full"] }
 
 ## Quick Start
 
-### Simple Query
+### 1. Simple Query
 
 ```rust
 use claude_agent::query;
 
 #[tokio::main]
-async fn main() -> anyhow::Result<()> {
+async fn main() -> claude_agent::Result<()> {
     let response = query("What are the benefits of Rust?").await?;
     println!("{response}");
     Ok(())
 }
 ```
 
-### Streaming Response
+### 2. Streaming Response
 
 ```rust
 use claude_agent::stream;
@@ -57,7 +59,7 @@ use futures::StreamExt;
 use std::pin::pin;
 
 #[tokio::main]
-async fn main() -> anyhow::Result<()> {
+async fn main() -> claude_agent::Result<()> {
     let stream = stream("Explain quantum computing").await?;
     let mut stream = pin!(stream);
 
@@ -68,7 +70,7 @@ async fn main() -> anyhow::Result<()> {
 }
 ```
 
-### Agent + Tools
+### 3. Agent + Tools (Core Usage)
 
 ```rust
 use claude_agent::{Agent, AgentEvent, ToolAccess};
@@ -76,13 +78,14 @@ use futures::StreamExt;
 use std::pin::pin;
 
 #[tokio::main]
-async fn main() -> anyhow::Result<()> {
+async fn main() -> claude_agent::Result<()> {
     let agent = Agent::builder()
-        .model("claude-sonnet-4-5")
-        .tools(ToolAccess::all())
+        .from_claude_cli()              // Use Claude Code CLI auth
+        .tools(ToolAccess::all())       // Enable all 13 tools
         .working_dir("./my-project")
         .max_iterations(10)
-        .build()?;
+        .build()
+        .await?;
 
     let stream = agent.execute_stream("Fix the bug in main.rs").await?;
     let mut stream = pin!(stream);
@@ -90,9 +93,11 @@ async fn main() -> anyhow::Result<()> {
     while let Some(event) = stream.next().await {
         match event? {
             AgentEvent::Text(text) => print!("{text}"),
-            AgentEvent::ToolStart { name, .. } => eprintln!("\n[Tool: {name}]"),
+            AgentEvent::ToolStart { name, .. } => eprintln!("\n🔧 [{name}]"),
+            AgentEvent::ToolEnd { .. } => eprintln!(" ✓"),
             AgentEvent::Complete(result) => {
-                eprintln!("\nDone: {} tokens", result.total_tokens());
+                eprintln!("\n✅ Done: {} tokens, {} tool calls",
+                    result.total_tokens(), result.tool_calls);
             }
             _ => {}
         }
@@ -103,85 +108,197 @@ async fn main() -> anyhow::Result<()> {
 
 ---
 
-## Cloud Providers
+## Authentication
 
-### AWS Bedrock
+### Claude Code CLI (Recommended)
+
+Use your existing Claude Code CLI authentication:
 
 ```rust
 let client = Client::builder()
-    .bedrock("us-east-1")
-    .model("anthropic.claude-3-5-sonnet-20241022-v2:0")
+    .from_claude_cli()
+    .build()?;
+
+// Same for Agent
+let agent = Agent::builder()
+    .from_claude_cli()
+    .build()
+    .await?;
+```
+
+**Prerequisite**: CLI must be authenticated (`claude --version`).
+
+**Automatically Included**:
+- OAuth Bearer token
+- Prompt Caching (`cache_control: ephemeral`)
+- Required beta flags (`claude-code-20250219`, `oauth-2025-04-20`)
+
+### API Key
+
+```rust
+let client = Client::builder()
+    .api_key("sk-ant-...")
     .build()?;
 ```
 
-```bash
-export CLAUDE_CODE_USE_BEDROCK=1
-export AWS_REGION=us-east-1
-export AWS_ACCESS_KEY_ID=...
-export AWS_SECRET_ACCESS_KEY=...
-```
-
-### Google Vertex AI
+### Environment Variable
 
 ```rust
+// Uses ANTHROPIC_API_KEY automatically
+let client = Client::from_env()?;
+```
+
+### Cloud Providers
+
+```rust
+// AWS Bedrock
+let client = Client::builder()
+    .bedrock("us-east-1")
+    .build()?;
+
+// Google Vertex AI
 let client = Client::builder()
     .vertex("my-project", "us-central1")
     .build()?;
-```
 
-```bash
-export CLAUDE_CODE_USE_VERTEX=1
-export ANTHROPIC_VERTEX_PROJECT_ID=my-project
-export CLOUD_ML_REGION=us-central1
-```
-
-### Azure AI Foundry
-
-```rust
+// Azure AI Foundry
 let client = Client::builder()
     .foundry("my-resource", "claude-sonnet")
     .build()?;
 ```
 
-```bash
-export CLAUDE_CODE_USE_FOUNDRY=1
-export AZURE_RESOURCE_NAME=my-resource
-export AZURE_API_KEY=...
-```
-
 ---
 
-## Built-in Tools
+## 13 Built-in Tools
 
+### File Tools
 | Tool | Description |
 |------|-------------|
-| `Read` | Read files (offset/limit support) |
+| `Read` | Read files (supports images, PDF, Jupyter notebooks) |
 | `Write` | Create/overwrite files |
-| `Edit` | String replacement-based editing |
-| `Bash` | Execute shell commands (timeout, background) |
-| `Glob` | Pattern-based file search |
-| `Grep` | Regex content search |
-| `NotebookEdit` | Jupyter notebook editing |
+| `Edit` | Precise string replacement-based editing |
+| `Glob` | Pattern-based file search (`**/*.rs`) |
+| `Grep` | Regex content search (ripgrep-based) |
+| `NotebookEdit` | Jupyter notebook cell editing |
+
+### Execution Tools
+| Tool | Description |
+|------|-------------|
+| `Bash` | Execute shell commands (timeout, background support) |
 | `KillShell` | Terminate background processes |
-| `WebFetch` | Fetch URL content |
-| `WebSearch` | Web search |
-| `Task` | Spawn sub-agents for complex tasks |
-| `TaskOutput` | Retrieve sub-agent results |
+
+### Agent Tools
+| Tool | Description |
+|------|-------------|
+| `Task` | Create and run sub-agents |
+| `TaskOutput` | Retrieve background task results |
 | `TodoWrite` | Task list management |
-| `Skill` | Execute predefined skill workflows |
+| `Skill` | Execute registered skills |
+| `WebFetch` | Fetch URL content |
 
 ### Tool Access Control
 
 ```rust
-// All tools
+// Enable all tools
 Agent::builder().tools(ToolAccess::all())
 
-// Specific tools only
+// Allow specific tools only
 Agent::builder().tools(ToolAccess::only(["Read", "Grep", "Glob"]))
 
-// Exclude specific tools
+// Exclude specific tools (for security)
 Agent::builder().tools(ToolAccess::except(["Bash", "Write"]))
 ```
+
+---
+
+## Progressive Disclosure
+
+Dynamically loads skills and rules when needed for efficient context window usage.
+
+### Skills System
+
+```rust
+use claude_agent::{Agent, SkillDefinition, ToolAccess};
+
+let agent = Agent::builder()
+    .from_claude_cli()
+    .skill(SkillDefinition::new(
+        "deploy",
+        "Production deployment",
+        "Deployment process: $ARGUMENTS\n1. Run tests\n2. Build\n3. Deploy",
+    ).with_trigger("deploy").with_trigger("release"))
+    .tools(ToolAccess::only(["Skill", "Bash"]))
+    .build()
+    .await?;
+```
+
+### Trigger-Based Activation
+
+Skills activate via explicit calls or trigger keywords:
+
+```rust
+// Explicit: /deploy production
+// Trigger: "deploy to production" → "deploy" keyword detected → deploy skill activates
+```
+
+### Slash Commands
+
+`.claude/commands/deploy.md`:
+
+```yaml
+---
+description: Production deployment
+allowed-tools:
+  - Bash
+  - Read
+---
+
+Deploy to the $ARGUMENTS environment.
+```
+
+---
+
+## Prompt Caching
+
+Automatically enabled when using Claude Code CLI authentication.
+
+### How It Works
+
+```
+First request:  cache_creation_input_tokens (cache created)
+Second request: cache_read_input_tokens (cache hit, 90% cost savings)
+```
+
+### Cache Statistics
+
+```rust
+use claude_agent::session::CacheStats;
+
+let stats = CacheStats::default();
+stats.update(1000, 0);  // cache_read: 1000, cache_creation: 0
+
+println!("Cache hit rate: {:.1}%", stats.hit_rate() * 100.0);
+println!("Tokens saved: {}", stats.tokens_saved());
+```
+
+---
+
+## Memory System
+
+Automatically loads `CLAUDE.md` files to provide project context.
+
+```markdown
+# Project Guide
+
+@import ./docs/architecture.md
+@import ~/global-rules.md
+
+## Coding Rules
+- Use Rust 2021 Edition
+- Document all pub functions
+```
+
+**Loading Priority**: `~/.claude/CLAUDE.md` → Project root → Current directory
 
 ---
 
@@ -213,84 +330,6 @@ impl Tool for WeatherTool {
         ToolResult::success(format!("{city}: Sunny, 72°F"))
     }
 }
-
-let agent = Agent::builder()
-    .tool(WeatherTool)
-    .build()?;
-```
-
----
-
-## Skills System
-
-`.claude/commands/deploy.md`:
-
-```yaml
----
-description: Production deployment
-allowed-tools:
-  - Bash
-  - Read
----
-
-Deploy to the $1 environment.
-
-1. Run tests
-2. Build
-3. Deploy to $1
-```
-
-```rust
-let agent = Agent::builder()
-    .skill(SkillDefinition::new(
-        "deploy",
-        "Production deployment",
-        "Deployment process: $ARGUMENTS",
-    ))
-    .build()?;
-```
-
----
-
-## Memory System
-
-Automatically loads `CLAUDE.md` files to provide context:
-
-```markdown
-# Project Guide
-
-@import ./docs/architecture.md
-@import ~/global-rules.md
-
-## Coding Rules
-- Use Rust 2021 Edition
-- Document all pub functions
-```
-
-Loading priority: `~/.claude/CLAUDE.md` → Project root → Current directory
-
----
-
-## Authentication
-
-```rust
-// Environment variables (default)
-let client = Client::from_env()?;
-
-// Direct API Key
-let client = Client::builder()
-    .api_key("sk-ant-...")
-    .build()?;
-
-// Claude CLI OAuth token
-let client = Client::builder()
-    .from_claude_cli()
-    .build()?;
-
-// Auto-resolve (env → CLI → Bedrock → Vertex → Foundry)
-let client = Client::builder()
-    .auto_resolve()
-    .build()?;
 ```
 
 ---
@@ -300,25 +339,45 @@ let client = Client::builder()
 | Variable | Description |
 |----------|-------------|
 | `ANTHROPIC_API_KEY` | Anthropic API key |
-| `ANTHROPIC_MODEL` | Default model (default: claude-sonnet-4-5) |
-| `ANTHROPIC_BASE_URL` | API endpoint |
-| `CLAUDE_CODE_USE_BEDROCK` | Enable Bedrock |
-| `CLAUDE_CODE_USE_VERTEX` | Enable Vertex AI |
-| `CLAUDE_CODE_USE_FOUNDRY` | Enable Foundry |
+| `ANTHROPIC_MODEL` | Default model (default: `claude-sonnet-4-5`) |
+| `CLAUDE_CODE_USE_BEDROCK` | Enable AWS Bedrock |
+| `CLAUDE_CODE_USE_VERTEX` | Enable Google Vertex AI |
+| `CLAUDE_CODE_USE_FOUNDRY` | Enable Azure Foundry |
 
 ---
 
 ## Examples
 
-- [`examples/simple_query.rs`](examples/simple_query.rs) - Basic query
-- [`examples/streaming.rs`](examples/streaming.rs) - Streaming response
-- [`examples/agent_loop.rs`](examples/agent_loop.rs) - Agent execution loop
+```bash
+# Basic query
+cargo run --example simple_query
+
+# Streaming response
+cargo run --example streaming
+
+# Agent execution loop
+cargo run --example agent_loop
+
+# Full tool verification
+cargo run --example comprehensive_test
+```
+
+---
+
+## Testing
 
 ```bash
-cargo run --example simple_query
-cargo run --example streaming
-cargo run --example agent_loop
+# Unit tests (no auth required)
+cargo test
+
+# Include CLI auth tests
+cargo test -- --ignored
+
+# Full verification
+cargo run --example comprehensive_test
 ```
+
+**Test Status**: 516 tests passing
 
 ---
 

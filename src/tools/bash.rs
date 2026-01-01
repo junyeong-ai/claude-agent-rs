@@ -2,27 +2,59 @@
 
 use std::path::PathBuf;
 use std::process::Stdio;
+use std::sync::Arc;
 use std::time::Duration;
 
 use async_trait::async_trait;
+use schemars::JsonSchema;
 use serde::Deserialize;
 use tokio::process::Command;
 use tokio::time::timeout;
 
-use super::{Tool, ToolResult};
+use super::process::ProcessManager;
+use super::{ToolResult, TypedTool};
 
-/// Tool for executing shell commands
+/// Input for the Bash tool.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct BashInput {
+    /// The command to execute.
+    pub command: String,
+    /// Timeout in milliseconds (max 600000). Ignored for background commands.
+    #[serde(default)]
+    pub timeout: Option<u64>,
+    /// Run the command in the background. Returns a process ID for later management.
+    #[serde(default)]
+    pub run_in_background: Option<bool>,
+}
+
+/// Tool for executing shell commands.
 pub struct BashTool {
     working_dir: PathBuf,
+    process_manager: Arc<ProcessManager>,
 }
 
 impl BashTool {
-    /// Create a new Bash tool
+    /// Create a new Bash tool.
     pub fn new(working_dir: PathBuf) -> Self {
-        Self { working_dir }
+        Self {
+            working_dir,
+            process_manager: Arc::new(ProcessManager::new()),
+        }
     }
 
-    /// Check if a command is potentially dangerous
+    /// Create a new Bash tool with shared ProcessManager.
+    pub fn with_process_manager(working_dir: PathBuf, manager: Arc<ProcessManager>) -> Self {
+        Self {
+            working_dir,
+            process_manager: manager,
+        }
+    }
+
+    /// Get the process manager.
+    pub fn process_manager(&self) -> &Arc<ProcessManager> {
+        &self.process_manager
+    }
+
     fn is_dangerous(command: &str) -> bool {
         let dangerous_patterns = [
             "rm -rf /",
@@ -33,73 +65,18 @@ impl BashTool {
             "chmod -R 777 /",
             ":(){:|:&};:",
         ];
-
         dangerous_patterns.iter().any(|p| command.contains(p))
     }
-}
 
-#[derive(Debug, Deserialize)]
-struct BashInput {
-    command: String,
-    #[serde(default)]
-    timeout: Option<u64>,
-}
-
-#[async_trait]
-impl Tool for BashTool {
-    fn name(&self) -> &str {
-        "Bash"
-    }
-
-    fn description(&self) -> &str {
-        "Executes a bash command in a persistent shell session with optional timeout. \
-         Default timeout is 120 seconds, maximum is 600 seconds. \
-         Output is truncated at 30,000 characters."
-    }
-
-    fn input_schema(&self) -> serde_json::Value {
-        serde_json::json!({
-            "type": "object",
-            "properties": {
-                "command": {
-                    "type": "string",
-                    "description": "The command to execute"
-                },
-                "timeout": {
-                    "type": "number",
-                    "description": "Timeout in milliseconds (max 600000)"
-                }
-            },
-            "required": ["command"]
-        })
-    }
-
-    async fn execute(&self, input: serde_json::Value) -> ToolResult {
-        let input: BashInput = match serde_json::from_value(input) {
-            Ok(i) => i,
-            Err(e) => return ToolResult::error(format!("Invalid input: {}", e)),
-        };
-
-        // Safety check
-        if Self::is_dangerous(&input.command) {
-            return ToolResult::error(
-                "This command appears dangerous and has been blocked for safety. \
-                 If you believe this is safe, please ask the user for explicit approval.",
-            );
-        }
-
-        // Calculate timeout
-        let timeout_ms = input.timeout.unwrap_or(120_000).min(600_000);
+    async fn execute_foreground(&self, command: &str, timeout_ms: u64) -> ToolResult {
         let timeout_duration = Duration::from_millis(timeout_ms);
 
-        // Build command
         let mut cmd = Command::new("bash");
-        cmd.arg("-c").arg(&input.command);
+        cmd.arg("-c").arg(command);
         cmd.current_dir(&self.working_dir);
         cmd.stdout(Stdio::piped());
         cmd.stderr(Stdio::piped());
 
-        // Execute with timeout
         let result = timeout(timeout_duration, cmd.output()).await;
 
         match result {
@@ -120,7 +97,6 @@ impl Tool for BashTool {
                     combined.push_str(&stderr);
                 }
 
-                // Truncate if too long
                 const MAX_OUTPUT: usize = 30_000;
                 if combined.len() > MAX_OUTPUT {
                     combined.truncate(MAX_OUTPUT);
@@ -131,7 +107,6 @@ impl Tool for BashTool {
                     combined = "(no output)".to_string();
                 }
 
-                // Include exit code if non-zero
                 if !output.status.success() {
                     let code = output.status.code().unwrap_or(-1);
                     combined = format!("Exit code: {}\n{}", code, combined);
@@ -146,11 +121,52 @@ impl Tool for BashTool {
             )),
         }
     }
+
+    async fn execute_background(&self, command: &str) -> ToolResult {
+        match self
+            .process_manager
+            .spawn(command, &self.working_dir)
+            .await
+        {
+            Ok(id) => ToolResult::success(format!(
+                "Background process started with ID: {}\nUse TaskOutput tool to monitor output.",
+                id
+            )),
+            Err(e) => ToolResult::error(e),
+        }
+    }
+}
+
+#[async_trait]
+impl TypedTool for BashTool {
+    type Input = BashInput;
+
+    const NAME: &'static str = "Bash";
+    const DESCRIPTION: &'static str = "Executes a bash command in a persistent shell session. \
+        Default timeout is 120 seconds, maximum is 600 seconds. \
+        Use run_in_background=true for long-running commands. \
+        Output is truncated at 30,000 characters.";
+
+    async fn handle(&self, input: BashInput) -> ToolResult {
+        if Self::is_dangerous(&input.command) {
+            return ToolResult::error(
+                "This command appears dangerous and has been blocked for safety.",
+            );
+        }
+
+        if input.run_in_background.unwrap_or(false) {
+            self.execute_background(&input.command).await
+        } else {
+            let timeout_ms = input.timeout.unwrap_or(120_000).min(600_000);
+            self.execute_foreground(&input.command, timeout_ms).await
+        }
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::tools::Tool;
 
     #[test]
     fn test_dangerous_commands() {
@@ -175,5 +191,39 @@ mod tests {
             }
             _ => panic!("Expected success"),
         }
+    }
+
+    #[tokio::test]
+    async fn test_background_command() {
+        let tool = BashTool::new(PathBuf::from("/tmp"));
+        let result = tool
+            .execute(serde_json::json!({
+                "command": "sleep 0.1 && echo done",
+                "run_in_background": true
+            }))
+            .await;
+
+        match result {
+            ToolResult::Success(output) => {
+                assert!(output.contains("Background process started"));
+                assert!(output.contains("ID:"));
+            }
+            _ => panic!("Expected success"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_shared_process_manager() {
+        let mgr = Arc::new(ProcessManager::new());
+        let tool = BashTool::with_process_manager(PathBuf::from("/tmp"), mgr.clone());
+
+        tool.execute(serde_json::json!({
+            "command": "sleep 0.5",
+            "run_in_background": true
+        }))
+        .await;
+
+        let list = mgr.list().await;
+        assert_eq!(list.len(), 1);
     }
 }

@@ -3,99 +3,63 @@
 use std::path::PathBuf;
 
 use async_trait::async_trait;
+use schemars::JsonSchema;
 use serde::Deserialize;
 
-use super::{Tool, ToolResult};
+use super::{ToolResult, TypedTool};
 
-/// Tool for editing files via string replacement
+/// Input for the Edit tool.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct EditInput {
+    /// The absolute path to the file to modify.
+    pub file_path: String,
+    /// The text to replace.
+    pub old_string: String,
+    /// The text to replace it with.
+    pub new_string: String,
+    /// Replace all occurrences (default false).
+    #[serde(default)]
+    pub replace_all: bool,
+}
+
+/// Tool for editing files via string replacement.
 pub struct EditTool {
     working_dir: PathBuf,
 }
 
 impl EditTool {
-    /// Create a new Edit tool
+    /// Create a new Edit tool.
     pub fn new(working_dir: PathBuf) -> Self {
         Self { working_dir }
     }
 }
 
-#[derive(Debug, Deserialize)]
-struct EditInput {
-    file_path: String,
-    old_string: String,
-    new_string: String,
-    #[serde(default)]
-    replace_all: bool,
-}
-
 #[async_trait]
-impl Tool for EditTool {
-    fn name(&self) -> &str {
-        "Edit"
-    }
+impl TypedTool for EditTool {
+    type Input = EditInput;
 
-    fn description(&self) -> &str {
-        "Performs exact string replacements in files. The old_string must match exactly once \
-         in the file unless replace_all is true. Use replace_all for renaming variables or \
-         strings across the file."
-    }
+    const NAME: &'static str = "Edit";
+    const DESCRIPTION: &'static str = "Performs exact string replacements in files. The old_string must match exactly once \
+        in the file unless replace_all is true. Use replace_all for renaming variables or \
+        strings across the file.";
 
-    fn input_schema(&self) -> serde_json::Value {
-        serde_json::json!({
-            "type": "object",
-            "properties": {
-                "file_path": {
-                    "type": "string",
-                    "description": "The absolute path to the file to modify"
-                },
-                "old_string": {
-                    "type": "string",
-                    "description": "The text to replace"
-                },
-                "new_string": {
-                    "type": "string",
-                    "description": "The text to replace it with"
-                },
-                "replace_all": {
-                    "type": "boolean",
-                    "description": "Replace all occurrences (default false)",
-                    "default": false
-                }
-            },
-            "required": ["file_path", "old_string", "new_string"]
-        })
-    }
-
-    async fn execute(&self, input: serde_json::Value) -> ToolResult {
-        let input: EditInput = match serde_json::from_value(input) {
-            Ok(i) => i,
-            Err(e) => return ToolResult::error(format!("Invalid input: {}", e)),
-        };
-
+    async fn handle(&self, input: EditInput) -> ToolResult {
         if input.old_string == input.new_string {
             return ToolResult::error("old_string and new_string must be different");
         }
 
-        // Resolve path
-        let path = if input.file_path.starts_with('/') {
-            PathBuf::from(&input.file_path)
-        } else {
-            self.working_dir.join(&input.file_path)
-        };
+        let path = super::resolve_path(&self.working_dir, &input.file_path);
 
-        // Read file
         let content = match tokio::fs::read_to_string(&path).await {
             Ok(c) => c,
             Err(e) => return ToolResult::error(format!("Failed to read file: {}", e)),
         };
 
-        // Count occurrences
         let count = content.matches(&input.old_string).count();
 
         if count == 0 {
             return ToolResult::error(
-                "old_string not found in file. Make sure it matches exactly including whitespace."
-                    .to_string(),
+                "old_string not found in file. Make sure it matches exactly including whitespace.",
             );
         }
 
@@ -107,14 +71,12 @@ impl Tool for EditTool {
             ));
         }
 
-        // Perform replacement
         let new_content = if input.replace_all {
             content.replace(&input.old_string, &input.new_string)
         } else {
             content.replacen(&input.old_string, &input.new_string, 1)
         };
 
-        // Write file
         match tokio::fs::write(&path, &new_content).await {
             Ok(_) => {
                 let msg = if input.replace_all {
@@ -132,6 +94,7 @@ impl Tool for EditTool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::tools::Tool;
     use tempfile::tempdir;
     use tokio::fs;
 

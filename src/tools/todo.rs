@@ -3,48 +3,56 @@
 use std::sync::Mutex;
 
 use async_trait::async_trait;
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-use super::{Tool, ToolResult};
+use super::{ToolResult, TypedTool};
 
-/// A todo item
-#[derive(Debug, Clone, Serialize, Deserialize)]
+/// A todo item.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct TodoItem {
-    /// Task content (imperative form)
+    /// Task description (imperative form).
     pub content: String,
-    /// Task status
+    /// Task status.
     pub status: TodoStatus,
-    /// Active form (present continuous)
+    /// Task description (present continuous form).
     #[serde(rename = "activeForm")]
     pub active_form: String,
 }
 
-/// Todo status
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+/// Todo status.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum TodoStatus {
-    /// Not started
+    /// Not started.
     Pending,
-    /// Currently working on
+    /// Currently working on.
     InProgress,
-    /// Done
+    /// Done.
     Completed,
 }
 
-/// Tool for managing a task list
+/// Input for the TodoWrite tool.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct TodoWriteInput {
+    /// The updated todo list.
+    pub todos: Vec<TodoItem>,
+}
+
+/// Tool for managing a task list.
 pub struct TodoWriteTool {
     todos: Mutex<Vec<TodoItem>>,
 }
 
 impl TodoWriteTool {
-    /// Create a new TodoWrite tool
+    /// Create a new TodoWrite tool.
     pub fn new() -> Self {
         Self {
             todos: Mutex::new(Vec::new()),
         }
     }
 
-    /// Get current todos
+    /// Get current todos.
     pub fn get_todos(&self) -> Vec<TodoItem> {
         self.todos.lock().unwrap().clone()
     }
@@ -56,62 +64,17 @@ impl Default for TodoWriteTool {
     }
 }
 
-#[derive(Debug, Deserialize)]
-struct TodoWriteInput {
-    todos: Vec<TodoItem>,
-}
-
 #[async_trait]
-impl Tool for TodoWriteTool {
-    fn name(&self) -> &str {
-        "TodoWrite"
-    }
+impl TypedTool for TodoWriteTool {
+    type Input = TodoWriteInput;
 
-    fn description(&self) -> &str {
-        "Create and manage a structured task list. Use for multi-step tasks, \
-         complex work that benefits from tracking, or when explicitly requested. \
-         Each task needs 'content' (imperative form like 'Fix bug') and \
-         'activeForm' (present continuous like 'Fixing bug')."
-    }
+    const NAME: &'static str = "TodoWrite";
+    const DESCRIPTION: &'static str = "Create and manage a structured task list. Use for multi-step tasks, \
+        complex work that benefits from tracking, or when explicitly requested. \
+        Each task needs 'content' (imperative form like 'Fix bug') and \
+        'activeForm' (present continuous like 'Fixing bug').";
 
-    fn input_schema(&self) -> serde_json::Value {
-        serde_json::json!({
-            "type": "object",
-            "properties": {
-                "todos": {
-                    "type": "array",
-                    "description": "The updated todo list",
-                    "items": {
-                        "type": "object",
-                        "properties": {
-                            "content": {
-                                "type": "string",
-                                "description": "Task description (imperative form)"
-                            },
-                            "status": {
-                                "type": "string",
-                                "enum": ["pending", "in_progress", "completed"]
-                            },
-                            "activeForm": {
-                                "type": "string",
-                                "description": "Task description (present continuous form)"
-                            }
-                        },
-                        "required": ["content", "status", "activeForm"]
-                    }
-                }
-            },
-            "required": ["todos"]
-        })
-    }
-
-    async fn execute(&self, input: serde_json::Value) -> ToolResult {
-        let input: TodoWriteInput = match serde_json::from_value(input) {
-            Ok(i) => i,
-            Err(e) => return ToolResult::error(format!("Invalid input: {}", e)),
-        };
-
-        // Validate: only one in_progress
+    async fn handle(&self, input: TodoWriteInput) -> ToolResult {
         let in_progress_count = input
             .todos
             .iter()
@@ -124,10 +87,8 @@ impl Tool for TodoWriteTool {
             );
         }
 
-        // Update todos
         *self.todos.lock().unwrap() = input.todos.clone();
 
-        // Build response
         let mut response = String::from("Todo list updated:\n");
         for (i, todo) in input.todos.iter().enumerate() {
             let status_icon = match todo.status {
@@ -145,6 +106,7 @@ impl Tool for TodoWriteTool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::tools::Tool;
 
     #[tokio::test]
     async fn test_todo_write() {

@@ -3,84 +3,53 @@
 use std::path::PathBuf;
 
 use async_trait::async_trait;
+use schemars::JsonSchema;
 use serde::Deserialize;
 
-use super::{Tool, ToolResult};
+use super::{ToolResult, TypedTool};
 
-/// Tool for reading file contents
+/// Input for the Read tool.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct ReadInput {
+    /// The absolute path to the file to read.
+    pub file_path: String,
+    /// The line number to start reading from (0-indexed).
+    #[serde(default)]
+    pub offset: Option<usize>,
+    /// The number of lines to read.
+    #[serde(default)]
+    pub limit: Option<usize>,
+}
+
+/// Tool for reading file contents.
 pub struct ReadTool {
     working_dir: PathBuf,
 }
 
 impl ReadTool {
-    /// Create a new Read tool
+    /// Create a new Read tool.
     pub fn new(working_dir: PathBuf) -> Self {
         Self { working_dir }
     }
 }
 
-#[derive(Debug, Deserialize)]
-struct ReadInput {
-    file_path: String,
-    #[serde(default)]
-    offset: Option<usize>,
-    #[serde(default)]
-    limit: Option<usize>,
-}
-
 #[async_trait]
-impl Tool for ReadTool {
-    fn name(&self) -> &str {
-        "Read"
-    }
+impl TypedTool for ReadTool {
+    type Input = ReadInput;
 
-    fn description(&self) -> &str {
-        "Reads a file from the local filesystem. The file_path parameter must be an absolute path. \
-         By default, it reads up to 2000 lines starting from the beginning of the file. \
-         You can optionally specify a line offset and limit."
-    }
+    const NAME: &'static str = "Read";
+    const DESCRIPTION: &'static str = "Reads a file from the local filesystem. The file_path parameter must be an absolute path. \
+        By default, it reads up to 2000 lines starting from the beginning of the file. \
+        You can optionally specify a line offset and limit.";
 
-    fn input_schema(&self) -> serde_json::Value {
-        serde_json::json!({
-            "type": "object",
-            "properties": {
-                "file_path": {
-                    "type": "string",
-                    "description": "The absolute path to the file to read"
-                },
-                "offset": {
-                    "type": "number",
-                    "description": "The line number to start reading from (1-indexed)"
-                },
-                "limit": {
-                    "type": "number",
-                    "description": "The number of lines to read"
-                }
-            },
-            "required": ["file_path"]
-        })
-    }
+    async fn handle(&self, input: ReadInput) -> ToolResult {
+        let path = super::resolve_path(&self.working_dir, &input.file_path);
 
-    async fn execute(&self, input: serde_json::Value) -> ToolResult {
-        let input: ReadInput = match serde_json::from_value(input) {
-            Ok(i) => i,
-            Err(e) => return ToolResult::error(format!("Invalid input: {}", e)),
-        };
-
-        // Resolve path
-        let path = if input.file_path.starts_with('/') {
-            PathBuf::from(&input.file_path)
-        } else {
-            self.working_dir.join(&input.file_path)
-        };
-
-        // Read file
         let content = match tokio::fs::read_to_string(&path).await {
             Ok(c) => c,
             Err(e) => return ToolResult::error(format!("Failed to read file: {}", e)),
         };
 
-        // Apply offset and limit
         let offset = input.offset.unwrap_or(0);
         let limit = input.limit.unwrap_or(2000);
 
@@ -94,7 +63,6 @@ impl Tool for ReadTool {
             .enumerate()
             .map(|(i, line)| {
                 let line_num = offset + i + 1;
-                // Truncate long lines
                 let truncated = if line.len() > 2000 {
                     format!("{}...", &line[..2000])
                 } else {
@@ -120,6 +88,7 @@ impl Tool for ReadTool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::tools::Tool;
     use tempfile::tempdir;
     use tokio::fs;
 

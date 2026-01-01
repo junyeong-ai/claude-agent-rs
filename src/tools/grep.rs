@@ -4,118 +4,70 @@ use std::path::PathBuf;
 use std::process::Stdio;
 
 use async_trait::async_trait;
+use schemars::JsonSchema;
 use serde::Deserialize;
 use tokio::process::Command;
 
-use super::{Tool, ToolResult};
+use super::{ToolResult, TypedTool};
 
-/// Tool for searching file contents
+/// Input for the Grep tool.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct GrepInput {
+    /// The regular expression pattern to search for.
+    pub pattern: String,
+    /// File or directory to search in.
+    #[serde(default)]
+    pub path: Option<String>,
+    /// Glob pattern to filter files (e.g., "*.rs").
+    #[serde(default)]
+    pub glob: Option<String>,
+    /// File type to search (e.g., "rs", "py", "js").
+    #[serde(default, rename = "type")]
+    pub file_type: Option<String>,
+    /// Output mode (default: files_with_matches).
+    #[serde(default)]
+    pub output_mode: Option<String>,
+    /// Case insensitive search.
+    #[serde(default, rename = "-i")]
+    pub case_insensitive: Option<bool>,
+    /// Show line numbers.
+    #[serde(default, rename = "-n")]
+    pub line_numbers: Option<bool>,
+    /// Lines to show after each match.
+    #[serde(default, rename = "-A")]
+    pub after_context: Option<u32>,
+    /// Lines to show before each match.
+    #[serde(default, rename = "-B")]
+    pub before_context: Option<u32>,
+    /// Lines to show before and after each match.
+    #[serde(default, rename = "-C")]
+    pub context: Option<u32>,
+}
+
+/// Tool for searching file contents.
 pub struct GrepTool {
     working_dir: PathBuf,
 }
 
 impl GrepTool {
-    /// Create a new Grep tool
+    /// Create a new Grep tool.
     pub fn new(working_dir: PathBuf) -> Self {
         Self { working_dir }
     }
 }
 
-#[derive(Debug, Deserialize)]
-struct GrepInput {
-    pattern: String,
-    #[serde(default)]
-    path: Option<String>,
-    #[serde(default)]
-    glob: Option<String>,
-    #[serde(default, rename = "type")]
-    file_type: Option<String>,
-    #[serde(default)]
-    output_mode: Option<String>,
-    #[serde(default, rename = "-i")]
-    case_insensitive: Option<bool>,
-    #[serde(default, rename = "-n")]
-    line_numbers: Option<bool>,
-    #[serde(default, rename = "-A")]
-    after_context: Option<u32>,
-    #[serde(default, rename = "-B")]
-    before_context: Option<u32>,
-    #[serde(default, rename = "-C")]
-    context: Option<u32>,
-}
-
 #[async_trait]
-impl Tool for GrepTool {
-    fn name(&self) -> &str {
-        "Grep"
-    }
+impl TypedTool for GrepTool {
+    type Input = GrepInput;
 
-    fn description(&self) -> &str {
-        "A powerful search tool built on ripgrep. Supports full regex syntax. \
-         Output modes: 'content' shows matching lines, 'files_with_matches' shows only file paths (default), \
-         'count' shows match counts."
-    }
+    const NAME: &'static str = "Grep";
+    const DESCRIPTION: &'static str = "A powerful search tool built on ripgrep. Supports full regex syntax. \
+        Output modes: 'content' shows matching lines, 'files_with_matches' shows only file paths (default), \
+        'count' shows match counts.";
 
-    fn input_schema(&self) -> serde_json::Value {
-        serde_json::json!({
-            "type": "object",
-            "properties": {
-                "pattern": {
-                    "type": "string",
-                    "description": "The regular expression pattern to search for"
-                },
-                "path": {
-                    "type": "string",
-                    "description": "File or directory to search in"
-                },
-                "glob": {
-                    "type": "string",
-                    "description": "Glob pattern to filter files (e.g., \"*.rs\")"
-                },
-                "type": {
-                    "type": "string",
-                    "description": "File type to search (e.g., \"rs\", \"py\", \"js\")"
-                },
-                "output_mode": {
-                    "type": "string",
-                    "enum": ["content", "files_with_matches", "count"],
-                    "description": "Output mode (default: files_with_matches)"
-                },
-                "-i": {
-                    "type": "boolean",
-                    "description": "Case insensitive search"
-                },
-                "-n": {
-                    "type": "boolean",
-                    "description": "Show line numbers"
-                },
-                "-A": {
-                    "type": "number",
-                    "description": "Lines to show after each match"
-                },
-                "-B": {
-                    "type": "number",
-                    "description": "Lines to show before each match"
-                },
-                "-C": {
-                    "type": "number",
-                    "description": "Lines to show before and after each match"
-                }
-            },
-            "required": ["pattern"]
-        })
-    }
-
-    async fn execute(&self, input: serde_json::Value) -> ToolResult {
-        let input: GrepInput = match serde_json::from_value(input) {
-            Ok(i) => i,
-            Err(e) => return ToolResult::error(format!("Invalid input: {}", e)),
-        };
-
-        // Build rg command
+    async fn handle(&self, input: GrepInput) -> ToolResult {
         let mut cmd = Command::new("rg");
 
-        // Output mode
         match input.output_mode.as_deref() {
             Some("content") | None => {
                 if input.line_numbers.unwrap_or(true) {
@@ -133,12 +85,10 @@ impl Tool for GrepTool {
             }
         }
 
-        // Case insensitive
         if input.case_insensitive.unwrap_or(false) {
             cmd.arg("-i");
         }
 
-        // Context
         if let Some(c) = input.context {
             cmd.arg("-C").arg(c.to_string());
         } else {
@@ -150,28 +100,23 @@ impl Tool for GrepTool {
             }
         }
 
-        // File type filter
         if let Some(t) = &input.file_type {
             cmd.arg("-t").arg(t);
         }
 
-        // Glob filter
         if let Some(g) = &input.glob {
             cmd.arg("-g").arg(g);
         }
 
-        // Pattern
         cmd.arg(&input.pattern);
 
-        // Path
-        let search_path = match &input.path {
-            Some(p) if p.starts_with('/') => PathBuf::from(p),
-            Some(p) => self.working_dir.join(p),
-            None => self.working_dir.clone(),
-        };
+        let search_path = input
+            .path
+            .as_ref()
+            .map(|p| super::resolve_path(&self.working_dir, p))
+            .unwrap_or_else(|| self.working_dir.clone());
         cmd.arg(&search_path);
 
-        // Execute
         cmd.stdout(Stdio::piped());
         cmd.stderr(Stdio::piped());
 

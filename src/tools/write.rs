@@ -3,77 +3,49 @@
 use std::path::PathBuf;
 
 use async_trait::async_trait;
+use schemars::JsonSchema;
 use serde::Deserialize;
 
-use super::{Tool, ToolResult};
+use super::{ToolResult, TypedTool};
 
-/// Tool for writing file contents
+/// Input for the Write tool.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct WriteInput {
+    /// The absolute path to the file to write.
+    pub file_path: String,
+    /// The content to write to the file.
+    pub content: String,
+}
+
+/// Tool for writing file contents.
 pub struct WriteTool {
     working_dir: PathBuf,
 }
 
 impl WriteTool {
-    /// Create a new Write tool
+    /// Create a new Write tool.
     pub fn new(working_dir: PathBuf) -> Self {
         Self { working_dir }
     }
 }
 
-#[derive(Debug, Deserialize)]
-struct WriteInput {
-    file_path: String,
-    content: String,
-}
-
 #[async_trait]
-impl Tool for WriteTool {
-    fn name(&self) -> &str {
-        "Write"
-    }
+impl TypedTool for WriteTool {
+    type Input = WriteInput;
 
-    fn description(&self) -> &str {
-        "Writes content to a file. Creates the file if it doesn't exist, \
-         or completely overwrites it if it does. The file_path must be an absolute path."
-    }
+    const NAME: &'static str = "Write";
+    const DESCRIPTION: &'static str = "Writes content to a file. Creates the file if it doesn't exist, \
+        or completely overwrites it if it does. The file_path must be an absolute path.";
 
-    fn input_schema(&self) -> serde_json::Value {
-        serde_json::json!({
-            "type": "object",
-            "properties": {
-                "file_path": {
-                    "type": "string",
-                    "description": "The absolute path to the file to write"
-                },
-                "content": {
-                    "type": "string",
-                    "description": "The content to write to the file"
-                }
-            },
-            "required": ["file_path", "content"]
-        })
-    }
+    async fn handle(&self, input: WriteInput) -> ToolResult {
+        let path = super::resolve_path(&self.working_dir, &input.file_path);
 
-    async fn execute(&self, input: serde_json::Value) -> ToolResult {
-        let input: WriteInput = match serde_json::from_value(input) {
-            Ok(i) => i,
-            Err(e) => return ToolResult::error(format!("Invalid input: {}", e)),
-        };
-
-        // Resolve path
-        let path = if input.file_path.starts_with('/') {
-            PathBuf::from(&input.file_path)
-        } else {
-            self.working_dir.join(&input.file_path)
-        };
-
-        // Create parent directories if needed
         if let Some(parent) = path.parent() {
             if let Err(e) = tokio::fs::create_dir_all(parent).await {
                 return ToolResult::error(format!("Failed to create directories: {}", e));
             }
         }
 
-        // Write file
         match tokio::fs::write(&path, &input.content).await {
             Ok(_) => ToolResult::success(format!(
                 "Successfully wrote {} bytes to {}",
@@ -88,6 +60,7 @@ impl Tool for WriteTool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::tools::Tool;
     use tempfile::tempdir;
     use tokio::fs;
 

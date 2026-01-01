@@ -2,36 +2,32 @@
 
 use async_trait::async_trait;
 use reqwest::header::{HeaderMap, HeaderValue, ACCEPT, USER_AGENT};
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use serde_json::json;
 use std::time::Duration;
 
-use crate::tools::registry::{Tool, ToolResult};
+use crate::tools::{ToolResult, TypedTool};
 
-/// Input for WebFetch tool
-#[derive(Debug, Clone, Serialize, Deserialize)]
+/// Input for WebFetch tool.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct WebFetchInput {
-    /// The URL to fetch content from
+    /// The URL to fetch content from.
     pub url: String,
-
-    /// The prompt to run on the fetched content
+    /// The prompt describing what information to extract.
     pub prompt: String,
 }
 
-/// Output from WebFetch tool
+/// Output from WebFetch tool.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WebFetchOutput {
-    /// The processed response content
+    /// The processed response content.
     pub response: String,
-
-    /// The URL that was fetched
+    /// The URL that was fetched.
     pub url: String,
-
-    /// The final URL after redirects (if different)
+    /// The final URL after redirects.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub final_url: Option<String>,
-
-    /// HTTP status code
+    /// HTTP status code.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub status_code: Option<u16>,
 }
@@ -42,7 +38,7 @@ pub struct WebFetchTool {
 }
 
 impl WebFetchTool {
-    /// Create a new WebFetchTool
+    /// Create a new WebFetchTool.
     pub fn new() -> Self {
         let mut headers = HeaderMap::new();
         headers.insert(
@@ -75,12 +71,9 @@ impl Default for WebFetchTool {
     }
 }
 
-/// Simple HTML to text conversion
 fn html_to_text(html: &str) -> String {
-    // Remove script and style tags and their contents
     let mut text = html.to_string();
 
-    // Remove script tags
     while let Some(start) = text.to_lowercase().find("<script") {
         if let Some(end) = text[start..].to_lowercase().find("</script>") {
             text = format!("{}{}", &text[..start], &text[start + end + 9..]);
@@ -89,7 +82,6 @@ fn html_to_text(html: &str) -> String {
         }
     }
 
-    // Remove style tags
     while let Some(start) = text.to_lowercase().find("<style") {
         if let Some(end) = text[start..].to_lowercase().find("</style>") {
             text = format!("{}{}", &text[..start], &text[start + end + 8..]);
@@ -98,7 +90,6 @@ fn html_to_text(html: &str) -> String {
         }
     }
 
-    // Remove HTML comments
     while let Some(start) = text.find("<!--") {
         if let Some(end) = text[start..].find("-->") {
             text = format!("{}{}", &text[..start], &text[start + end + 3..]);
@@ -107,7 +98,6 @@ fn html_to_text(html: &str) -> String {
         }
     }
 
-    // Replace common block elements with newlines
     let block_tags = [
         "<br>", "<br/>", "<br />", "<p>", "</p>", "<div>", "</div>", "<h1>", "</h1>", "<h2>",
         "</h2>", "<h3>", "</h3>", "<h4>", "</h4>", "<h5>", "</h5>", "<h6>", "</h6>", "<li>",
@@ -119,7 +109,6 @@ fn html_to_text(html: &str) -> String {
         text = text.replace(&tag.to_uppercase(), "\n");
     }
 
-    // Remove all remaining HTML tags
     let mut result = String::new();
     let mut in_tag = false;
 
@@ -132,7 +121,6 @@ fn html_to_text(html: &str) -> String {
         }
     }
 
-    // Decode common HTML entities
     let entities = [
         ("&nbsp;", " "),
         ("&amp;", "&"),
@@ -154,17 +142,14 @@ fn html_to_text(html: &str) -> String {
         result = result.replace(entity, replacement);
     }
 
-    // Clean up whitespace
-    let lines: Vec<&str> = result
+    result
         .lines()
         .map(|line| line.trim())
         .filter(|line| !line.is_empty())
-        .collect();
-
-    lines.join("\n")
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
-/// Truncate content if it exceeds the max length
 fn truncate_content(content: &str, max_chars: usize) -> String {
     if content.len() <= max_chars {
         content.to_string()
@@ -179,13 +164,11 @@ fn truncate_content(content: &str, max_chars: usize) -> String {
 }
 
 #[async_trait]
-impl Tool for WebFetchTool {
-    fn name(&self) -> &str {
-        "WebFetch"
-    }
+impl TypedTool for WebFetchTool {
+    type Input = WebFetchInput;
 
-    fn description(&self) -> &str {
-        r#"Fetches content from a specified URL and processes it.
+    const NAME: &'static str = "WebFetch";
+    const DESCRIPTION: &'static str = r#"Fetches content from a specified URL and processes it.
 
 Usage:
 - Fetches the URL content and converts HTML to text
@@ -198,56 +181,27 @@ When a URL redirects to a different host, the tool will inform you and provide
 the redirect URL. You should then make a new WebFetch request with the redirect URL.
 
 IMPORTANT: If an MCP-provided web fetch tool is available, prefer using that tool
-instead of this one, as it may have fewer restrictions."#
-    }
+instead of this one, as it may have fewer restrictions."#;
 
-    fn input_schema(&self) -> serde_json::Value {
-        json!({
-            "type": "object",
-            "properties": {
-                "url": {
-                    "type": "string",
-                    "format": "uri",
-                    "description": "The URL to fetch content from. Must be a fully-formed valid URL."
-                },
-                "prompt": {
-                    "type": "string",
-                    "description": "The prompt describing what information to extract from the page."
-                }
-            },
-            "required": ["url", "prompt"]
-        })
-    }
-
-    async fn execute(&self, input: serde_json::Value) -> ToolResult {
-        let input: WebFetchInput = match serde_json::from_value(input) {
-            Ok(i) => i,
-            Err(e) => return ToolResult::error(format!("Invalid input: {}", e)),
-        };
-
-        // Validate URL
+    async fn handle(&self, input: WebFetchInput) -> ToolResult {
         let mut url = input.url.trim().to_string();
         if url.is_empty() {
             return ToolResult::error("URL cannot be empty");
         }
 
-        // Upgrade HTTP to HTTPS
         if url.starts_with("http://") {
             url = url.replacen("http://", "https://", 1);
         }
 
-        // Ensure URL has a scheme
         if !url.starts_with("https://") && !url.starts_with("http://") {
             url = format!("https://{}", url);
         }
 
-        // Validate URL format
         let parsed_url = match reqwest::Url::parse(&url) {
             Ok(u) => u,
             Err(e) => return ToolResult::error(format!("Invalid URL format: {}", e)),
         };
 
-        // Fetch the URL
         let response = match self.client.get(parsed_url.as_str()).send().await {
             Ok(r) => r,
             Err(e) => {
@@ -266,7 +220,6 @@ instead of this one, as it may have fewer restrictions."#
         let status = response.status();
         let final_url = response.url().to_string();
 
-        // Check for cross-host redirect
         if let Ok(final_parsed) = reqwest::Url::parse(&final_url) {
             if final_parsed.host_str() != parsed_url.host_str() {
                 return ToolResult::success(format!(
@@ -279,7 +232,6 @@ instead of this one, as it may have fewer restrictions."#
             }
         }
 
-        // Check status code
         if !status.is_success() {
             return ToolResult::error(format!(
                 "HTTP error {}: {} for URL {}",
@@ -289,7 +241,6 @@ instead of this one, as it may have fewer restrictions."#
             ));
         }
 
-        // Get content type
         let content_type = response
             .headers()
             .get("content-type")
@@ -297,13 +248,11 @@ instead of this one, as it may have fewer restrictions."#
             .unwrap_or("text/plain")
             .to_lowercase();
 
-        // Get response body
         let body = match response.text().await {
             Ok(b) => b,
             Err(e) => return ToolResult::error(format!("Failed to read response body: {}", e)),
         };
 
-        // Process content based on type
         let processed_content =
             if content_type.contains("text/html") || content_type.contains("application/xhtml") {
                 html_to_text(&body)
@@ -311,10 +260,8 @@ instead of this one, as it may have fewer restrictions."#
                 body
             };
 
-        // Truncate if too large (max 50000 chars)
         let truncated_content = truncate_content(&processed_content, 50000);
 
-        // Build output
         let output = WebFetchOutput {
             response: truncated_content.clone(),
             url: url.clone(),
@@ -326,7 +273,6 @@ instead of this one, as it may have fewer restrictions."#
             status_code: Some(status.as_u16()),
         };
 
-        // Format result
         let result = format!(
             "URL: {}\n{}\nStatus: {}\nPrompt: {}\n\n---\nContent:\n{}",
             output.url,
@@ -346,6 +292,8 @@ instead of this one, as it may have fewer restrictions."#
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::tools::Tool;
+    use serde_json::json;
 
     #[test]
     fn test_html_to_text() {
@@ -380,7 +328,6 @@ mod tests {
     fn test_truncate_content() {
         let content = "a".repeat(100);
         let truncated = truncate_content(&content, 50);
-        // Truncated content starts with the first 50 chars but adds truncation notice
         assert!(truncated.starts_with(&"a".repeat(50)));
         assert!(truncated.contains("[Content truncated"));
     }
@@ -400,7 +347,6 @@ mod tests {
         assert!(!tool.description().is_empty());
 
         let schema = tool.input_schema();
-        assert_eq!(schema["type"], "object");
         assert!(schema["properties"]["url"].is_object());
         assert!(schema["properties"]["prompt"].is_object());
     }

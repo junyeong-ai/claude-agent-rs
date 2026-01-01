@@ -1,37 +1,38 @@
 //! NotebookEdit tool - Jupyter notebook cell editing.
 
 use async_trait::async_trait;
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::path::PathBuf;
 
-use crate::tools::registry::{Tool, ToolResult};
+use crate::tools::{ToolResult, TypedTool};
 
-/// Edit mode for notebook cells
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+/// Edit mode for notebook cells.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema, Default)]
 #[serde(rename_all = "lowercase")]
 pub enum EditMode {
-    /// Replace the contents of an existing cell
+    /// Replace the contents of an existing cell.
     #[default]
     Replace,
-    /// Insert a new cell
+    /// Insert a new cell.
     Insert,
-    /// Delete an existing cell
+    /// Delete an existing cell.
     Delete,
 }
 
-/// Cell type for notebook cells
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+/// Cell type for notebook cells.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "lowercase")]
 pub enum CellType {
-    /// Code cell
+    /// Code cell.
     Code,
-    /// Markdown cell
+    /// Markdown cell.
     Markdown,
 }
 
-/// Input for NotebookEdit tool
-#[derive(Debug, Clone, Serialize, Deserialize)]
+/// Input for NotebookEdit tool.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct NotebookEditInput {
     /// The absolute path to the Jupyter notebook file to edit
     pub notebook_path: String,
@@ -83,16 +84,6 @@ impl NotebookEditTool {
         Self { working_dir }
     }
 
-    /// Resolve a path to an absolute path
-    fn resolve_path(&self, path: &str) -> PathBuf {
-        let path = PathBuf::from(path);
-        if path.is_absolute() {
-            path
-        } else {
-            self.working_dir.join(path)
-        }
-    }
-
     /// Generate a new cell ID
     fn generate_cell_id() -> String {
         uuid::Uuid::new_v4().to_string().replace('-', "")[..8].to_string()
@@ -135,13 +126,11 @@ impl Default for NotebookEditTool {
 }
 
 #[async_trait]
-impl Tool for NotebookEditTool {
-    fn name(&self) -> &str {
-        "NotebookEdit"
-    }
+impl TypedTool for NotebookEditTool {
+    type Input = NotebookEditInput;
 
-    fn description(&self) -> &str {
-        r#"Completely replaces the contents of a specific cell in a Jupyter notebook (.ipynb file).
+    const NAME: &'static str = "NotebookEdit";
+    const DESCRIPTION: &'static str = r#"Completely replaces the contents of a specific cell in a Jupyter notebook (.ipynb file).
 
 Jupyter notebooks are interactive documents that combine code, text, and visualizations,
 commonly used for data analysis and scientific computing.
@@ -154,48 +143,11 @@ Edit modes:
 - insert: Add a new cell after the cell with cell_id (or at the beginning if not specified)
 - delete: Delete the cell at the specified cell_id
 
-When using edit_mode=insert, cell_type is required (code or markdown)."#
-    }
+When using edit_mode=insert, cell_type is required (code or markdown)."#;
 
-    fn input_schema(&self) -> serde_json::Value {
-        json!({
-            "type": "object",
-            "properties": {
-                "notebook_path": {
-                    "type": "string",
-                    "description": "The absolute path to the Jupyter notebook file to edit (must be absolute, not relative)"
-                },
-                "new_source": {
-                    "type": "string",
-                    "description": "The new source for the cell"
-                },
-                "cell_id": {
-                    "type": "string",
-                    "description": "The ID of the cell to edit. When inserting, the new cell will be inserted after this cell, or at the beginning if not specified."
-                },
-                "cell_type": {
-                    "type": "string",
-                    "enum": ["code", "markdown"],
-                    "description": "The type of the cell. If not specified, defaults to the current cell type. Required for insert mode."
-                },
-                "edit_mode": {
-                    "type": "string",
-                    "enum": ["replace", "insert", "delete"],
-                    "description": "The type of edit to make. Defaults to replace."
-                }
-            },
-            "required": ["notebook_path", "new_source"]
-        })
-    }
-
-    async fn execute(&self, input: serde_json::Value) -> ToolResult {
-        let input: NotebookEditInput = match serde_json::from_value(input) {
-            Ok(i) => i,
-            Err(e) => return ToolResult::error(format!("Invalid input: {}", e)),
-        };
-
+    async fn handle(&self, input: NotebookEditInput) -> ToolResult {
         let edit_mode = input.edit_mode.unwrap_or_default();
-        let path = self.resolve_path(&input.notebook_path);
+        let path = crate::tools::resolve_path(&self.working_dir, &input.notebook_path);
 
         // Validate path extension
         if path.extension().map(|e| e.to_string_lossy().to_lowercase()) != Some("ipynb".to_string())
@@ -353,6 +305,7 @@ When using edit_mode=insert, cell_type is required (code or markdown)."#
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::tools::Tool;
     use tempfile::TempDir;
     use tokio::fs;
 

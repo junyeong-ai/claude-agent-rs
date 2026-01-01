@@ -1,7 +1,5 @@
-//! Web tools for fetching and searching.
+//! Web tools for fetching content.
 
 mod fetch;
-mod search;
 
 pub use fetch::WebFetchTool;
-pub use search::WebSearchTool;

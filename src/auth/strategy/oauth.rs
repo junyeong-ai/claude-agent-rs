@@ -1,8 +1,8 @@
 //! OAuth authentication strategy for Claude Code CLI tokens.
 
 use super::AuthStrategy;
-use crate::auth::config::OAuthConfig;
 use crate::auth::OAuthCredential;
+use crate::auth::config::OAuthConfig;
 use crate::client::messages::RequestMetadata;
 use crate::types::{CacheControl, SystemBlock, SystemPrompt};
 

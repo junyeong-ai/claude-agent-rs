@@ -107,7 +107,7 @@ impl SettingsLoader {
     /// Apply environment variables from settings.
     pub fn apply_env(&self) {
         for (key, value) in &self.settings.env {
-            std::env::set_var(key, value);
+            unsafe { std::env::set_var(key, value) };
         }
     }
 
@@ -136,28 +136,28 @@ impl SettingsLoader {
 
     /// Match a permission pattern against a target.
     fn matches_pattern(pattern: &str, target: &str) -> bool {
-        if let Some(start) = pattern.find('(') {
-            if let Some(end) = pattern.rfind(')') {
-                let inner = &pattern[start + 1..end];
-                let inner_normalized = inner.strip_prefix("./").unwrap_or(inner);
-                let target_normalized = target.strip_prefix("./").unwrap_or(target);
+        if let Some(start) = pattern.find('(')
+            && let Some(end) = pattern.rfind(')')
+        {
+            let inner = &pattern[start + 1..end];
+            let inner_normalized = inner.strip_prefix("./").unwrap_or(inner);
+            let target_normalized = target.strip_prefix("./").unwrap_or(target);
 
-                if inner.contains('*') {
-                    if inner_normalized.contains("**") {
-                        let prefix = inner_normalized.split("**").next().unwrap_or("");
-                        return target_normalized.starts_with(prefix);
-                    } else if inner_normalized.contains('*') {
-                        let parts: Vec<&str> = inner_normalized.split('*').collect();
-                        if parts.len() == 2 {
-                            return target_normalized.starts_with(parts[0])
-                                && target_normalized.ends_with(parts[1]);
-                        }
+            if inner.contains('*') {
+                if inner_normalized.contains("**") {
+                    let prefix = inner_normalized.split("**").next().unwrap_or("");
+                    return target_normalized.starts_with(prefix);
+                } else if inner_normalized.contains('*') {
+                    let parts: Vec<&str> = inner_normalized.split('*').collect();
+                    if parts.len() == 2 {
+                        return target_normalized.starts_with(parts[0])
+                            && target_normalized.ends_with(parts[1]);
                     }
                 }
-
-                return inner_normalized == target_normalized
-                    || target_normalized.ends_with(inner_normalized);
             }
+
+            return inner_normalized == target_normalized
+                || target_normalized.ends_with(inner_normalized);
         }
 
         pattern == target

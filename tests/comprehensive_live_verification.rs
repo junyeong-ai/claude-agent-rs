@@ -4,12 +4,12 @@
 //! Run: cargo test --test comprehensive_live_verification -- --ignored --nocapture
 
 use claude_agent::{
+    Agent, Client, ToolAccess,
     auth::{AuthStrategy, BedrockStrategy, FoundryStrategy, VertexStrategy},
     client::{ClientBuilder, CloudProvider},
     config::SettingsLoader,
     context::{ContextBuilder, MemoryLoader},
     skills::{CommandLoader, SkillDefinition, SkillExecutor, SkillRegistry},
-    Agent, Client, ToolAccess,
 };
 use std::time::Instant;
 use tempfile::tempdir;
@@ -372,7 +372,8 @@ async fn test_8_progressive_disclosure_with_agent() {
         ))
         .tools(ToolAccess::only(["Skill"]))
         .max_iterations(5)
-        .build().await
+        .build()
+        .await
         .expect("Failed to build agent");
 
     // Test skill invocation through agent
@@ -534,10 +535,12 @@ async fn test_10_settings_loading() {
     );
     assert_eq!(settings.env.get("LOG_LEVEL"), Some(&"debug".to_string())); // Overridden
     assert_eq!(settings.env.get("LOCAL_ONLY"), Some(&"true".to_string()));
-    assert!(settings
-        .permissions
-        .deny
-        .contains(&"Read(./.env)".to_string()));
+    assert!(
+        settings
+            .permissions
+            .deny
+            .contains(&"Read(./.env)".to_string())
+    );
 
     // Test permission checking - patterns are stored, checking logic may vary
     println!("\nPermission check test:");
@@ -649,7 +652,8 @@ async fn test_12_full_agent_with_tools_and_skills() {
         .tools(ToolAccess::only(["Skill", "Read", "Bash"]))
         .working_dir(dir.path())
         .max_iterations(5)
-        .build().await
+        .build()
+        .await
         .expect("Failed to build agent");
 
     // Test reading file and using skill
@@ -685,7 +689,8 @@ async fn test_13_agent_with_bash_tool() {
         .from_claude_cli()
         .tools(ToolAccess::only(["Bash"]))
         .max_iterations(3)
-        .build().await
+        .build()
+        .await
         .expect("Failed to build agent");
 
     let result = agent

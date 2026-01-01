@@ -162,9 +162,7 @@ impl ToolRegistry {
                 wd.clone(),
                 process_manager.clone(),
             )),
-            Arc::new(super::KillShellTool::with_process_manager(
-                process_manager,
-            )),
+            Arc::new(super::KillShellTool::with_process_manager(process_manager)),
             // Web tools
             Arc::new(super::WebFetchTool::new()),
             // Agent tools

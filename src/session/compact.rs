@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 
 use super::state::{Session, SessionMessage};
 use super::{SessionError, SessionResult};
-use crate::types::{CompactResult, ContentBlock, Role, DEFAULT_COMPACT_THRESHOLD};
+use crate::types::{CompactResult, ContentBlock, DEFAULT_COMPACT_THRESHOLD, Role};
 
 /// Compact strategy configuration
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -342,10 +342,12 @@ mod tests {
 
             // Check session state
             assert!(session.summary.is_some());
-            assert!(session.messages[0].content[0]
-                .as_text()
-                .unwrap()
-                .contains("summary"));
+            assert!(
+                session.messages[0].content[0]
+                    .as_text()
+                    .unwrap()
+                    .contains("summary")
+            );
         }
     }
 }

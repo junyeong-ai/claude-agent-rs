@@ -3,8 +3,8 @@
 //! Run: cargo run --example all_tools_test
 
 use claude_agent::tools::{
-    BashTool, EditTool, GlobTool, GrepTool, KillShellTool, ReadTool, Tool, ToolResult,
-    TodoWriteTool, WriteTool,
+    BashTool, EditTool, GlobTool, GrepTool, KillShellTool, ReadTool, TodoWriteTool, Tool,
+    ToolResult, WriteTool,
 };
 
 #[tokio::main]
@@ -232,7 +232,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }))
         .await;
     match result {
-        ToolResult::Success(output) if output.contains("Background") || output.contains("process") => {
+        ToolResult::Success(output)
+            if output.contains("Background") || output.contains("process") =>
+        {
             println!("✓ PASS");
             passed += 1;
         }

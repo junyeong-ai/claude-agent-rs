@@ -321,10 +321,7 @@ async fn test_skill_provider() -> Result<(), String> {
 
     // Higher priority should win
     if shared.description != "High priority" {
-        return Err(format!(
-            "Chain priority incorrect: {}",
-            shared.description
-        ));
+        return Err(format!("Chain priority incorrect: {}", shared.description));
     }
 
     Ok(())

@@ -7,9 +7,9 @@
 //!   cargo test --test live_cli_auth_tests test_basic_query -- --ignored
 
 use claude_agent::{
+    Agent, Client, ToolAccess,
     client::messages::{CreateMessageRequest, RequestMetadata},
     types::Message,
-    Agent, Client, ToolAccess,
 };
 use futures::StreamExt;
 use std::pin::pin;
@@ -199,7 +199,8 @@ async fn test_agent_with_tools_cli_auth() {
         .tools(ToolAccess::only(["Read"]))
         .working_dir(temp_dir.path())
         .max_iterations(5)
-        .build().await
+        .build()
+        .await
         .expect("Failed to create agent");
 
     let prompt = format!(

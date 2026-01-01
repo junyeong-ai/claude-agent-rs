@@ -83,13 +83,13 @@ impl SkillLoader {
             let path = entry.path();
 
             // Check for SKILL.md files or .skill.md suffix
-            if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
-                if name.eq_ignore_ascii_case("SKILL.md") || name.ends_with(".skill.md") {
-                    match self.load_file(&path).await {
-                        Ok(skill) => skills.push(skill),
-                        Err(e) => {
-                            tracing::warn!("Failed to load skill from {}: {}", path.display(), e);
-                        }
+            if let Some(name) = path.file_name().and_then(|n| n.to_str())
+                && (name.eq_ignore_ascii_case("SKILL.md") || name.ends_with(".skill.md"))
+            {
+                match self.load_file(&path).await {
+                    Ok(skill) => skills.push(skill),
+                    Err(e) => {
+                        tracing::warn!("Failed to load skill from {}: {}", path.display(), e);
                     }
                 }
             }

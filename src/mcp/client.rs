@@ -20,10 +20,10 @@ use super::{McpContent, McpServerInfo};
 
 #[cfg(feature = "mcp")]
 use rmcp::{
+    RoleClient,
     model::{CallToolRequestParam, ReadResourceRequestParam},
     service::{RunningService, ServiceExt},
     transport::{ConfigureCommandExt, TokioChildProcess},
-    RoleClient,
 };
 #[cfg(feature = "mcp")]
 use tokio::process::Command;

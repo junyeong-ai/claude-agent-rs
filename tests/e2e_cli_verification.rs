@@ -6,10 +6,10 @@
 //! Run: cargo test --test e2e_cli_verification -- --ignored --nocapture
 
 use claude_agent::{
+    Agent, Client, ToolAccess, ToolRegistry,
     auth::{AuthStrategy, OAuthCredential, OAuthStrategy},
     client::messages::CreateMessageRequest,
     types::{Message, SystemPrompt},
-    Agent, Client, ToolAccess, ToolRegistry,
 };
 use futures::StreamExt;
 use std::collections::HashMap;
@@ -527,7 +527,8 @@ mod agent_e2e {
             .tools(ToolAccess::only(["Read"]))
             .working_dir(dir.path())
             .max_iterations(3)
-            .build().await
+            .build()
+            .await
             .expect("Failed to build agent");
 
         let prompt = format!(
@@ -560,7 +561,8 @@ mod agent_e2e {
             .tools(ToolAccess::only(["Write"]))
             .working_dir(dir.path())
             .max_iterations(3)
-            .build().await
+            .build()
+            .await
             .expect("Failed to build agent");
 
         let prompt = format!(
@@ -590,7 +592,8 @@ mod agent_e2e {
             .from_claude_cli()
             .tools(ToolAccess::only(["Bash"]))
             .max_iterations(3)
-            .build().await
+            .build()
+            .await
             .expect("Failed to build agent");
 
         let result = agent
@@ -666,7 +669,8 @@ mod streaming {
             .from_claude_cli()
             .tools(ToolAccess::none())
             .max_iterations(1)
-            .build().await
+            .build()
+            .await
             .expect("Failed to build agent");
 
         let stream = agent

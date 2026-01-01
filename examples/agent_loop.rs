@@ -15,7 +15,8 @@ async fn main() -> Result<(), claude_agent::Error> {
         .model("claude-sonnet-4-5-20250514")
         .tools(ToolAccess::all())
         .working_dir(".")
-        .build().await?;
+        .build()
+        .await?;
 
     println!("Running agent...\n");
 

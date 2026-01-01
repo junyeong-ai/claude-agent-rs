@@ -123,11 +123,7 @@ impl BashTool {
     }
 
     async fn execute_background(&self, command: &str) -> ToolResult {
-        match self
-            .process_manager
-            .spawn(command, &self.working_dir)
-            .await
-        {
+        match self.process_manager.spawn(command, &self.working_dir).await {
             Ok(id) => ToolResult::success(format!(
                 "Background process started with ID: {}\nUse TaskOutput tool to monitor output.",
                 id

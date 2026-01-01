@@ -1,6 +1,6 @@
 //! Permission rules and policy evaluation.
 
-use super::{is_file_tool, is_read_only_tool, PermissionMode};
+use super::{PermissionMode, is_file_tool, is_read_only_tool};
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;

@@ -558,7 +558,7 @@ mod client_tests {
 
 mod permission_tests {
     use claude_agent::permissions::{
-        is_file_tool, is_read_only_tool, is_shell_tool, PermissionMode, PermissionPolicyBuilder,
+        PermissionMode, PermissionPolicyBuilder, is_file_tool, is_read_only_tool, is_shell_tool,
     };
 
     /// 도구 분류 검증
@@ -1191,13 +1191,13 @@ mod auth_tests {
     /// EnvironmentProvider 테스트
     #[tokio::test]
     async fn test_environment_provider() {
-        std::env::set_var("TEST_AUTH_KEY", "env-test-key");
+        unsafe { std::env::set_var("TEST_AUTH_KEY", "env-test-key") };
         let provider = EnvironmentProvider::with_var("TEST_AUTH_KEY");
         assert_eq!(provider.name(), "environment");
 
         let cred = provider.resolve().await.unwrap();
         assert!(matches!(cred, Credential::ApiKey(k) if k == "env-test-key"));
-        std::env::remove_var("TEST_AUTH_KEY");
+        unsafe { std::env::remove_var("TEST_AUTH_KEY") };
     }
 
     /// ChainProvider 테스트

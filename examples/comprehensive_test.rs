@@ -55,9 +55,7 @@ macro_rules! test_case {
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    tracing_subscriber::fmt()
-        .with_env_filter("warn")
-        .init();
+    tracing_subscriber::fmt().with_env_filter("warn").init();
 
     println!("\n╔══════════════════════════════════════════════════════════════════════╗");
     println!("║       Claude Agent SDK - Comprehensive Real-World Test Suite        ║");
@@ -92,10 +90,22 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     test_case!("Tool: NotebookEdit", test_tool_notebook(&registry).await);
     test_case!("Tool: TodoWrite", test_tool_todo(&registry).await);
     test_case!("Tool: Task (registration)", test_tool_task(&registry));
-    test_case!("Tool: TaskOutput (registration)", test_tool_task_output(&registry));
-    test_case!("Tool: KillShell (registration)", test_tool_killshell(&registry));
-    test_case!("Tool: WebSearch (registration)", test_tool_websearch(&registry));
-    test_case!("Tool: WebFetch (registration)", test_tool_webfetch(&registry));
+    test_case!(
+        "Tool: TaskOutput (registration)",
+        test_tool_task_output(&registry)
+    );
+    test_case!(
+        "Tool: KillShell (registration)",
+        test_tool_killshell(&registry)
+    );
+    test_case!(
+        "Tool: WebSearch (registration)",
+        test_tool_websearch(&registry)
+    );
+    test_case!(
+        "Tool: WebFetch (registration)",
+        test_tool_webfetch(&registry)
+    );
     test_case!("Tool: Skill (registration)", test_tool_skill(&registry));
 
     // ═══════════════════════════════════════════════════════════════════════════
@@ -105,11 +115,23 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("│ Section 3: Progressive Disclosure                                   │");
     println!("└─────────────────────────────────────────────────────────────────────┘");
 
-    test_case!("Memory provider priority", test_memory_provider_priority().await);
-    test_case!("Skill provider priority", test_skill_provider_priority().await);
-    test_case!("Context orchestrator skill routing", test_context_orchestrator_routing());
+    test_case!(
+        "Memory provider priority",
+        test_memory_provider_priority().await
+    );
+    test_case!(
+        "Skill provider priority",
+        test_skill_provider_priority().await
+    );
+    test_case!(
+        "Context orchestrator skill routing",
+        test_context_orchestrator_routing()
+    );
     test_case!("Dynamic context evaluation", test_dynamic_context().await);
-    test_case!("Conditional context inclusion", test_conditional_context().await);
+    test_case!(
+        "Conditional context inclusion",
+        test_conditional_context().await
+    );
 
     // ═══════════════════════════════════════════════════════════════════════════
     // SECTION 4: Prompt Caching
@@ -118,9 +140,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("│ Section 4: Prompt Caching                                           │");
     println!("└─────────────────────────────────────────────────────────────────────┘");
 
-    test_case!("Cache creation on first request", test_cache_creation().await);
+    test_case!(
+        "Cache creation on first request",
+        test_cache_creation().await
+    );
     test_case!("Cache hit on repeated request", test_cache_hit().await);
-    test_case!("System prompt caching (OAuth)", test_system_prompt_caching().await);
+    test_case!(
+        "System prompt caching (OAuth)",
+        test_system_prompt_caching().await
+    );
 
     // ═══════════════════════════════════════════════════════════════════════════
     // SECTION 5: Streaming
@@ -130,7 +158,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("└─────────────────────────────────────────────────────────────────────┘");
 
     test_case!("Basic streaming", test_basic_streaming().await);
-    test_case!("Streaming with token accumulation", test_streaming_tokens().await);
+    test_case!(
+        "Streaming with token accumulation",
+        test_streaming_tokens().await
+    );
 
     // ═══════════════════════════════════════════════════════════════════════════
     // SECTION 6: Agent Loop
@@ -139,9 +170,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("│ Section 6: Agent Loop                                               │");
     println!("└─────────────────────────────────────────────────────────────────────┘");
 
-    test_case!("Agent with single tool call", test_agent_single_tool().await);
-    test_case!("Agent with multiple tool calls", test_agent_multi_tool().await);
-    test_case!("Agent streaming with tools", test_agent_streaming_tools().await);
+    test_case!(
+        "Agent with single tool call",
+        test_agent_single_tool().await
+    );
+    test_case!(
+        "Agent with multiple tool calls",
+        test_agent_multi_tool().await
+    );
+    test_case!(
+        "Agent streaming with tools",
+        test_agent_streaming_tools().await
+    );
 
     // ═══════════════════════════════════════════════════════════════════════════
     // SECTION 7: Complex Scenarios
@@ -274,7 +314,9 @@ async fn test_tool_read(registry: &ToolRegistry) -> Result<(), String> {
 
     match result {
         claude_agent::ToolResult::Success(s) if s.contains("[package]") => Ok(()),
-        claude_agent::ToolResult::Success(s) => Err(format!("Invalid content: {}...", &s[..50.min(s.len())])),
+        claude_agent::ToolResult::Success(s) => {
+            Err(format!("Invalid content: {}...", &s[..50.min(s.len())]))
+        }
         claude_agent::ToolResult::Error(e) => Err(e),
         claude_agent::ToolResult::Empty => Err("Empty result".into()),
     }
@@ -466,7 +508,10 @@ async fn test_memory_provider_priority() -> Result<(), String> {
 
     // Low priority loaded first, high priority loaded last (appended)
     if content.claude_md.len() != 2 {
-        return Err(format!("Expected 2 entries, got {}", content.claude_md.len()));
+        return Err(format!(
+            "Expected 2 entries, got {}",
+            content.claude_md.len()
+        ));
     }
     if content.claude_md[0] != "LOW_PRIORITY_CONTENT" {
         return Err("Priority ordering wrong (first)".into());
@@ -532,7 +577,11 @@ async fn test_dynamic_context() -> Result<(), String> {
         .build_sync()
         .map_err(|e| e.to_string())?;
 
-    if !orchestrator.static_context().claude_md.contains("DYNAMIC_VALUE_123") {
+    if !orchestrator
+        .static_context()
+        .claude_md
+        .contains("DYNAMIC_VALUE_123")
+    {
         return Err("Dynamic content not evaluated".into());
     }
     Ok(())
@@ -583,8 +632,14 @@ async fn test_cache_hit() -> Result<(), String> {
         .map_err(|e| format!("Build: {}", e))?;
 
     // Make identical requests - second should hit cache
-    let _ = client.query("Reply: CACHED").await.map_err(|e| format!("First: {}", e))?;
-    let _ = client.query("Reply: CACHED").await.map_err(|e| format!("Second: {}", e))?;
+    let _ = client
+        .query("Reply: CACHED")
+        .await
+        .map_err(|e| format!("First: {}", e))?;
+    let _ = client
+        .query("Reply: CACHED")
+        .await
+        .map_err(|e| format!("Second: {}", e))?;
 
     // Both requests succeeded - caching is operational
     Ok(())
@@ -694,12 +749,17 @@ async fn test_agent_multi_tool() -> Result<(), String> {
         .map_err(|e| format!("Build: {}", e))?;
 
     let result = agent
-        .execute("Find Cargo.toml with Glob, then read its [package] name. Reply with just the name.")
+        .execute(
+            "Find Cargo.toml with Glob, then read its [package] name. Reply with just the name.",
+        )
         .await
         .map_err(|e| format!("Execute: {}", e))?;
 
     if result.tool_calls < 1 {
-        return Err(format!("Expected >= 1 tool calls, got {}", result.tool_calls));
+        return Err(format!(
+            "Expected >= 1 tool calls, got {}",
+            result.tool_calls
+        ));
     }
     if !result.text.to_lowercase().contains("claude") {
         return Err(format!("Expected 'claude' in response: {}", result.text));
@@ -760,7 +820,10 @@ async fn test_multi_step_analysis() -> Result<(), String> {
         .map_err(|e| format!("Execute: {}", e))?;
 
     if result.tool_calls < 2 {
-        return Err(format!("Expected >= 2 tool calls, got {}", result.tool_calls));
+        return Err(format!(
+            "Expected >= 2 tool calls, got {}",
+            result.tool_calls
+        ));
     }
     Ok(())
 }

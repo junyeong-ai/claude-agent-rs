@@ -9,9 +9,9 @@ use tokio::sync::Mutex;
 use tracing::{debug, info, instrument, warn};
 
 use super::{AgentMetrics, AgentOptions, AgentState, ConversationContext};
-use crate::types::CompactResult;
 use crate::extension::ExtensionRegistry;
 use crate::hooks::{HookContext, HookEvent, HookInput, HookManager};
+use crate::types::CompactResult;
 use crate::types::{ContentBlock, Message, StopReason, ToolResultBlock, ToolUseBlock, Usage};
 use crate::{Client, Result, ToolRegistry};
 
@@ -210,7 +210,10 @@ impl Agent {
                 .create(request)
                 .await?;
             metrics.record_api_call();
-            debug!(api_time_ms = api_start.elapsed().as_millis(), "API call completed");
+            debug!(
+                api_time_ms = api_start.elapsed().as_millis(),
+                "API call completed"
+            );
 
             context.update_usage(response.usage);
             metrics.add_usage(response.usage.input_tokens, response.usage.output_tokens);
@@ -248,7 +251,9 @@ impl Agent {
                     debug!(tool = %tool_use.name, "Tool blocked by hook");
                     blocked.push(ToolResultBlock::error(
                         &tool_use.id,
-                        pre_output.stop_reason.unwrap_or_else(|| "Blocked by hook".into()),
+                        pre_output
+                            .stop_reason
+                            .unwrap_or_else(|| "Blocked by hook".into()),
                     ));
                 } else {
                     let input = pre_output.updated_input.unwrap_or(tool_use.input.clone());
@@ -468,7 +473,8 @@ impl StreamState {
                 crate::tools::ToolResult::Empty => (String::new(), false),
             };
 
-            self.metrics.record_tool(&tool_use.name, duration_ms, is_error);
+            self.metrics
+                .record_tool(&tool_use.name, duration_ms, is_error);
 
             self.pending_events.push_back(Ok(AgentEvent::ToolEnd {
                 id: tool_use.id.clone(),

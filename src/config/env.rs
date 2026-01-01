@@ -71,7 +71,7 @@ impl ConfigProvider for EnvConfigProvider {
 
     async fn set_raw(&self, key: &str, value: &str) -> ConfigResult<()> {
         let env_key = self.env_key(key);
-        std::env::set_var(&env_key, value);
+        unsafe { std::env::set_var(&env_key, value) };
         Ok(())
     }
 
@@ -79,7 +79,7 @@ impl ConfigProvider for EnvConfigProvider {
         let env_key = self.env_key(key);
         let existed = std::env::var(&env_key).is_ok();
         if existed {
-            std::env::remove_var(&env_key);
+            unsafe { std::env::remove_var(&env_key) };
         }
         Ok(existed)
     }
@@ -117,15 +117,10 @@ mod tests {
     async fn test_env_provider_get_set() {
         let provider = EnvConfigProvider::with_prefix("TEST_CONFIG_");
 
-        // Set via env
-        std::env::set_var("TEST_CONFIG_MY_KEY", "my_value");
-
-        // Get via provider
+        unsafe { std::env::set_var("TEST_CONFIG_MY_KEY", "my_value") };
         let value = provider.get_raw("my.key").await.unwrap();
         assert_eq!(value, Some("my_value".to_string()));
-
-        // Cleanup
-        std::env::remove_var("TEST_CONFIG_MY_KEY");
+        unsafe { std::env::remove_var("TEST_CONFIG_MY_KEY") };
     }
 
     #[tokio::test]

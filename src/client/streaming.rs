@@ -6,8 +6,8 @@ use pin_project_lite::pin_project;
 use std::pin::Pin;
 use std::task::{Context, Poll};
 
-use crate::types::StreamEvent;
 use crate::Result;
+use crate::types::StreamEvent;
 
 /// Item emitted by the stream parser.
 #[derive(Debug, Clone)]

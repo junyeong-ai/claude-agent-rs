@@ -137,7 +137,10 @@ impl ExtensionRegistry {
                     )));
                 }
 
-                graph.entry(dep_name.clone()).or_default().push(name.clone());
+                graph
+                    .entry(dep_name.clone())
+                    .or_default()
+                    .push(name.clone());
                 *in_degree.entry(name.clone()).or_insert(0) += 1;
             }
         }
@@ -145,7 +148,7 @@ impl ExtensionRegistry {
         // Kahn's algorithm
         let mut queue: VecDeque<String> = in_degree
             .iter()
-            .filter(|(_, &d)| d == 0)
+            .filter(|&(_, d)| *d == 0)
             .map(|(n, _)| n.clone())
             .collect();
 
@@ -170,7 +173,7 @@ impl ExtensionRegistry {
         if result.len() != self.extensions.len() {
             let remaining: Vec<_> = in_degree
                 .iter()
-                .filter(|(_, &d)| d > 0)
+                .filter(|&(_, d)| *d > 0)
                 .map(|(n, _)| n.as_str())
                 .collect();
             return Err(Error::Config(format!(

@@ -17,6 +17,7 @@
 use std::time::Instant;
 
 use claude_agent::{
+    Agent, Client, ToolAccess,
     auth::{AuthStrategy, BedrockStrategy, FoundryStrategy, VertexStrategy},
     client::{ClientBuilder, CloudProvider},
     config::SettingsLoader,
@@ -25,8 +26,9 @@ use claude_agent::{
     hooks::{HookEvent, HookOutput},
     session::{CacheConfigBuilder, CacheStats, SessionCacheManager},
     skills::{CommandLoader, SkillDefinition, SkillExecutor, SkillRegistry, SkillTool},
-    tools::{BashTool, EditTool, GlobTool, GrepTool, ReadTool, Tool, ToolRegistry, ToolResult, WriteTool},
-    Agent, Client, ToolAccess,
+    tools::{
+        BashTool, EditTool, GlobTool, GrepTool, ReadTool, Tool, ToolRegistry, ToolResult, WriteTool,
+    },
 };
 use tempfile::tempdir;
 use tokio::fs;
@@ -116,7 +118,10 @@ mod cloud_provider_tests {
 
         let strategy = BedrockStrategy::new("us-west-2")
             .with_base_url("https://custom-gateway.example.com")
-            .with_credentials("AKIAIOSFODNN7EXAMPLE", "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY")
+            .with_credentials(
+                "AKIAIOSFODNN7EXAMPLE",
+                "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY",
+            )
             .with_session_token("session-token");
 
         assert_eq!(strategy.region(), "us-west-2");
@@ -321,7 +326,9 @@ mod tool_verification_tests {
     async fn test_edit_tool() {
         let dir = tempdir().unwrap();
         let file_path = dir.path().join("edit.txt");
-        fs::write(&file_path, "Original content here").await.unwrap();
+        fs::write(&file_path, "Original content here")
+            .await
+            .unwrap();
 
         let tool = EditTool::new(dir.path().to_path_buf());
         let result = tool
@@ -365,12 +372,9 @@ mod tool_verification_tests {
     #[tokio::test]
     async fn test_grep_tool() {
         let dir = tempdir().unwrap();
-        fs::write(
-            dir.path().join("search.txt"),
-            "line1\nfindme here\nline3",
-        )
-        .await
-        .unwrap();
+        fs::write(dir.path().join("search.txt"), "line1\nfindme here\nline3")
+            .await
+            .unwrap();
 
         let tool = GrepTool::new(dir.path().to_path_buf());
         let result = tool
@@ -499,7 +503,10 @@ mod progressive_disclosure_tests {
         let commit_index = SkillIndex::new("git-commit", "Create git commits")
             .with_triggers(vec!["commit".into(), "git".into()]);
 
-        println!("SkillIndex entry: {} - {}", commit_index.name, commit_index.description);
+        println!(
+            "SkillIndex entry: {} - {}",
+            commit_index.name, commit_index.description
+        );
 
         // Verify SkillIndex contains name and description only
         assert_eq!(commit_index.name, "git-commit");
@@ -548,12 +555,14 @@ mod progressive_disclosure_tests {
             .with_paths(vec!["**/*.rs".into()])
             .with_priority(10);
 
-        let security_rule = RuleIndex::new("security")
-            .with_priority(20);  // No paths = applies to all files
+        let security_rule = RuleIndex::new("security").with_priority(20); // No paths = applies to all files
 
         println!("RuleIndex entries:");
         println!("  - {}: paths = {:?}", rust_rule.name, rust_rule.paths);
-        println!("  - {}: paths = {:?}", security_rule.name, security_rule.paths);
+        println!(
+            "  - {}: paths = {:?}",
+            security_rule.name, security_rule.paths
+        );
 
         // Verify path matching
         assert!(rust_rule.matches_path(std::path::Path::new("src/lib.rs")));
@@ -1092,9 +1101,12 @@ mod memory_system_tests {
         let rules_dir = dir.path().join(".claude").join("rules");
         fs::create_dir_all(&rules_dir).await.unwrap();
 
-        fs::write(rules_dir.join("001-rust.md"), "# Rust\n\nUse idiomatic Rust.")
-            .await
-            .unwrap();
+        fs::write(
+            rules_dir.join("001-rust.md"),
+            "# Rust\n\nUse idiomatic Rust.",
+        )
+        .await
+        .unwrap();
         fs::write(
             rules_dir.join("002-security.md"),
             "# Security\n\nValidate inputs.",
@@ -1220,7 +1232,8 @@ mod agent_integration_tests {
             .tools(ToolAccess::only(["Read"]))
             .working_dir(dir.path())
             .max_iterations(5)
-            .build().await
+            .build()
+            .await
             .expect("Failed to build agent");
 
         let result = agent
@@ -1254,7 +1267,8 @@ mod agent_integration_tests {
             .from_claude_cli()
             .tools(ToolAccess::only(["Bash"]))
             .max_iterations(3)
-            .build().await
+            .build()
+            .await
             .expect("Failed to build agent");
 
         let result = agent
@@ -1289,7 +1303,8 @@ mod agent_integration_tests {
             ))
             .tools(ToolAccess::only(["Skill"]))
             .max_iterations(3)
-            .build().await
+            .build()
+            .await
             .expect("Failed to build agent");
 
         let result = agent
@@ -1327,7 +1342,8 @@ mod agent_integration_tests {
             .tools(ToolAccess::only(["Read", "Glob"]))
             .working_dir(dir.path())
             .max_iterations(5)
-            .build().await
+            .build()
+            .await
             .expect("Failed to build agent");
 
         let result = agent
@@ -1359,7 +1375,8 @@ mod agent_integration_tests {
             .from_claude_cli()
             .tools(ToolAccess::none())
             .max_iterations(1)
-            .build().await
+            .build()
+            .await
             .expect("Failed to build agent");
 
         let result = agent
@@ -1419,7 +1436,8 @@ mod hook_system_tests {
         assert!(!block_output.continue_execution);
         assert!(block_output.stop_reason.is_some());
 
-        let modify_output = HookOutput::allow().with_updated_input(serde_json::json!({"modified": true}));
+        let modify_output =
+            HookOutput::allow().with_updated_input(serde_json::json!({"modified": true}));
         assert!(modify_output.updated_input.is_some());
         assert!(modify_output.continue_execution);
 

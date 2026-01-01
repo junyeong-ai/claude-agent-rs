@@ -162,8 +162,10 @@ mod tests {
     fn test_vertex_extra_headers() {
         let strategy = VertexStrategy::new("my-project", "us-central1");
         let headers = strategy.extra_headers();
-        assert!(headers
-            .iter()
-            .any(|(k, v)| k == "x-goog-user-project" && v == "my-project"));
+        assert!(
+            headers
+                .iter()
+                .any(|(k, v)| k == "x-goog-user-project" && v == "my-project")
+        );
     }
 }

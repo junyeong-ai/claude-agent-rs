@@ -218,7 +218,11 @@ impl MemoryProvider for ChainMemoryProvider {
     }
 
     fn priority(&self) -> i32 {
-        self.providers.iter().map(|p| p.priority()).max().unwrap_or(0)
+        self.providers
+            .iter()
+            .map(|p| p.priority())
+            .max()
+            .unwrap_or(0)
     }
 }
 

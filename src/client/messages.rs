@@ -263,7 +263,9 @@ impl<'a> MessagesClient<'a> {
     pub async fn create_stream(
         &self,
         request: CreateMessageRequest,
-    ) -> crate::Result<impl futures::Stream<Item = crate::Result<super::StreamItem>>> {
+    ) -> crate::Result<
+        impl futures::Stream<Item = crate::Result<super::StreamItem>> + Send + 'static + use<>,
+    > {
         let mut request = request;
         request.stream = Some(true);
 

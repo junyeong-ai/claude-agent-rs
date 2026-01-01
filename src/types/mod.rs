@@ -8,7 +8,7 @@ mod tool;
 
 pub use content::{ContentBlock, ImageSource, TextBlock, ToolResultBlock, ToolUseBlock};
 pub use message::{CacheControl, Message, Role, SystemBlock, SystemPrompt};
-pub use models::{context_window, DEFAULT_COMPACT_THRESHOLD};
+pub use models::{DEFAULT_COMPACT_THRESHOLD, context_window};
 pub use response::{
     ApiResponse, CompactResult, ContentDelta, MessageDeltaData, MessageStartData, StopReason,
     StreamError, StreamEvent, TokenUsage, Usage,

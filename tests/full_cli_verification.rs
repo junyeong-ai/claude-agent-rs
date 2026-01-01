@@ -12,14 +12,14 @@
 //! Run: cargo test --test full_cli_verification -- --ignored --nocapture
 
 use claude_agent::{
+    Agent, Client, ToolAccess,
     client::messages::{CreateMessageRequest, RequestMetadata},
     skills::{ExecutionMode, SkillDefinition, SkillExecutor, SkillRegistry, SkillTool},
     tools::{
-        BashTool, EditTool, GlobTool, GrepTool, KillShellTool, ReadTool, Tool, ToolRegistry,
-        ToolResult, TodoWriteTool, WebFetchTool, WriteTool,
+        BashTool, EditTool, GlobTool, GrepTool, KillShellTool, ReadTool, TodoWriteTool, Tool,
+        ToolRegistry, ToolResult, WebFetchTool, WriteTool,
     },
     types::Message,
-    Agent, Client, ToolAccess,
 };
 use futures::StreamExt;
 use std::path::PathBuf;
@@ -73,7 +73,10 @@ mod cli_auth_tests {
             println!("  {}: {}", k, v);
         }
 
-        assert!(header_map.contains_key("anthropic-beta"), "Missing anthropic-beta");
+        assert!(
+            header_map.contains_key("anthropic-beta"),
+            "Missing anthropic-beta"
+        );
         assert!(header_map.contains_key("user-agent"), "Missing user-agent");
         assert!(header_map.contains_key("x-app"), "Missing x-app");
         assert!(
@@ -89,7 +92,10 @@ mod cli_auth_tests {
         // Verify URL params
         let query = strategy.url_query_string();
         assert!(query.is_some(), "Should have URL query params");
-        assert!(query.unwrap().contains("beta=true"), "Should include beta=true");
+        assert!(
+            query.unwrap().contains("beta=true"),
+            "Should include beta=true"
+        );
 
         println!("✓ All OAuth headers verified");
     }
@@ -173,9 +179,15 @@ mod builtin_tools_tests {
     #[tokio::test]
     async fn test_glob_tool() {
         let dir = tempdir().unwrap();
-        fs::write(dir.path().join("file1.rs"), "rust").await.unwrap();
-        fs::write(dir.path().join("file2.rs"), "rust").await.unwrap();
-        fs::write(dir.path().join("file3.txt"), "text").await.unwrap();
+        fs::write(dir.path().join("file1.rs"), "rust")
+            .await
+            .unwrap();
+        fs::write(dir.path().join("file2.rs"), "rust")
+            .await
+            .unwrap();
+        fs::write(dir.path().join("file3.txt"), "text")
+            .await
+            .unwrap();
 
         let tool = GlobTool::new(dir.path().to_path_buf());
         let result = tool
@@ -199,9 +211,12 @@ mod builtin_tools_tests {
     #[tokio::test]
     async fn test_grep_tool() {
         let dir = tempdir().unwrap();
-        fs::write(dir.path().join("search.txt"), "target_pattern here\nno match")
-            .await
-            .unwrap();
+        fs::write(
+            dir.path().join("search.txt"),
+            "target_pattern here\nno match",
+        )
+        .await
+        .unwrap();
 
         let tool = GrepTool::new(dir.path().to_path_buf());
         let result = tool
@@ -360,7 +375,14 @@ mod builtin_tools_tests {
         let registry = ToolRegistry::default_tools(&ToolAccess::All, None);
 
         let expected_tools = [
-            "Bash", "Read", "Write", "Edit", "Glob", "Grep", "TodoWrite", "Skill",
+            "Bash",
+            "Read",
+            "Write",
+            "Edit",
+            "Glob",
+            "Grep",
+            "TodoWrite",
+            "Skill",
         ];
 
         println!("=== Registered Tools ===");
@@ -442,7 +464,9 @@ mod progressive_disclosure_tests {
         let jira_result = executor.execute_by_trigger("fix the jira ticket").await;
         assert!(jira_result.is_some(), "Should match jira trigger");
 
-        let docker_result = executor.execute_by_trigger("restart docker container").await;
+        let docker_result = executor
+            .execute_by_trigger("restart docker container")
+            .await;
         assert!(docker_result.is_some(), "Should match docker trigger");
 
         let no_match = executor.execute_by_trigger("random unrelated text").await;
@@ -474,9 +498,11 @@ mod progressive_disclosure_tests {
         // InlinePrompt mode
         let inline_executor = SkillExecutor::new(registry2).with_mode(ExecutionMode::InlinePrompt);
         let inline_result = inline_executor.execute("test-skill", Some("test")).await;
-        assert!(inline_result
-            .output
-            .contains("Execute the following skill instructions"));
+        assert!(
+            inline_result
+                .output
+                .contains("Execute the following skill instructions")
+        );
 
         println!("✓ Execution modes work correctly");
     }
@@ -509,12 +535,9 @@ Steps:
         // Create nested command
         let aws_dir = commands_dir.join("aws");
         fs::create_dir_all(&aws_dir).await.unwrap();
-        fs::write(
-            aws_dir.join("deploy.md"),
-            "Deploy to AWS: $ARGUMENTS",
-        )
-        .await
-        .unwrap();
+        fs::write(aws_dir.join("deploy.md"), "Deploy to AWS: $ARGUMENTS")
+            .await
+            .unwrap();
 
         let mut loader = claude_agent::skills::CommandLoader::new();
         loader.load_all(dir.path()).await.unwrap();
@@ -684,7 +707,11 @@ mod streaming_tests {
             "Should contain counting"
         );
 
-        println!("✓ Streaming works: {} events, {} chunks", event_count, text_chunks.len());
+        println!(
+            "✓ Streaming works: {} events, {} chunks",
+            event_count,
+            text_chunks.len()
+        );
     }
 
     #[tokio::test]
@@ -773,8 +800,12 @@ mod agent_tools_tests {
         let dir = tempdir().unwrap();
 
         // Create test files
-        fs::write(dir.path().join("hello.txt"), "Hello").await.unwrap();
-        fs::write(dir.path().join("world.txt"), "World").await.unwrap();
+        fs::write(dir.path().join("hello.txt"), "Hello")
+            .await
+            .unwrap();
+        fs::write(dir.path().join("world.txt"), "World")
+            .await
+            .unwrap();
 
         let agent = Agent::builder()
             .from_claude_cli()
@@ -849,7 +880,9 @@ mod multi_turn_tests {
         // First turn - establish context
         let request1 = CreateMessageRequest::new(
             &client.config().model,
-            vec![Message::user("My favorite programming language is Rust. Remember this.")],
+            vec![Message::user(
+                "My favorite programming language is Rust. Remember this.",
+            )],
         )
         .with_max_tokens(100);
 
@@ -946,11 +979,8 @@ mod error_handling_tests {
             .build()
             .expect("Failed to create client");
 
-        let request = CreateMessageRequest::new(
-            "invalid-model-xyz",
-            vec![Message::user("Hello")],
-        )
-        .with_max_tokens(10);
+        let request = CreateMessageRequest::new("invalid-model-xyz", vec![Message::user("Hello")])
+            .with_max_tokens(10);
 
         let result = claude_agent::client::MessagesClient::new(&client)
             .create(request)
@@ -1044,11 +1074,9 @@ async fn test_full_live_verification() {
 
     // 3. Streaming
     println!("3. Testing Streaming...");
-    let request = CreateMessageRequest::new(
-        &client.config().model,
-        vec![Message::user("Count 1 2 3")],
-    )
-    .with_max_tokens(50);
+    let request =
+        CreateMessageRequest::new(&client.config().model, vec![Message::user("Count 1 2 3")])
+            .with_max_tokens(50);
 
     let stream = claude_agent::client::MessagesClient::new(&client)
         .create_stream(request)
@@ -1089,7 +1117,10 @@ async fn test_full_live_verification() {
 
     assert!(result.tool_calls >= 1);
     assert!(result.text().contains("SECRET_VALUE_123") || result.text().contains("123"));
-    println!("   ✓ Agent with tools works: {} tool calls\n", result.tool_calls);
+    println!(
+        "   ✓ Agent with tools works: {} tool calls\n",
+        result.tool_calls
+    );
 
     // 5. Progressive Disclosure
     println!("5. Testing Progressive Disclosure...");
@@ -1115,8 +1146,14 @@ async fn test_full_live_verification() {
         .expect("Request failed");
 
     println!("   Input tokens: {}", response.usage.input_tokens);
-    println!("   Cache creation: {:?}", response.usage.cache_creation_input_tokens);
-    println!("   Cache read: {:?}", response.usage.cache_read_input_tokens);
+    println!(
+        "   Cache creation: {:?}",
+        response.usage.cache_creation_input_tokens
+    );
+    println!(
+        "   Cache read: {:?}",
+        response.usage.cache_read_input_tokens
+    );
     println!("   ✓ Prompt caching fields present\n");
 
     println!("=== Full Live Verification Complete ===");

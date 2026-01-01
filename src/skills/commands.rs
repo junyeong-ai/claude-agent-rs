@@ -184,10 +184,10 @@ impl CommandLoader {
                         format!("{}:{}", namespace, dir_name)
                     };
                     self.load_directory(&path, &new_namespace).await?;
-                } else if path.extension().map(|e| e == "md").unwrap_or(false) {
-                    if let Ok(cmd) = self.load_file(&path, namespace).await {
-                        self.commands.insert(cmd.name.clone(), cmd);
-                    }
+                } else if path.extension().map(|e| e == "md").unwrap_or(false)
+                    && let Ok(cmd) = self.load_file(&path, namespace).await
+                {
+                    self.commands.insert(cmd.name.clone(), cmd);
                 }
             }
 
@@ -227,16 +227,16 @@ impl CommandLoader {
 
     /// Parse YAML frontmatter from content.
     fn parse_frontmatter(&self, content: &str) -> Result<(CommandFrontmatter, String)> {
-        if let Some(after_first) = content.strip_prefix("---") {
-            if let Some(end_pos) = after_first.find("---") {
-                let frontmatter_str = after_first[..end_pos].trim();
-                let body = after_first[end_pos + 3..].trim().to_string();
+        if let Some(after_first) = content.strip_prefix("---")
+            && let Some(end_pos) = after_first.find("---")
+        {
+            let frontmatter_str = after_first[..end_pos].trim();
+            let body = after_first[end_pos + 3..].trim().to_string();
 
-                let frontmatter: CommandFrontmatter =
-                    serde_yaml::from_str(frontmatter_str).unwrap_or_default();
+            let frontmatter: CommandFrontmatter =
+                serde_yaml::from_str(frontmatter_str).unwrap_or_default();
 
-                return Ok((frontmatter, body));
-            }
+            return Ok((frontmatter, body));
         }
 
         Ok((CommandFrontmatter::default(), content.to_string()))

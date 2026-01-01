@@ -123,9 +123,11 @@ mod vertex_tests {
     fn test_vertex_extra_headers() {
         let strategy = VertexStrategy::new("my-project", "us-central1");
         let headers = strategy.extra_headers();
-        assert!(headers
-            .iter()
-            .any(|(k, v)| k == "x-goog-user-project" && v == "my-project"));
+        assert!(
+            headers
+                .iter()
+                .any(|(k, v)| k == "x-goog-user-project" && v == "my-project")
+        );
     }
 }
 
@@ -477,17 +479,14 @@ mod env_var_tests {
 
     #[test]
     fn test_bedrock_from_env_disabled() {
-        // Clear any existing env vars
-        std::env::remove_var("CLAUDE_CODE_USE_BEDROCK");
-
+        unsafe { std::env::remove_var("CLAUDE_CODE_USE_BEDROCK") };
         let strategy = BedrockStrategy::from_env();
         assert!(strategy.is_none());
     }
 
     #[test]
     fn test_vertex_from_env_disabled() {
-        std::env::remove_var("CLAUDE_CODE_USE_VERTEX");
-
+        unsafe { std::env::remove_var("CLAUDE_CODE_USE_VERTEX") };
         let strategy = VertexStrategy::from_env();
         assert!(strategy.is_none());
     }
@@ -544,7 +543,8 @@ mod live_tests {
             .tools(ToolAccess::only(["Read"]))
             .working_dir(dir.path())
             .max_iterations(3)
-            .build().await
+            .build()
+            .await
             .expect("Failed to create agent");
 
         let result = agent
@@ -614,7 +614,7 @@ mod foundry_tests {
 
     #[test]
     fn test_foundry_from_env_disabled() {
-        std::env::remove_var("CLAUDE_CODE_USE_FOUNDRY");
+        unsafe { std::env::remove_var("CLAUDE_CODE_USE_FOUNDRY") };
         let strategy = FoundryStrategy::from_env();
         assert!(strategy.is_none());
     }
@@ -756,10 +756,12 @@ mod settings_tests {
             settings.env.get("TEST_VAR"),
             Some(&"test_value".to_string())
         );
-        assert!(settings
-            .permissions
-            .deny
-            .contains(&"Read(./.env)".to_string()));
+        assert!(
+            settings
+                .permissions
+                .deny
+                .contains(&"Read(./.env)".to_string())
+        );
     }
 
     #[tokio::test]

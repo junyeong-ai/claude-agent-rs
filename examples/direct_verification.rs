@@ -3,10 +3,10 @@
 //! Run: cargo run --example direct_verification
 
 use claude_agent::{
+    Agent, Client, ToolAccess,
     client::messages::{CreateMessageRequest, RequestMetadata},
     skills::{SkillDefinition, SkillExecutor, SkillRegistry},
     types::Message,
-    Agent, Client, ToolAccess,
 };
 use futures::StreamExt;
 use std::pin::pin;
@@ -35,7 +35,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("  Base URL: {}", client.config().base_url);
 
     // 기본 쿼리 테스트
-    let response = client.query("What is 7 * 8? Answer with just the number.").await?;
+    let response = client
+        .query("What is 7 * 8? Answer with just the number.")
+        .await?;
     println!("\n  Query: 7 * 8 = {}", response.trim());
     assert!(response.contains("56"), "계산 결과가 맞아야 함");
     println!("  ✓ 기본 API 호출 성공\n");
@@ -130,15 +132,22 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .with_trigger("math"),
     );
     registry.register(
-        SkillDefinition::new("greeter", "인사말 생성", "Generate greeting for: $ARGUMENTS")
-            .with_trigger("greet")
-            .with_trigger("hello"),
+        SkillDefinition::new(
+            "greeter",
+            "인사말 생성",
+            "Generate greeting for: $ARGUMENTS",
+        )
+        .with_trigger("greet")
+        .with_trigger("hello"),
     );
 
     let executor = SkillExecutor::new(registry);
 
     // 스킬 존재 확인
-    assert!(executor.has_skill("calculator"), "calculator 스킬 존재해야 함");
+    assert!(
+        executor.has_skill("calculator"),
+        "calculator 스킬 존재해야 함"
+    );
     assert!(executor.has_skill("greeter"), "greeter 스킬 존재해야 함");
     println!("  ✓ 스킬 등록 확인: calculator, greeter");
 
@@ -147,7 +156,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("  Calculator 스킬 실행: {}", calc_result.success);
 
     // 트리거 기반 실행
-    let triggered = executor.execute_by_trigger("please calculate 100 / 5").await;
+    let triggered = executor
+        .execute_by_trigger("please calculate 100 / 5")
+        .await;
     assert!(triggered.is_some(), "트리거로 스킬이 활성화되어야 함");
     println!("  ✓ 트리거 기반 스킬 활성화 성공\n");
 
@@ -158,12 +169,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("TEST 5: 프롬프트 캐싱 필드 확인");
     println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n");
 
-    let request1 = CreateMessageRequest::new(
-        &client.config().model,
-        vec![Message::user("Say hello")],
-    )
-    .with_max_tokens(20)
-    .with_metadata(RequestMetadata::generate());
+    let request1 =
+        CreateMessageRequest::new(&client.config().model, vec![Message::user("Say hello")])
+            .with_max_tokens(20)
+            .with_metadata(RequestMetadata::generate());
 
     let response1 = claude_agent::client::MessagesClient::new(&client)
         .create(request1)
@@ -184,12 +193,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // 두 번째 요청
     tokio::time::sleep(tokio::time::Duration::from_millis(300)).await;
 
-    let request2 = CreateMessageRequest::new(
-        &client.config().model,
-        vec![Message::user("Say goodbye")],
-    )
-    .with_max_tokens(20)
-    .with_metadata(RequestMetadata::generate());
+    let request2 =
+        CreateMessageRequest::new(&client.config().model, vec![Message::user("Say goodbye")])
+            .with_max_tokens(20)
+            .with_metadata(RequestMetadata::generate());
 
     let response2 = claude_agent::client::MessagesClient::new(&client)
         .create(request2)

@@ -46,7 +46,9 @@ impl SubagentType {
             Self::Plan => {
                 "Software architect agent for designing implementation plans and strategies"
             }
-            Self::StatuslineSetup => "Agent for configuring user's Claude Code status line settings",
+            Self::StatuslineSetup => {
+                "Agent for configuring user's Claude Code status line settings"
+            }
             Self::ClaudeCodeGuide => {
                 "Agent for answering questions about Claude Code features and documentation"
             }

@@ -2,8 +2,8 @@
 
 use async_trait::async_trait;
 
-use crate::auth::{Credential, CredentialProvider};
 use crate::Result;
+use crate::auth::{Credential, CredentialProvider};
 
 /// Provider with explicitly set credentials.
 pub struct ExplicitProvider {

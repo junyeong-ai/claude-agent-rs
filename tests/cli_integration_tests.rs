@@ -9,10 +9,10 @@
 //! - Streaming and non-streaming modes
 
 use claude_agent::{
+    Client, ToolAccess, ToolRegistry,
     auth::{ApiKeyStrategy, AuthStrategy, OAuthConfig, OAuthCredential, OAuthStrategy},
     client::messages::{CreateMessageRequest, RequestMetadata},
     types::{Message, SystemPrompt},
-    Client, ToolAccess, ToolRegistry,
 };
 use std::collections::HashMap;
 
@@ -109,10 +109,12 @@ mod oauth_strategy_tests {
 
         assert_eq!(strategy.config().system_prompt, "Custom Agent Prompt");
         assert_eq!(strategy.config().user_agent, "my-agent/2.0");
-        assert!(strategy
-            .config()
-            .beta_flags
-            .contains(&"custom-flag-2025".to_string()));
+        assert!(
+            strategy
+                .config()
+                .beta_flags
+                .contains(&"custom-flag-2025".to_string())
+        );
     }
 }
 

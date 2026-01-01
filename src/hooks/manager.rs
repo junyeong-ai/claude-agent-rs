@@ -2,7 +2,7 @@
 
 use super::{Hook, HookContext, HookEvent, HookInput, HookOutput};
 use std::sync::Arc;
-use tokio::time::{timeout, Duration};
+use tokio::time::{Duration, timeout};
 
 /// Manager for registering and executing hooks.
 ///
@@ -126,10 +126,10 @@ impl HookManager {
 
         for hook in hooks {
             // Check tool matcher if applicable
-            if let (Some(matcher), Some(tool_name)) = (hook.tool_matcher(), &input.tool_name) {
-                if !matcher.is_match(tool_name) {
-                    continue;
-                }
+            if let (Some(matcher), Some(tool_name)) = (hook.tool_matcher(), &input.tool_name)
+                && !matcher.is_match(tool_name)
+            {
+                continue;
             }
 
             // Execute with timeout
@@ -195,10 +195,10 @@ impl HookManager {
 
         for hook in hooks {
             // Check tool matcher if applicable
-            if let (Some(matcher), Some(tool_name)) = (hook.tool_matcher(), &input.tool_name) {
-                if !matcher.is_match(tool_name) {
-                    continue;
-                }
+            if let (Some(matcher), Some(tool_name)) = (hook.tool_matcher(), &input.tool_name)
+                && !matcher.is_match(tool_name)
+            {
+                continue;
             }
 
             // Execute with timeout

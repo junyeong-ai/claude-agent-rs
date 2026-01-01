@@ -4,13 +4,13 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 
+use crate::Result;
 use crate::auth::{
     ApiKeyStrategy, AuthStrategy, BedrockStrategy, ChainProvider, ClaudeCliProvider, Credential,
     CredentialProvider, ExplicitProvider, FoundryStrategy, OAuthConfig, OAuthStrategy,
     VertexStrategy,
 };
 use crate::mcp::McpServerConfig;
-use crate::Result;
 
 pub const DEFAULT_BASE_URL: &str = "https://api.anthropic.com";
 pub const DEFAULT_MODEL: &str = "claude-sonnet-4-5-20250929";

@@ -30,11 +30,13 @@ mod tests {
 
     #[test]
     fn test_env_bool() {
-        std::env::set_var("TEST_BOOL_1", "1");
-        std::env::set_var("TEST_BOOL_TRUE", "true");
-        std::env::set_var("TEST_BOOL_TRUE_UPPER", "TRUE");
-        std::env::set_var("TEST_BOOL_FALSE", "false");
-        std::env::set_var("TEST_BOOL_ZERO", "0");
+        unsafe {
+            std::env::set_var("TEST_BOOL_1", "1");
+            std::env::set_var("TEST_BOOL_TRUE", "true");
+            std::env::set_var("TEST_BOOL_TRUE_UPPER", "TRUE");
+            std::env::set_var("TEST_BOOL_FALSE", "false");
+            std::env::set_var("TEST_BOOL_ZERO", "0");
+        }
 
         assert!(env_bool("TEST_BOOL_1"));
         assert!(env_bool("TEST_BOOL_TRUE"));
@@ -43,10 +45,12 @@ mod tests {
         assert!(!env_bool("TEST_BOOL_ZERO"));
         assert!(!env_bool("TEST_BOOL_NONEXISTENT"));
 
-        std::env::remove_var("TEST_BOOL_1");
-        std::env::remove_var("TEST_BOOL_TRUE");
-        std::env::remove_var("TEST_BOOL_TRUE_UPPER");
-        std::env::remove_var("TEST_BOOL_FALSE");
-        std::env::remove_var("TEST_BOOL_ZERO");
+        unsafe {
+            std::env::remove_var("TEST_BOOL_1");
+            std::env::remove_var("TEST_BOOL_TRUE");
+            std::env::remove_var("TEST_BOOL_TRUE_UPPER");
+            std::env::remove_var("TEST_BOOL_FALSE");
+            std::env::remove_var("TEST_BOOL_ZERO");
+        }
     }
 }

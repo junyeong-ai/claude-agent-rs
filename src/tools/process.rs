@@ -7,7 +7,7 @@ use std::time::Instant;
 
 use tokio::io::AsyncReadExt;
 use tokio::process::{Child, Command};
-use tokio::sync::RwLock;
+use tokio::sync::Mutex;
 
 /// Unique identifier for a managed process.
 pub type ProcessId = String;
@@ -34,7 +34,7 @@ struct ManagedProcess {
 /// Manager for background shell processes.
 #[derive(Clone)]
 pub struct ProcessManager {
-    processes: Arc<RwLock<HashMap<ProcessId, ManagedProcess>>>,
+    processes: Arc<Mutex<HashMap<ProcessId, ManagedProcess>>>,
 }
 
 impl ProcessManager {
@@ -42,7 +42,7 @@ impl ProcessManager {
     #[must_use]
     pub fn new() -> Self {
         Self {
-            processes: Arc::new(RwLock::new(HashMap::new())),
+            processes: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 
@@ -72,13 +72,13 @@ impl ProcessManager {
             output_buffer: String::new(),
         };
 
-        self.processes.write().await.insert(id.clone(), managed);
+        self.processes.lock().await.insert(id.clone(), managed);
         Ok(id)
     }
 
     /// Kill a background process.
     pub async fn kill(&self, id: &ProcessId) -> Result<(), String> {
-        let mut processes = self.processes.write().await;
+        let mut processes = self.processes.lock().await;
 
         if let Some(mut proc) = processes.remove(id) {
             proc.child
@@ -92,7 +92,7 @@ impl ProcessManager {
 
     /// Get output from a background process (non-blocking read of available output).
     pub async fn get_output(&self, id: &ProcessId) -> Result<String, String> {
-        let mut processes = self.processes.write().await;
+        let mut processes = self.processes.lock().await;
 
         let proc = processes
             .get_mut(id)
@@ -101,11 +101,8 @@ impl ProcessManager {
         // Try to read available stdout
         if let Some(ref mut stdout) = proc.child.stdout {
             let mut buf = vec![0u8; 8192];
-            match tokio::time::timeout(
-                std::time::Duration::from_millis(100),
-                stdout.read(&mut buf),
-            )
-            .await
+            match tokio::time::timeout(std::time::Duration::from_millis(100), stdout.read(&mut buf))
+                .await
             {
                 Ok(Ok(n)) if n > 0 => {
                     let s = String::from_utf8_lossy(&buf[..n]);
@@ -118,11 +115,8 @@ impl ProcessManager {
         // Try to read available stderr
         if let Some(ref mut stderr) = proc.child.stderr {
             let mut buf = vec![0u8; 8192];
-            match tokio::time::timeout(
-                std::time::Duration::from_millis(100),
-                stderr.read(&mut buf),
-            )
-            .await
+            match tokio::time::timeout(std::time::Duration::from_millis(100), stderr.read(&mut buf))
+                .await
             {
                 Ok(Ok(n)) if n > 0 => {
                     let s = String::from_utf8_lossy(&buf[..n]);
@@ -137,7 +131,7 @@ impl ProcessManager {
 
     /// Check if a process is still running.
     pub async fn is_running(&self, id: &ProcessId) -> bool {
-        let mut processes = self.processes.write().await;
+        let mut processes = self.processes.lock().await;
 
         if let Some(proc) = processes.get_mut(id) {
             matches!(proc.child.try_wait(), Ok(None))
@@ -149,7 +143,7 @@ impl ProcessManager {
     /// List all tracked processes.
     pub async fn list(&self) -> Vec<ProcessInfo> {
         self.processes
-            .read()
+            .lock()
             .await
             .values()
             .map(|p| p.info.clone())
@@ -158,17 +152,16 @@ impl ProcessManager {
 
     /// Clean up finished processes and return their final output.
     pub async fn cleanup_finished(&self) -> Vec<(ProcessInfo, String)> {
-        let mut processes = self.processes.write().await;
+        let mut processes = self.processes.lock().await;
         let mut finished = Vec::new();
 
         let ids: Vec<_> = processes.keys().cloned().collect();
         for id in ids {
-            if let Some(proc) = processes.get_mut(&id) {
-                if let Ok(Some(_status)) = proc.child.try_wait() {
-                    if let Some(proc) = processes.remove(&id) {
-                        finished.push((proc.info, proc.output_buffer));
-                    }
-                }
+            if let Some(proc) = processes.get_mut(&id)
+                && let Ok(Some(_status)) = proc.child.try_wait()
+                && let Some(proc) = processes.remove(&id)
+            {
+                finished.push((proc.info, proc.output_buffer));
             }
         }
 
@@ -190,7 +183,10 @@ mod tests {
     #[tokio::test]
     async fn test_spawn_and_list() {
         let mgr = ProcessManager::new();
-        let id = mgr.spawn("sleep 0.1", &PathBuf::from("/tmp")).await.unwrap();
+        let id = mgr
+            .spawn("sleep 0.1", &PathBuf::from("/tmp"))
+            .await
+            .unwrap();
 
         let list = mgr.list().await;
         assert_eq!(list.len(), 1);

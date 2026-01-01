@@ -5,11 +5,11 @@
 //! Run: cargo test --test progressive_disclosure_test -- --nocapture
 
 use claude_agent::{
+    Agent, ToolAccess,
     skills::{
         CommandLoader, ExecutionMode, SkillDefinition, SkillExecutor, SkillRegistry, SkillTool,
     },
     tools::{Tool, ToolRegistry, ToolResult},
-    Agent, ToolAccess,
 };
 use tempfile::tempdir;
 use tokio::fs;
@@ -272,9 +272,11 @@ mod execution_mode_tests {
         let result = executor.execute("analyze", Some("main.rs")).await;
 
         assert!(result.success);
-        assert!(result
-            .output
-            .contains("Execute the following skill instructions"));
+        assert!(
+            result
+                .output
+                .contains("Execute the following skill instructions")
+        );
         println!("Inline prompt output:\n{}", result.output);
     }
 }
@@ -300,7 +302,8 @@ mod live_agent_tests {
             ))
             .tools(ToolAccess::only(["Skill"]))
             .max_iterations(5)
-            .build().await
+            .build()
+            .await
             .expect("Failed to create agent");
 
         let result = agent
@@ -340,7 +343,8 @@ Execute the simulated Jira command.
             )
             .tools(ToolAccess::only(["Skill", "Bash"]))
             .max_iterations(5)
-            .build().await
+            .build()
+            .await
             .expect("Failed to create agent");
 
         let result = agent
@@ -380,7 +384,8 @@ Execute the simulated Jira command.
             .tools(ToolAccess::only(["Skill", "Read"]))
             .working_dir(dir.path())
             .max_iterations(3)
-            .build().await
+            .build()
+            .await
             .expect("Failed to create agent");
 
         let result = agent

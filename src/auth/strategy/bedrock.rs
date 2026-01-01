@@ -113,10 +113,10 @@ impl AuthStrategy for BedrockStrategy {
     }
 
     fn extra_headers(&self) -> Vec<(String, String)> {
-        if !self.skip_auth {
-            if let Some(ref token) = self.session_token {
-                return vec![("x-amz-security-token".to_string(), token.clone())];
-            }
+        if !self.skip_auth
+            && let Some(ref token) = self.session_token
+        {
+            return vec![("x-amz-security-token".to_string(), token.clone())];
         }
         Vec::new()
     }

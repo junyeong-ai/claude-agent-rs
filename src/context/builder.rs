@@ -85,10 +85,10 @@ impl ContextBuilder {
     /// Load CLAUDE.md from a file path
     pub fn claude_md_from_file(mut self, path: impl AsRef<Path>) -> Self {
         let path = path.as_ref();
-        if path.exists() {
-            if let Ok(content) = std::fs::read_to_string(path) {
-                self.claude_md = Some(content);
-            }
+        if path.exists()
+            && let Ok(content) = std::fs::read_to_string(path)
+        {
+            self.claude_md = Some(content);
         }
         self
     }

@@ -245,26 +245,22 @@ impl SkillProvider for FileSkillProvider {
                 // Directory with SKILL.md
                 if entry_path.is_dir() {
                     let skill_file = entry_path.join("SKILL.md");
-                    if skill_file.exists() {
-                        if let Ok(skill) = self.load_skill_file(&skill_file).await {
-                            skills.push(skill);
-                        }
+                    if skill_file.exists()
+                        && let Ok(skill) = self.load_skill_file(&skill_file).await
+                    {
+                        skills.push(skill);
                     }
                 }
 
                 // .skill.md file
-                if entry_path
-                    .extension()
-                    .map(|e| e == "md")
-                    .unwrap_or(false)
+                if entry_path.extension().map(|e| e == "md").unwrap_or(false)
                     && entry_path
                         .file_name()
                         .map(|n| n.to_string_lossy().ends_with(".skill.md"))
                         .unwrap_or(false)
+                    && let Ok(skill) = self.load_skill_file(&entry_path).await
                 {
-                    if let Ok(skill) = self.load_skill_file(&entry_path).await {
-                        skills.push(skill);
-                    }
+                    skills.push(skill);
                 }
             }
         }

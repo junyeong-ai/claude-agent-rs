@@ -80,7 +80,7 @@ impl Client {
     pub async fn stream(
         &self,
         prompt: &str,
-    ) -> Result<impl futures::Stream<Item = Result<String>>> {
+    ) -> Result<impl futures::Stream<Item = Result<String>> + Send + 'static + use<>> {
         let request = messages::CreateMessageRequest::new(
             &self.config.model,
             vec![crate::types::Message::user(prompt)],

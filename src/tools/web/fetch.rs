@@ -1,7 +1,7 @@
 //! WebFetch tool - fetches and processes web content.
 
 use async_trait::async_trait;
-use reqwest::header::{HeaderMap, HeaderValue, ACCEPT, USER_AGENT};
+use reqwest::header::{ACCEPT, HeaderMap, HeaderValue, USER_AGENT};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
@@ -220,16 +220,16 @@ instead of this one, as it may have fewer restrictions."#;
         let status = response.status();
         let final_url = response.url().to_string();
 
-        if let Ok(final_parsed) = reqwest::Url::parse(&final_url) {
-            if final_parsed.host_str() != parsed_url.host_str() {
-                return ToolResult::success(format!(
-                    "The URL redirected to a different host.\n\
+        if let Ok(final_parsed) = reqwest::Url::parse(&final_url)
+            && final_parsed.host_str() != parsed_url.host_str()
+        {
+            return ToolResult::success(format!(
+                "The URL redirected to a different host.\n\
                      Original URL: {}\n\
                      Redirect URL: {}\n\n\
                      Please make a new WebFetch request with the redirect URL to fetch the content.",
-                    url, final_url
-                ));
-            }
+                url, final_url
+            ));
         }
 
         if !status.is_success() {

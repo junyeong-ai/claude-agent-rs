@@ -40,10 +40,10 @@ impl TypedTool for WriteTool {
     async fn handle(&self, input: WriteInput) -> ToolResult {
         let path = super::resolve_path(&self.working_dir, &input.file_path);
 
-        if let Some(parent) = path.parent() {
-            if let Err(e) = tokio::fs::create_dir_all(parent).await {
-                return ToolResult::error(format!("Failed to create directories: {}", e));
-            }
+        if let Some(parent) = path.parent()
+            && let Err(e) = tokio::fs::create_dir_all(parent).await
+        {
+            return ToolResult::error(format!("Failed to create directories: {}", e));
         }
 
         match tokio::fs::write(&path, &input.content).await {

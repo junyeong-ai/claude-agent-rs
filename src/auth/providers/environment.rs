@@ -53,17 +53,17 @@ mod tests {
 
     #[tokio::test]
     async fn test_environment_provider_missing() {
-        std::env::remove_var("TEST_API_KEY_NOT_SET");
+        unsafe { std::env::remove_var("TEST_API_KEY_NOT_SET") };
         let provider = EnvironmentProvider::with_var("TEST_API_KEY_NOT_SET");
         assert!(provider.resolve().await.is_err());
     }
 
     #[tokio::test]
     async fn test_environment_provider_set() {
-        std::env::set_var("TEST_API_KEY_SET", "test-key");
+        unsafe { std::env::set_var("TEST_API_KEY_SET", "test-key") };
         let provider = EnvironmentProvider::with_var("TEST_API_KEY_SET");
         let cred = provider.resolve().await.unwrap();
         assert!(matches!(cred, Credential::ApiKey(k) if k == "test-key"));
-        std::env::remove_var("TEST_API_KEY_SET");
+        unsafe { std::env::remove_var("TEST_API_KEY_SET") };
     }
 }

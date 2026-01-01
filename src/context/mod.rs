@@ -15,8 +15,8 @@ pub use builder::ContextBuilder;
 pub use memory_loader::{MemoryContent, MemoryLoader, RuleFile};
 pub use orchestrator::{ContextOrchestrator, ContextWindowState, OrchestratorState};
 pub use provider::{
-    ChainMemoryProvider, FileMemoryProvider, HttpMemoryProvider, InMemoryProvider, MemoryProvider,
-    MAX_IMPORT_DEPTH,
+    ChainMemoryProvider, FileMemoryProvider, HttpMemoryProvider, InMemoryProvider,
+    MAX_IMPORT_DEPTH, MemoryProvider,
 };
 pub use routing::RoutingStrategy;
 pub use rule_index::{LoadedRule, RuleIndex, RuleSource};

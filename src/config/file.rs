@@ -8,8 +8,8 @@ use std::sync::Arc;
 
 use tokio::sync::RwLock;
 
-use super::provider::ConfigProvider;
 use super::ConfigResult;
+use super::provider::ConfigProvider;
 
 /// File-based configuration provider
 pub struct FileConfigProvider {

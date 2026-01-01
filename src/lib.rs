@@ -81,8 +81,8 @@ pub use auth::{
 pub use client::{Client, ClientBuilder, CloudProvider, Config};
 pub use context::{
     ChainMemoryProvider, ContextBuilder, ContextOrchestrator, FileMemoryProvider,
-    HttpMemoryProvider, InMemoryProvider, MemoryContent, MemoryLoader, MemoryProvider,
-    RoutingStrategy, RuleIndex, SkillIndex, StaticContext, MAX_IMPORT_DEPTH,
+    HttpMemoryProvider, InMemoryProvider, MAX_IMPORT_DEPTH, MemoryContent, MemoryLoader,
+    MemoryProvider, RoutingStrategy, RuleIndex, SkillIndex, StaticContext,
 };
 pub use extension::{Extension, ExtensionContext, ExtensionMeta, ExtensionRegistry};
 pub use hooks::{Hook, HookContext, HookEvent, HookInput, HookManager, HookOutput};
@@ -181,7 +181,7 @@ pub async fn query(prompt: &str) -> Result<String> {
     client.query(prompt).await
 }
 
-/// Stream a response for one-shot requests
+/// Stream a response for one-shot requests.
 ///
 /// # Example
 ///
@@ -199,7 +199,9 @@ pub async fn query(prompt: &str) -> Result<String> {
 /// # Ok(())
 /// # }
 /// ```
-pub async fn stream(prompt: &str) -> Result<impl futures::Stream<Item = Result<String>>> {
+pub async fn stream(
+    prompt: &str,
+) -> Result<impl futures::Stream<Item = Result<String>> + Send + 'static + use<>> {
     let client = Client::from_env_async().await?;
     client.stream(prompt).await
 }

@@ -4,7 +4,7 @@ use std::collections::HashMap;
 use std::path::Path;
 
 use crate::skills::SkillDefinition;
-use crate::types::{context_window, TokenUsage, DEFAULT_COMPACT_THRESHOLD};
+use crate::types::{DEFAULT_COMPACT_THRESHOLD, TokenUsage, context_window};
 
 use super::rule_index::{LoadedRule, RulesEngine};
 use super::skill_index::SkillIndex;

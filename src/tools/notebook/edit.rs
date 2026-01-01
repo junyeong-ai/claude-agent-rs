@@ -3,7 +3,7 @@
 use async_trait::async_trait;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::path::PathBuf;
 
 use crate::tools::{ToolResult, TypedTool};
@@ -209,7 +209,7 @@ When using edit_mode=insert, cell_type is required (code or markdown)."#;
                         (format!("Replaced cell {}", cell_id), Some(cell_id))
                     }
                     None => {
-                        return ToolResult::error(format!("Cell with ID '{}' not found", cell_id))
+                        return ToolResult::error(format!("Cell with ID '{}' not found", cell_id));
                     }
                 }
             }
@@ -231,7 +231,7 @@ When using edit_mode=insert, cell_type is required (code or markdown)."#;
                                 return ToolResult::error(format!(
                                     "Cell with ID '{}' not found",
                                     after_id
-                                ))
+                                ));
                             }
                         }
                     }
@@ -269,7 +269,7 @@ When using edit_mode=insert, cell_type is required (code or markdown)."#;
                         (format!("Deleted cell {}", cell_id), Some(cell_id))
                     }
                     None => {
-                        return ToolResult::error(format!("Cell with ID '{}' not found", cell_id))
+                        return ToolResult::error(format!("Cell with ID '{}' not found", cell_id));
                     }
                 }
             }

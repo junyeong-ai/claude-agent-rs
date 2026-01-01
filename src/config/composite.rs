@@ -3,8 +3,8 @@
 //! Chains multiple configuration providers with priority ordering.
 //! Earlier providers have higher priority.
 
-use super::provider::ConfigProvider;
 use super::ConfigResult;
+use super::provider::ConfigProvider;
 
 /// Composite configuration provider that chains multiple providers
 pub struct CompositeConfigProvider {

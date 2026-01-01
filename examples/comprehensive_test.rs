@@ -670,6 +670,7 @@ async fn test_agent_single_tool() -> Result<(), String> {
         .tools(ToolAccess::only(["Glob"]))
         .working_dir(".")
         .build()
+        .await
         .map_err(|e| format!("Build: {}", e))?;
 
     let result = agent
@@ -689,6 +690,7 @@ async fn test_agent_multi_tool() -> Result<(), String> {
         .tools(ToolAccess::only(["Glob", "Read"]))
         .working_dir(".")
         .build()
+        .await
         .map_err(|e| format!("Build: {}", e))?;
 
     let result = agent
@@ -714,6 +716,7 @@ async fn test_agent_streaming_tools() -> Result<(), String> {
         .tools(ToolAccess::only(["Glob"]))
         .working_dir(".")
         .build()
+        .await
         .map_err(|e| format!("Build: {}", e))?;
 
     // Non-streaming version works reliably
@@ -744,6 +747,7 @@ async fn test_multi_step_analysis() -> Result<(), String> {
         .working_dir(".")
         .max_iterations(5)
         .build()
+        .await
         .map_err(|e| format!("Build: {}", e))?;
 
     let result = agent
@@ -767,6 +771,7 @@ async fn test_tool_error_handling() -> Result<(), String> {
         .tools(ToolAccess::only(["Read"]))
         .working_dir(".")
         .build()
+        .await
         .map_err(|e| format!("Build: {}", e))?;
 
     let result = agent

@@ -495,6 +495,7 @@ async fn test_agent_loop() -> Result<(), String> {
         .tools(ToolAccess::only(["Glob", "Read"]))
         .working_dir(".")
         .build()
+        .await
         .map_err(|e| format!("Build failed: {}", e))?;
 
     let stream = agent

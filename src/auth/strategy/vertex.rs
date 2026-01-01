@@ -2,9 +2,6 @@
 
 use std::fmt::Debug;
 
-use crate::client::messages::CreateMessageRequest;
-use crate::types::SystemPrompt;
-
 use super::env::{env_bool, env_opt, env_with_fallbacks, env_with_fallbacks_or};
 use super::traits::AuthStrategy;
 
@@ -118,30 +115,12 @@ impl AuthStrategy for VertexStrategy {
         if let Some(ref token) = self.access_token {
             ("Authorization", format!("Bearer {}", token))
         } else {
-            // OAuth token will be obtained separately
             ("Authorization", "Bearer <pending>".to_string())
         }
     }
 
     fn extra_headers(&self) -> Vec<(String, String)> {
         vec![("x-goog-user-project".to_string(), self.project_id.clone())]
-    }
-
-    fn url_query_string(&self) -> Option<String> {
-        None
-    }
-
-    fn prepare_system_prompt(&self, existing: Option<SystemPrompt>) -> Option<SystemPrompt> {
-        // Vertex AI doesn't require special system prompt handling
-        existing
-    }
-
-    fn prepare_metadata(&self) -> Option<crate::client::messages::RequestMetadata> {
-        None
-    }
-
-    fn prepare_request(&self, request: CreateMessageRequest) -> CreateMessageRequest {
-        request
     }
 
     fn name(&self) -> &'static str {

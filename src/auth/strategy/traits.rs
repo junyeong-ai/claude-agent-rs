@@ -12,16 +12,24 @@ pub trait AuthStrategy: Send + Sync + Debug {
     fn auth_header(&self) -> (&'static str, String);
 
     /// Returns additional headers required by this strategy.
-    fn extra_headers(&self) -> Vec<(String, String)>;
+    fn extra_headers(&self) -> Vec<(String, String)> {
+        Vec::new()
+    }
 
-    /// Returns URL query parameters (e.g., "beta=true").
-    fn url_query_string(&self) -> Option<String>;
+    /// Returns URL query parameters (e.g., "api-version=2024-06-01").
+    fn url_query_string(&self) -> Option<String> {
+        None
+    }
 
     /// Prepares the system prompt for the request.
-    fn prepare_system_prompt(&self, existing: Option<SystemPrompt>) -> Option<SystemPrompt>;
+    fn prepare_system_prompt(&self, existing: Option<SystemPrompt>) -> Option<SystemPrompt> {
+        existing
+    }
 
     /// Generates request metadata if required.
-    fn prepare_metadata(&self) -> Option<RequestMetadata>;
+    fn prepare_metadata(&self) -> Option<RequestMetadata> {
+        None
+    }
 
     /// Prepares the full request with all strategy-specific modifications.
     fn prepare_request(&self, mut request: CreateMessageRequest) -> CreateMessageRequest {

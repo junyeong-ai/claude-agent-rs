@@ -2,9 +2,6 @@
 
 use std::fmt::Debug;
 
-use crate::client::messages::CreateMessageRequest;
-use crate::types::SystemPrompt;
-
 use super::env::{env_bool, env_opt, env_with_fallbacks};
 use super::traits::AuthStrategy;
 
@@ -150,24 +147,8 @@ impl AuthStrategy for FoundryStrategy {
         }
     }
 
-    fn extra_headers(&self) -> Vec<(String, String)> {
-        vec![]
-    }
-
     fn url_query_string(&self) -> Option<String> {
         Some(format!("api-version={}", self.api_version))
-    }
-
-    fn prepare_system_prompt(&self, existing: Option<SystemPrompt>) -> Option<SystemPrompt> {
-        existing
-    }
-
-    fn prepare_metadata(&self) -> Option<crate::client::messages::RequestMetadata> {
-        None
-    }
-
-    fn prepare_request(&self, request: CreateMessageRequest) -> CreateMessageRequest {
-        request
     }
 
     fn name(&self) -> &'static str {

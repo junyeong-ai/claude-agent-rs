@@ -1,11 +1,8 @@
 //! API Key authentication strategy.
 
 use super::AuthStrategy;
-use crate::client::messages::RequestMetadata;
-use crate::types::SystemPrompt;
 
 /// API Key authentication strategy.
-/// Simple authentication with no additional headers or request modifications.
 #[derive(Debug, Clone)]
 pub struct ApiKeyStrategy {
     key: String,
@@ -23,22 +20,6 @@ impl AuthStrategy for ApiKeyStrategy {
         ("x-api-key", self.key.clone())
     }
 
-    fn extra_headers(&self) -> Vec<(String, String)> {
-        vec![]
-    }
-
-    fn url_query_string(&self) -> Option<String> {
-        None
-    }
-
-    fn prepare_system_prompt(&self, existing: Option<SystemPrompt>) -> Option<SystemPrompt> {
-        existing
-    }
-
-    fn prepare_metadata(&self) -> Option<RequestMetadata> {
-        None
-    }
-
     fn name(&self) -> &'static str {
         "api_key"
     }
@@ -47,6 +28,7 @@ impl AuthStrategy for ApiKeyStrategy {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::types::SystemPrompt;
 
     #[test]
     fn test_auth_header() {

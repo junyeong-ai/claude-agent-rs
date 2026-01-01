@@ -13,14 +13,4 @@ pub trait CredentialProvider: Send + Sync {
 
     /// Resolve credential from this provider.
     async fn resolve(&self) -> Result<Credential>;
-
-    /// Whether this provider supports token refresh.
-    fn supports_refresh(&self) -> bool {
-        false
-    }
-
-    /// Refresh an expired credential.
-    async fn refresh(&self, _credential: &Credential) -> Result<Credential> {
-        Err(crate::Error::Auth("Refresh not supported".into()))
-    }
 }

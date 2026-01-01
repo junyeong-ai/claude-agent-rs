@@ -45,8 +45,4 @@ impl CredentialProvider for ClaudeCliProvider {
 
         Ok(Credential::OAuth(oauth.clone()))
     }
-
-    fn supports_refresh(&self) -> bool {
-        false
-    }
 }

@@ -2,9 +2,6 @@
 
 use std::fmt::Debug;
 
-use crate::client::messages::CreateMessageRequest;
-use crate::types::SystemPrompt;
-
 use super::env::{env_bool, env_opt, env_with_fallbacks_or};
 use super::traits::AuthStrategy;
 
@@ -112,39 +109,16 @@ impl BedrockStrategy {
 
 impl AuthStrategy for BedrockStrategy {
     fn auth_header(&self) -> (&'static str, String) {
-        // Bedrock uses AWS Signature V4, not a simple header
-        // For now, return empty - actual signing happens in request building
         ("x-bedrock-auth", "aws-sigv4".to_string())
     }
 
     fn extra_headers(&self) -> Vec<(String, String)> {
-        let mut headers = Vec::new();
-
-        // Add AWS-specific headers if not skipping auth
         if !self.skip_auth {
             if let Some(ref token) = self.session_token {
-                headers.push(("x-amz-security-token".to_string(), token.clone()));
+                return vec![("x-amz-security-token".to_string(), token.clone())];
             }
         }
-
-        headers
-    }
-
-    fn url_query_string(&self) -> Option<String> {
-        None
-    }
-
-    fn prepare_system_prompt(&self, existing: Option<SystemPrompt>) -> Option<SystemPrompt> {
-        // Bedrock doesn't require special system prompt handling
-        existing
-    }
-
-    fn prepare_metadata(&self) -> Option<crate::client::messages::RequestMetadata> {
-        None
-    }
-
-    fn prepare_request(&self, request: CreateMessageRequest) -> CreateMessageRequest {
-        request
+        Vec::new()
     }
 
     fn name(&self) -> &'static str {

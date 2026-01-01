@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 
 use super::state::{Session, SessionMessage};
 use super::{SessionError, SessionResult};
-use crate::types::{ContentBlock, Role, DEFAULT_COMPACT_THRESHOLD};
+use crate::types::{CompactResult, ContentBlock, Role, DEFAULT_COMPACT_THRESHOLD};
 
 /// Compact strategy configuration
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -65,30 +65,7 @@ impl CompactStrategy {
     }
 }
 
-/// Result of a compact operation
-#[derive(Clone, Debug)]
-pub enum CompactResult {
-    /// Compact was not needed
-    NotNeeded,
-    /// Compact was performed
-    Compacted {
-        /// Original message count
-        original_message_count: usize,
-        /// New message count (after compact)
-        new_message_count: usize,
-        /// Tokens saved (approximate)
-        saved_tokens: u64,
-        /// Summary that was generated
-        summary: String,
-    },
-    /// Compact was skipped (disabled or error)
-    Skipped {
-        /// Reason for skipping
-        reason: String,
-    },
-}
-
-/// Compact executor for summarizing conversations
+/// Compact executor for summarizing conversations.
 pub struct CompactExecutor {
     /// Strategy configuration
     strategy: CompactStrategy,
@@ -185,9 +162,9 @@ impl CompactExecutor {
         }
 
         CompactResult::Compacted {
-            original_message_count: original_count,
-            new_message_count: session.messages.len(),
-            saved_tokens,
+            original_count,
+            new_count: session.messages.len(),
+            saved_tokens: saved_tokens as usize,
             summary,
         }
     }
@@ -351,13 +328,13 @@ mod tests {
 
             match result {
                 CompactResult::Compacted {
-                    original_message_count,
-                    new_message_count,
+                    original_count,
+                    new_count,
                     summary,
                     ..
                 } => {
-                    assert_eq!(original_message_count, 10);
-                    assert_eq!(new_message_count, 5); // 1 summary + 4 kept
+                    assert_eq!(original_count, 10);
+                    assert_eq!(new_count, 5); // 1 summary + 4 kept
                     assert!(summary.contains("test summary"));
                 }
                 _ => panic!("Expected Compacted"),

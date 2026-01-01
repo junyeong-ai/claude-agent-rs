@@ -9,7 +9,8 @@ use std::hash::{Hash, Hasher};
 use serde::{Deserialize, Serialize};
 
 use super::state::Session;
-use crate::context::static_context::{StaticContext, SystemBlock};
+use crate::context::StaticContext;
+use crate::types::SystemBlock;
 
 /// Cache control type for API requests
 #[derive(Clone, Debug, Serialize, Deserialize)]

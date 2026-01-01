@@ -9,7 +9,7 @@ pub mod state;
 // Re-exports
 pub use crate::types::TokenUsage;
 pub use cache::{CacheConfigBuilder, CacheStats, SessionCacheManager};
-pub use compact::{CompactExecutor, CompactResult, CompactStrategy};
+pub use compact::{CompactExecutor, CompactStrategy};
 pub use manager::SessionManager;
 pub use persistence::{MemoryPersistence, Persistence};
 pub use state::{

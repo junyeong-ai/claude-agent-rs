@@ -377,11 +377,7 @@ mod tool_registry_tests {
             "TodoWrite tool should be registered"
         );
 
-        // Web tools
-        assert!(
-            registry.contains("WebSearch"),
-            "WebSearch tool should be registered"
-        );
+        // Web tools (WebSearch is now a built-in API, not a custom tool)
         assert!(
             registry.contains("WebFetch"),
             "WebFetch tool should be registered"

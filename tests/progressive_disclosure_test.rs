@@ -300,7 +300,7 @@ mod live_agent_tests {
             ))
             .tools(ToolAccess::only(["Skill"]))
             .max_iterations(5)
-            .build()
+            .build().await
             .expect("Failed to create agent");
 
         let result = agent
@@ -340,7 +340,7 @@ Execute the simulated Jira command.
             )
             .tools(ToolAccess::only(["Skill", "Bash"]))
             .max_iterations(5)
-            .build()
+            .build().await
             .expect("Failed to create agent");
 
         let result = agent
@@ -380,7 +380,7 @@ Execute the simulated Jira command.
             .tools(ToolAccess::only(["Skill", "Read"]))
             .working_dir(dir.path())
             .max_iterations(3)
-            .build()
+            .build().await
             .expect("Failed to create agent");
 
         let result = agent

@@ -252,6 +252,7 @@ mod tool_verification_tests {
 
         let registry = ToolRegistry::default_tools(&ToolAccess::All, None);
 
+        // WebSearch is now a built-in API, not a custom tool
         let expected_tools = [
             "Bash",
             "Read",
@@ -262,7 +263,6 @@ mod tool_verification_tests {
             "NotebookEdit",
             "TodoWrite",
             "WebFetch",
-            "WebSearch",
             "Skill",
         ];
 
@@ -275,7 +275,7 @@ mod tool_verification_tests {
             println!("✓ {} tool registered", tool);
         }
 
-        println!("\n✅ All 11 tools verified: PASSED\n");
+        println!("\n✅ All 10 tools verified: PASSED\n");
     }
 
     #[tokio::test]
@@ -1220,7 +1220,7 @@ mod agent_integration_tests {
             .tools(ToolAccess::only(["Read"]))
             .working_dir(dir.path())
             .max_iterations(5)
-            .build()
+            .build().await
             .expect("Failed to build agent");
 
         let result = agent
@@ -1254,7 +1254,7 @@ mod agent_integration_tests {
             .from_claude_cli()
             .tools(ToolAccess::only(["Bash"]))
             .max_iterations(3)
-            .build()
+            .build().await
             .expect("Failed to build agent");
 
         let result = agent
@@ -1289,7 +1289,7 @@ mod agent_integration_tests {
             ))
             .tools(ToolAccess::only(["Skill"]))
             .max_iterations(3)
-            .build()
+            .build().await
             .expect("Failed to build agent");
 
         let result = agent
@@ -1327,7 +1327,7 @@ mod agent_integration_tests {
             .tools(ToolAccess::only(["Read", "Glob"]))
             .working_dir(dir.path())
             .max_iterations(5)
-            .build()
+            .build().await
             .expect("Failed to build agent");
 
         let result = agent
@@ -1359,7 +1359,7 @@ mod agent_integration_tests {
             .from_claude_cli()
             .tools(ToolAccess::none())
             .max_iterations(1)
-            .build()
+            .build().await
             .expect("Failed to build agent");
 
         let result = agent
@@ -1458,9 +1458,9 @@ fn test_summary() {
     println!("║    ✓ Microsoft Azure Foundry strategy configuration                    ║");
     println!("║    ✓ Model redefinition for each provider                              ║");
     println!("║                                                                        ║");
-    println!("║  SECTION 3: All 11 Built-in Tools                                      ║");
+    println!("║  SECTION 3: All 10 Built-in Tools                                      ║");
     println!("║    ✓ Bash, Read, Write, Edit, Glob, Grep                               ║");
-    println!("║    ✓ NotebookEdit, TodoWrite, WebFetch, WebSearch, Skill               ║");
+    println!("║    ✓ NotebookEdit, TodoWrite, WebFetch, Skill                          ║");
     println!("║    ✓ ToolAccess filtering (All, None, Only, Except)                    ║");
     println!("║                                                                        ║");
     println!("║  SECTION 4: Progressive Disclosure                                     ║");

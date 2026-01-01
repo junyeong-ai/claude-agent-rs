@@ -199,7 +199,7 @@ async fn test_agent_with_tools_cli_auth() {
         .tools(ToolAccess::only(["Read"]))
         .working_dir(temp_dir.path())
         .max_iterations(5)
-        .build()
+        .build().await
         .expect("Failed to create agent");
 
     let prompt = format!(
@@ -238,7 +238,7 @@ async fn test_streaming_agent_cli_auth() {
         .from_claude_cli()
         .tools(ToolAccess::none()) // No tools, just text
         .max_iterations(1)
-        .build()
+        .build().await
         .expect("Failed to create agent");
 
     let stream = agent

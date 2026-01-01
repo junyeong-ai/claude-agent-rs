@@ -11,7 +11,7 @@
 //! ### 2. Tool Use (도구 사용)
 //! - File tools: Read, Write, Edit, Glob, Grep
 //! - Shell tools: Bash, KillShell
-//! - Web tools: WebSearch, WebFetch
+//! - Web tools: WebFetch (WebSearch is built-in API)
 //! - Productivity: TodoWrite
 //! - Notebook: NotebookEdit
 //!
@@ -361,8 +361,8 @@ mod agent_loop_tests {
     use claude_agent::{Agent, AgentEvent, ToolAccess};
 
     /// Agent 빌더 패턴 검증
-    #[test]
-    fn test_agent_builder_pattern() {
+    #[tokio::test]
+    async fn test_agent_builder_pattern() {
         // CLI의 옵션들과 대응되는 빌더 메서드 검증
         // API 키를 제공해야 빌드 성공
         let agent_result = Agent::builder()
@@ -373,7 +373,8 @@ mod agent_loop_tests {
             .max_tokens(4096)
             .max_iterations(10)
             .system_prompt("Custom system prompt")
-            .build();
+            .build()
+            .await;
 
         assert!(agent_result.is_ok());
     }
@@ -385,7 +386,7 @@ mod agent_loop_tests {
         let access = ToolAccess::all();
         assert!(access.is_allowed("Read"));
         assert!(access.is_allowed("Bash"));
-        assert!(access.is_allowed("WebSearch"));
+        assert!(access.is_allowed("WebFetch"));
 
         // None
         let access = ToolAccess::none();
@@ -1002,7 +1003,6 @@ fn test_feature_parity_checklist() {
         ("Grep", true, "Content search with regex"),
         ("Bash", true, "Shell execution with timeout"),
         ("TodoWrite", true, "Task tracking"),
-        ("WebSearch", true, "Web search"),
         ("WebFetch", true, "Web fetch"),
         ("NotebookEdit", true, "Jupyter notebook editing"),
         ("KillShell", true, "Kill background shell"),
@@ -1216,7 +1216,8 @@ mod auth_tests {
 // ============================================================================
 
 mod context_tests {
-    use claude_agent::context::{CacheControl, StaticContext, SystemBlock};
+    use claude_agent::context::StaticContext;
+    use claude_agent::types::SystemBlock;
 
     /// Static Context 검증
     #[test]
@@ -1237,7 +1238,8 @@ mod context_tests {
     #[test]
     fn test_system_block() {
         let cached = SystemBlock::cached("Cached content");
-        assert_eq!(cached.cache_control, Some(CacheControl::Ephemeral));
+        assert!(cached.cache_control.is_some());
+        assert_eq!(cached.cache_control.unwrap().cache_type, "ephemeral");
         assert_eq!(cached.block_type, "text");
 
         let uncached = SystemBlock::uncached("Uncached content");
@@ -1247,8 +1249,9 @@ mod context_tests {
     /// Cache Control 타입 검증
     #[test]
     fn test_cache_control() {
-        let ephemeral = CacheControl::Ephemeral;
+        use claude_agent::types::CacheControl;
+        let ephemeral = CacheControl::ephemeral();
         // Ephemeral은 5분 TTL 캐싱
-        assert!(matches!(ephemeral, CacheControl::Ephemeral));
+        assert_eq!(ephemeral.cache_type, "ephemeral");
     }
 }

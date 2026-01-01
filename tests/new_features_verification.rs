@@ -544,7 +544,7 @@ mod live_tests {
             .tools(ToolAccess::only(["Read"]))
             .working_dir(dir.path())
             .max_iterations(3)
-            .build()
+            .build().await
             .expect("Failed to create agent");
 
         let result = agent

@@ -372,7 +372,7 @@ async fn test_8_progressive_disclosure_with_agent() {
         ))
         .tools(ToolAccess::only(["Skill"]))
         .max_iterations(5)
-        .build()
+        .build().await
         .expect("Failed to build agent");
 
     // Test skill invocation through agent
@@ -649,7 +649,7 @@ async fn test_12_full_agent_with_tools_and_skills() {
         .tools(ToolAccess::only(["Skill", "Read", "Bash"]))
         .working_dir(dir.path())
         .max_iterations(5)
-        .build()
+        .build().await
         .expect("Failed to build agent");
 
     // Test reading file and using skill
@@ -685,7 +685,7 @@ async fn test_13_agent_with_bash_tool() {
         .from_claude_cli()
         .tools(ToolAccess::only(["Bash"]))
         .max_iterations(3)
-        .build()
+        .build().await
         .expect("Failed to build agent");
 
     let result = agent

@@ -8,26 +8,24 @@
 //! 2. All 11 Built-in Tools
 //! 3. Progressive Disclosure (Skills, Rules, SkillIndex)
 //! 4. Prompt Caching
-//! 5. Extension System
-//! 6. Memory/CLAUDE.md System
-//! 7. Agent Loop Integration
+//! 5. Memory/CLAUDE.md System
+//! 6. Agent Loop Integration
 //!
 //! Run: cargo test --test e2e_complete_verification -- --ignored --nocapture
 
 use std::time::Instant;
 
 use claude_agent::{
-    Agent, Client, ToolAccess,
-    auth::{AuthStrategy, BedrockStrategy, FoundryStrategy, VertexStrategy},
-    client::{ClientBuilder, CloudProvider},
+    Agent, Auth, Client, ToolAccess, ToolOutput, ToolRestricted,
+    client::CloudProvider,
     config::SettingsLoader,
     context::{ContextBuilder, MemoryLoader, RuleIndex, SkillIndex, StaticContext},
-    extension::{Extension, ExtensionContext, ExtensionMeta, ExtensionRegistry},
     hooks::{HookEvent, HookOutput},
     session::{CacheConfigBuilder, CacheStats, SessionCacheManager},
     skills::{CommandLoader, SkillDefinition, SkillExecutor, SkillRegistry, SkillTool},
     tools::{
-        BashTool, EditTool, GlobTool, GrepTool, ReadTool, Tool, ToolRegistry, ToolResult, WriteTool,
+        BashTool, EditTool, ExecutionContext, GlobTool, GrepTool, ReadTool, Tool, ToolRegistry,
+        WriteTool,
     },
 };
 use tempfile::tempdir;
@@ -50,17 +48,17 @@ mod cli_auth_tests {
         let start = Instant::now();
 
         let client = Client::builder()
-            .from_claude_cli()
+            .auth(Auth::ClaudeCli)
+            .await
+            .expect("Failed to resolve CLI credentials")
             .build()
+            .await
             .expect("Failed to build client with CLI auth");
 
-        // Verify OAuth strategy
-        let auth_name = client.config().auth_strategy.name();
-        println!("✓ Auth strategy: {}", auth_name);
-        assert!(
-            auth_name == "oauth" || auth_name == "api-key",
-            "Should use OAuth or API key"
-        );
+        // Verify adapter
+        let adapter_name = client.adapter().name();
+        println!("✓ Adapter: {}", adapter_name);
+        assert!(adapter_name == "anthropic", "Should use Anthropic adapter");
 
         // Live API call
         let response = client
@@ -85,9 +83,11 @@ mod cli_auth_tests {
         let start = Instant::now();
 
         let client = Client::builder()
-            .auto_resolve()
-            .model("claude-sonnet-4-5-20250929")
+            .auth(Auth::FromEnv)
+            .await
+            .expect("Auth failed")
             .build()
+            .await
             .expect("Failed to auto-resolve");
 
         let response = client
@@ -111,137 +111,59 @@ mod cloud_provider_tests {
     use super::*;
 
     #[test]
-    fn test_bedrock_strategy_configuration() {
-        println!("\n{}", "═".repeat(70));
-        println!("TEST: AWS Bedrock Strategy Configuration");
-        println!("{}", "═".repeat(70));
-
-        let strategy = BedrockStrategy::new("us-west-2")
-            .with_base_url("https://custom-gateway.example.com")
-            .with_credentials(
-                "AKIAIOSFODNN7EXAMPLE",
-                "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY",
-            )
-            .with_session_token("session-token");
-
-        assert_eq!(strategy.region(), "us-west-2");
-        assert_eq!(strategy.name(), "bedrock");
-        assert!(strategy.get_base_url().contains("custom-gateway"));
-
-        // Test skip auth mode (for LLM gateways)
-        let gateway = BedrockStrategy::new("us-east-1").skip_auth();
-        println!("✓ Skip auth mode: {:?}", gateway);
-
-        // Test auth header
-        let (header, _) = strategy.auth_header();
-        println!("✓ Auth header: {}", header);
-
-        println!("✅ Bedrock strategy: PASSED\n");
-    }
-
-    #[test]
-    fn test_vertex_strategy_configuration() {
-        println!("\n{}", "═".repeat(70));
-        println!("TEST: Google Vertex AI Strategy Configuration");
-        println!("{}", "═".repeat(70));
-
-        let strategy = VertexStrategy::new("my-gcp-project", "us-central1")
-            .with_access_token("ya29.example-token");
-
-        assert_eq!(strategy.project_id(), "my-gcp-project");
-        assert_eq!(strategy.region(), "us-central1");
-        assert_eq!(strategy.name(), "vertex");
-
-        let url = strategy.get_base_url();
-        println!("✓ Base URL: {}", url);
-        assert!(url.contains("my-gcp-project"));
-        assert!(url.contains("us-central1"));
-
-        // Test extra headers
-        let headers = strategy.extra_headers();
-        assert!(headers.iter().any(|(k, _)| k == "x-goog-user-project"));
-        println!("✓ Extra headers include x-goog-user-project");
-
-        println!("✅ Vertex AI strategy: PASSED\n");
-    }
-
-    #[test]
-    fn test_foundry_strategy_configuration() {
-        println!("\n{}", "═".repeat(70));
-        println!("TEST: Microsoft Azure AI Foundry Strategy Configuration");
-        println!("{}", "═".repeat(70));
-
-        let strategy = FoundryStrategy::new("my-azure-resource")
-            .with_deployment("claude-deployment")
-            .with_api_key("azure-api-key-123")
-            .with_api_version("2024-06-01");
-
-        assert_eq!(strategy.resource_name(), "my-azure-resource");
-        assert_eq!(strategy.deployment_name(), Some("claude-deployment"));
-        assert_eq!(strategy.name(), "foundry");
-
-        // Test URL query string
-        let query = strategy.url_query_string();
-        assert!(query.is_some());
-        assert!(query.unwrap().contains("api-version"));
-        println!("✓ Query string: api-version included");
-
-        // Test auth header with API key
-        let (header, value) = strategy.auth_header();
-        assert_eq!(header, "api-key");
-        assert_eq!(value, "azure-api-key-123");
-        println!("✓ Auth header: api-key");
-
-        // Test with Bearer token
-        let token_strategy = FoundryStrategy::new("r")
-            .with_deployment("d")
-            .with_access_token("bearer-token");
-        let (header, value) = token_strategy.auth_header();
-        assert_eq!(header, "Authorization");
-        assert!(value.contains("Bearer"));
-        println!("✓ Bearer token auth supported");
-
-        println!("✅ Foundry strategy: PASSED\n");
-    }
-
-    #[test]
     fn test_cloud_provider_enum() {
         assert_eq!(CloudProvider::default(), CloudProvider::Anthropic);
 
-        // All providers are distinct
-        assert_ne!(CloudProvider::Bedrock, CloudProvider::Vertex);
-        assert_ne!(CloudProvider::Vertex, CloudProvider::Foundry);
-        assert_ne!(CloudProvider::Foundry, CloudProvider::Anthropic);
-
-        println!("✓ CloudProvider enum: All variants distinct");
+        println!("✓ CloudProvider enum: Anthropic is default");
         println!("✅ Cloud provider enum: PASSED\n");
     }
 
+    #[cfg(feature = "aws")]
     #[test]
-    fn test_model_redefinition() {
+    fn test_bedrock_provider() {
         println!("\n{}", "═".repeat(70));
-        println!("TEST: Model Redefinition for Cloud Providers");
+        println!("TEST: AWS Bedrock Provider Configuration");
         println!("{}", "═".repeat(70));
 
-        // Test Bedrock with model override
-        let _bedrock_builder = ClientBuilder::default()
-            .bedrock("us-east-1")
-            .model("anthropic.claude-3-5-sonnet-20241022-v2:0");
+        // Test Bedrock provider configuration via CloudProvider enum
+        let provider = CloudProvider::Bedrock;
+        let models = provider.default_models();
+        assert!(models.primary.contains("global.anthropic"));
 
-        // Test Vertex with model override
-        let _vertex_builder = ClientBuilder::default()
-            .vertex("project", "region")
-            .model("claude-3-5-sonnet@20241022");
+        println!("✓ Bedrock provider configured with global endpoint");
+        println!("✅ Bedrock provider: PASSED\n");
+    }
 
-        // Test Foundry with model override
-        let _foundry_builder = ClientBuilder::default()
-            .foundry("resource")
-            .model("claude-sonnet-4-5");
+    #[cfg(feature = "gcp")]
+    #[test]
+    fn test_vertex_provider() {
+        println!("\n{}", "═".repeat(70));
+        println!("TEST: Google Vertex AI Provider Configuration");
+        println!("{}", "═".repeat(70));
 
-        println!("✓ Bedrock model redefinition supported");
-        println!("✓ Vertex AI model redefinition supported");
-        println!("✓ Foundry model redefinition supported");
-        println!("✅ Model redefinition: PASSED\n");
+        // Test Vertex provider configuration via CloudProvider enum
+        let provider = CloudProvider::Vertex;
+        let models = provider.default_models();
+        assert!(models.primary.contains("@"));
+
+        println!("✓ Vertex AI provider configured");
+        println!("✅ Vertex AI provider: PASSED\n");
+    }
+
+    #[cfg(feature = "azure")]
+    #[test]
+    fn test_foundry_provider() {
+        println!("\n{}", "═".repeat(70));
+        println!("TEST: Microsoft Azure AI Foundry Provider Configuration");
+        println!("{}", "═".repeat(70));
+
+        // Test Foundry provider configuration via CloudProvider enum
+        let provider = CloudProvider::Foundry;
+        let models = provider.default_models();
+        assert!(models.primary.contains("sonnet"));
+
+        println!("✓ Foundry provider configured");
+        println!("✅ Foundry provider: PASSED\n");
     }
 }
 
@@ -255,22 +177,23 @@ mod tool_verification_tests {
     #[tokio::test]
     async fn test_all_tools_in_registry() {
         println!("\n{}", "═".repeat(70));
-        println!("TEST: All 11 Built-in Tools in Registry");
+        println!("TEST: All 14 Built-in Tools in Registry");
         println!("{}", "═".repeat(70));
 
-        let registry = ToolRegistry::default_tools(&ToolAccess::All, None);
+        let registry = ToolRegistry::default_tools(&ToolAccess::All, None, None);
 
-        // WebSearch is now a built-in API, not a custom tool
         let expected_tools = [
-            "Bash",
             "Read",
             "Write",
             "Edit",
             "Glob",
             "Grep",
-            "NotebookEdit",
+            "Bash",
+            "KillShell",
             "TodoWrite",
-            "WebFetch",
+            "Plan",
+            "Task",
+            "TaskOutput",
             "Skill",
         ];
 
@@ -283,7 +206,9 @@ mod tool_verification_tests {
             println!("✓ {} tool registered", tool);
         }
 
-        println!("\n✅ All 10 tools verified: PASSED\n");
+        // WebSearch and WebFetch are server-side tools (injected into API requests)
+        println!("ℹ WebSearch/WebFetch: server-side tools (not local)");
+        println!("\n✅ All 12 local tools verified: PASSED\n");
     }
 
     #[tokio::test]
@@ -292,15 +217,19 @@ mod tool_verification_tests {
         let file_path = dir.path().join("test.txt");
         fs::write(&file_path, "Hello, World!").await.unwrap();
 
-        let tool = ReadTool::new(dir.path().to_path_buf());
+        let tool = ReadTool;
+        let ctx = ExecutionContext::permissive();
         let result = tool
-            .execute(serde_json::json!({
-                "file_path": file_path.to_string_lossy()
-            }))
+            .execute(
+                serde_json::json!({
+                    "file_path": file_path.to_string_lossy()
+                }),
+                &ctx,
+            )
             .await;
 
-        assert!(!result.is_error());
-        if let ToolResult::Success(content) = result {
+        assert!(!result.is_error(), "Read tool error: {:?}", result);
+        if let ToolOutput::Success(content) = &result.output {
             assert!(content.contains("Hello, World!"));
             println!("✓ Read tool: file content read successfully");
         }
@@ -311,15 +240,19 @@ mod tool_verification_tests {
         let dir = tempdir().unwrap();
         let file_path = dir.path().join("output.txt");
 
-        let tool = WriteTool::new(dir.path().to_path_buf());
+        let tool = WriteTool;
+        let ctx = ExecutionContext::permissive();
         let result = tool
-            .execute(serde_json::json!({
-                "file_path": file_path.to_string_lossy(),
-                "content": "Written by test"
-            }))
+            .execute(
+                serde_json::json!({
+                    "file_path": file_path.to_string_lossy(),
+                    "content": "Written by test"
+                }),
+                &ctx,
+            )
             .await;
 
-        assert!(!result.is_error());
+        assert!(!result.is_error(), "Write tool error: {:?}", result);
         let content = fs::read_to_string(&file_path).await.unwrap();
         assert!(content.contains("Written by test"));
         println!("✓ Write tool: file written successfully");
@@ -333,16 +266,20 @@ mod tool_verification_tests {
             .await
             .unwrap();
 
-        let tool = EditTool::new(dir.path().to_path_buf());
+        let tool = EditTool;
+        let ctx = ExecutionContext::permissive();
         let result = tool
-            .execute(serde_json::json!({
-                "file_path": file_path.to_string_lossy(),
-                "old_string": "Original",
-                "new_string": "Modified"
-            }))
+            .execute(
+                serde_json::json!({
+                    "file_path": file_path.to_string_lossy(),
+                    "old_string": "Original",
+                    "new_string": "Modified"
+                }),
+                &ctx,
+            )
             .await;
 
-        assert!(!result.is_error());
+        assert!(!result.is_error(), "Edit tool error: {:?}", result);
         let content = fs::read_to_string(&file_path).await.unwrap();
         assert!(content.contains("Modified content here"));
         println!("✓ Edit tool: string replacement successful");
@@ -355,16 +292,20 @@ mod tool_verification_tests {
         fs::write(dir.path().join("file2.txt"), "b").await.unwrap();
         fs::write(dir.path().join("other.md"), "c").await.unwrap();
 
-        let tool = GlobTool::new(dir.path().to_path_buf());
+        let tool = GlobTool;
+        let ctx = ExecutionContext::permissive();
         let result = tool
-            .execute(serde_json::json!({
-                "pattern": "*.txt",
-                "path": dir.path().to_string_lossy()
-            }))
+            .execute(
+                serde_json::json!({
+                    "pattern": "*.txt",
+                    "path": dir.path().to_string_lossy()
+                }),
+                &ctx,
+            )
             .await;
 
-        assert!(!result.is_error());
-        if let ToolResult::Success(content) = result {
+        assert!(!result.is_error(), "Glob tool error: {:?}", result);
+        if let ToolOutput::Success(content) = &result.output {
             assert!(content.contains("file1.txt"));
             assert!(content.contains("file2.txt"));
             assert!(!content.contains("other.md"));
@@ -379,16 +320,20 @@ mod tool_verification_tests {
             .await
             .unwrap();
 
-        let tool = GrepTool::new(dir.path().to_path_buf());
+        let tool = GrepTool;
+        let ctx = ExecutionContext::permissive();
         let result = tool
-            .execute(serde_json::json!({
-                "pattern": "findme",
-                "path": dir.path().to_string_lossy()
-            }))
+            .execute(
+                serde_json::json!({
+                    "pattern": "findme",
+                    "path": dir.path().to_string_lossy()
+                }),
+                &ctx,
+            )
             .await;
 
-        assert!(!result.is_error());
-        if let ToolResult::Success(content) = result {
+        assert!(!result.is_error(), "Grep tool error: {:?}", result);
+        if let ToolOutput::Success(content) = &result.output {
             assert!(content.contains("search.txt"));
             println!("✓ Grep tool: regex search successful");
         }
@@ -396,16 +341,19 @@ mod tool_verification_tests {
 
     #[tokio::test]
     async fn test_bash_tool() {
-        let dir = tempdir().unwrap();
-        let tool = BashTool::new(dir.path().to_path_buf());
+        let tool = BashTool::new();
+        let ctx = ExecutionContext::default();
         let result = tool
-            .execute(serde_json::json!({
-                "command": "echo 'Bash works!'"
-            }))
+            .execute(
+                serde_json::json!({
+                    "command": "echo 'Bash works!'"
+                }),
+                &ctx,
+            )
             .await;
 
         assert!(!result.is_error());
-        if let ToolResult::Success(content) = result {
+        if let ToolOutput::Success(content) = &result.output {
             assert!(content.contains("Bash works!"));
             println!("✓ Bash tool: command execution successful");
         }
@@ -422,16 +370,20 @@ mod tool_verification_tests {
 
         let executor = SkillExecutor::new(registry);
         let tool = SkillTool::new(executor);
+        let ctx = ExecutionContext::default();
 
         let result = tool
-            .execute(serde_json::json!({
-                "skill": "test-skill",
-                "args": "test argument"
-            }))
+            .execute(
+                serde_json::json!({
+                    "skill": "test-skill",
+                    "args": "test argument"
+                }),
+                &ctx,
+            )
             .await;
 
         assert!(!result.is_error());
-        if let ToolResult::Success(content) = result {
+        if let ToolOutput::Success(content) = &result.output {
             assert!(content.contains("test argument"));
             println!("✓ Skill tool: skill execution successful");
         }
@@ -576,14 +528,19 @@ mod progressive_disclosure_tests {
         let mut loader = MemoryLoader::new();
         let content = loader.load_all(dir.path()).await.unwrap();
 
-        assert_eq!(content.rules.len(), 2);
-        let rule_names: Vec<_> = content.rules.iter().map(|r| r.name.as_str()).collect();
+        assert_eq!(content.rule_indices.len(), 2);
+        let rule_names: Vec<_> = content
+            .rule_indices
+            .iter()
+            .map(|r| r.name.as_str())
+            .collect();
         println!("Loaded rules: {:?}", rule_names);
 
-        // Verify rule content loaded
-        let rust_content = content.rules.iter().find(|r| r.name == "rust");
-        assert!(rust_content.is_some());
-        assert!(rust_content.unwrap().content.contains("snake_case"));
+        // Verify rule index and lazy load content
+        let rust_index = content.rule_indices.iter().find(|r| r.name == "rust");
+        assert!(rust_index.is_some());
+        let rust_content = rust_index.unwrap().load_content().await.unwrap();
+        assert!(rust_content.contains("snake_case"));
 
         println!("✓ RuleIndex provides path-based matching");
         println!("✓ Full rule content loaded from files");
@@ -752,14 +709,14 @@ mod prompt_caching_tests {
         println!("{}", "═".repeat(70));
 
         // Test system prompt with caching
-        use claude_agent::types::SystemPrompt;
+        use claude_agent::types::{CacheType, SystemPrompt};
 
         let cached_prompt = SystemPrompt::cached("You are a helpful assistant");
         if let SystemPrompt::Blocks(blocks) = cached_prompt {
             assert!(!blocks.is_empty());
             assert!(blocks[0].cache_control.is_some());
             let cache_ctrl = blocks[0].cache_control.as_ref().unwrap();
-            assert_eq!(cache_ctrl.cache_type, "ephemeral");
+            assert_eq!(cache_ctrl.cache_type, CacheType::Ephemeral);
             println!("✓ SystemPrompt::cached() sets cache_control");
         }
 
@@ -840,11 +797,7 @@ mod prompt_caching_tests {
 
     #[test]
     fn test_cache_config_builder() {
-        let manager = CacheConfigBuilder::new()
-            .with_breakpoint("system", 0)
-            .with_breakpoint("context", 10)
-            .build();
-
+        let manager = CacheConfigBuilder::new().build();
         assert!(manager.is_enabled());
 
         let disabled = CacheConfigBuilder::new().disabled().build();
@@ -863,6 +816,7 @@ mod prompt_caching_tests {
             output_tokens: 500,
             cache_read_input_tokens: Some(800),
             cache_creation_input_tokens: Some(100),
+            server_tool_use: None,
         };
 
         assert_eq!(usage.total(), 1500);
@@ -886,163 +840,7 @@ mod prompt_caching_tests {
 }
 
 // =============================================================================
-// SECTION 6: Extension System Tests
-// =============================================================================
-
-mod extension_system_tests {
-    use super::*;
-
-    struct TestExtension {
-        name: &'static str,
-        deps: &'static [&'static str],
-    }
-
-    impl Extension for TestExtension {
-        fn meta(&self) -> ExtensionMeta {
-            ExtensionMeta::new(self.name)
-                .version("1.0.0")
-                .description("Test extension")
-                .dependencies(self.deps)
-        }
-
-        fn build(&self, _ctx: &mut ExtensionContext) {
-            // Extension build logic
-        }
-    }
-
-    #[test]
-    fn test_extension_registry() {
-        println!("\n{}", "═".repeat(70));
-        println!("TEST: Extension Registry");
-        println!("{}", "═".repeat(70));
-
-        let mut registry = ExtensionRegistry::new();
-
-        registry.add(TestExtension {
-            name: "base",
-            deps: &[],
-        });
-        registry.add(TestExtension {
-            name: "feature-a",
-            deps: &["base"],
-        });
-        registry.add(TestExtension {
-            name: "feature-b",
-            deps: &["base"],
-        });
-
-        assert_eq!(registry.len(), 3);
-        assert!(registry.contains("base"));
-        assert!(registry.contains("feature-a"));
-        assert!(registry.contains("feature-b"));
-
-        println!("✓ Extensions registered: {:?}", registry.names());
-        println!("✅ Extension registry: PASSED\n");
-    }
-
-    #[test]
-    fn test_extension_dependency_resolution() {
-        println!("\n{}", "═".repeat(70));
-        println!("TEST: Extension Dependency Resolution (Kahn's Algorithm)");
-        println!("{}", "═".repeat(70));
-
-        let mut registry = ExtensionRegistry::new();
-
-        // Add in reverse dependency order
-        registry.add(TestExtension {
-            name: "c",
-            deps: &["b"],
-        });
-        registry.add(TestExtension {
-            name: "b",
-            deps: &["a"],
-        });
-        registry.add(TestExtension {
-            name: "a",
-            deps: &[],
-        });
-
-        // Should resolve to correct order: a -> b -> c
-        println!("✓ Dependencies resolved via topological sort");
-        println!("  a (no deps) → b (depends on a) → c (depends on b)");
-        println!("✅ Dependency resolution: PASSED\n");
-    }
-
-    #[test]
-    fn test_extension_uniqueness() {
-        let mut registry = ExtensionRegistry::new();
-
-        registry.add(TestExtension {
-            name: "unique-ext",
-            deps: &[],
-        });
-        registry.add(TestExtension {
-            name: "unique-ext", // Duplicate
-            deps: &[],
-        });
-
-        // Duplicate should be ignored
-        assert_eq!(registry.len(), 1);
-        println!("✓ Duplicate extension ignored (uniqueness enforced)");
-        println!("✅ Extension uniqueness: PASSED\n");
-    }
-
-    #[test]
-    fn test_extension_lifecycle() {
-        println!("\n{}", "═".repeat(70));
-        println!("TEST: Extension Lifecycle (Bevy Plugin Pattern)");
-        println!("{}", "═".repeat(70));
-
-        struct LifecycleExtension {
-            ready_flag: std::sync::atomic::AtomicBool,
-        }
-
-        impl Extension for LifecycleExtension {
-            fn meta(&self) -> ExtensionMeta {
-                ExtensionMeta::new("lifecycle")
-                    .version("1.0.0")
-                    .description("Lifecycle demo extension")
-            }
-
-            fn build(&self, _ctx: &mut ExtensionContext) {
-                // Build phase: register tools, hooks, skills
-            }
-
-            fn ready(&self, _ctx: &ExtensionContext) -> bool {
-                self.ready_flag.load(std::sync::atomic::Ordering::Relaxed)
-            }
-
-            fn finish(&self, _ctx: &mut ExtensionContext) {
-                // Finish phase: finalize configuration
-            }
-
-            fn cleanup(&self) {
-                // Cleanup on agent drop
-            }
-        }
-
-        let ext = LifecycleExtension {
-            ready_flag: std::sync::atomic::AtomicBool::new(true),
-        };
-
-        // Verify metadata
-        let meta = ext.meta();
-        assert_eq!(meta.name, "lifecycle");
-        assert_eq!(meta.version, "1.0.0");
-
-        // Verify ready flag works
-        assert!(ext.ready_flag.load(std::sync::atomic::Ordering::Relaxed));
-
-        println!("✓ build() - Configure components");
-        println!("✓ ready() - Verify dependencies satisfied");
-        println!("✓ finish() - Post-build finalization");
-        println!("✓ cleanup() - Cleanup on agent drop");
-        println!("✅ Extension lifecycle: PASSED\n");
-    }
-}
-
-// =============================================================================
-// SECTION 7: Memory System Tests
+// SECTION 6: Memory System Tests
 // =============================================================================
 
 mod memory_system_tests {
@@ -1083,7 +881,7 @@ mod memory_system_tests {
         println!("CLAUDE.md files: {}", content.claude_md.len());
         println!("Local files: {}", content.local_md.len());
 
-        let combined = content.combined();
+        let combined = content.combined_claude_md();
         assert!(combined.contains("Root Project"));
         assert!(combined.contains("API")); // @import worked
         assert!(combined.contains("Local Settings"));
@@ -1120,10 +918,14 @@ mod memory_system_tests {
         let mut loader = MemoryLoader::new();
         let content = loader.load_all(dir.path()).await.unwrap();
 
-        assert_eq!(content.rules.len(), 2);
+        assert_eq!(content.rule_indices.len(), 2);
 
         // Rules should be sorted
-        let rule_names: Vec<_> = content.rules.iter().map(|r| r.name.as_str()).collect();
+        let rule_names: Vec<_> = content
+            .rule_indices
+            .iter()
+            .map(|r| r.name.as_str())
+            .collect();
         println!("Rules loaded: {:?}", rule_names);
 
         println!("✓ Rules loaded from .claude/rules/");
@@ -1192,9 +994,9 @@ mod memory_system_tests {
             .unwrap();
 
         let context = ContextBuilder::new()
-            .load_memory_recursive(dir.path())
+            .load_from_directory(dir.path())
             .await
-            .build_sync()
+            .build()
             .unwrap();
 
         let static_ctx = context.static_context();
@@ -1231,7 +1033,9 @@ mod agent_integration_tests {
         .unwrap();
 
         let agent = Agent::builder()
-            .from_claude_cli()
+            .auth(Auth::ClaudeCli)
+            .await
+            .expect("Failed to resolve CLI credentials")
             .tools(ToolAccess::only(["Read"]))
             .working_dir(dir.path())
             .max_iterations(5)
@@ -1267,7 +1071,9 @@ mod agent_integration_tests {
         let start = Instant::now();
 
         let agent = Agent::builder()
-            .from_claude_cli()
+            .auth(Auth::ClaudeCli)
+            .await
+            .expect("Failed to resolve CLI credentials")
             .tools(ToolAccess::only(["Bash"]))
             .max_iterations(3)
             .build()
@@ -1298,7 +1104,9 @@ mod agent_integration_tests {
         let start = Instant::now();
 
         let agent = Agent::builder()
-            .from_claude_cli()
+            .auth(Auth::ClaudeCli)
+            .await
+            .expect("Failed to resolve CLI credentials")
             .skill(SkillDefinition::new(
                 "math",
                 "Perform calculations",
@@ -1341,7 +1149,9 @@ mod agent_integration_tests {
             .unwrap();
 
         let agent = Agent::builder()
-            .from_claude_cli()
+            .auth(Auth::ClaudeCli)
+            .await
+            .expect("Failed to resolve CLI credentials")
             .tools(ToolAccess::only(["Read", "Glob"]))
             .working_dir(dir.path())
             .max_iterations(5)
@@ -1375,7 +1185,9 @@ mod agent_integration_tests {
         let start = Instant::now();
 
         let agent = Agent::builder()
-            .from_claude_cli()
+            .auth(Auth::ClaudeCli)
+            .await
+            .expect("Failed to resolve CLI credentials")
             .tools(ToolAccess::none())
             .max_iterations(1)
             .build()
@@ -1474,14 +1286,13 @@ fn test_summary() {
     println!("║    ✓ Auto-resolve credentials (env → CLI → cloud)                      ║");
     println!("║                                                                        ║");
     println!("║  SECTION 2: Cloud Providers                                            ║");
-    println!("║    ✓ AWS Bedrock strategy configuration                                ║");
-    println!("║    ✓ Google Vertex AI strategy configuration                           ║");
-    println!("║    ✓ Microsoft Azure Foundry strategy configuration                    ║");
-    println!("║    ✓ Model redefinition for each provider                              ║");
+    println!("║    ✓ CloudProvider enum (Anthropic default)                            ║");
+    println!("║    ✓ Bedrock/Vertex/Foundry builders (feature-gated)                   ║");
     println!("║                                                                        ║");
-    println!("║  SECTION 3: All 10 Built-in Tools                                      ║");
-    println!("║    ✓ Bash, Read, Write, Edit, Glob, Grep                               ║");
-    println!("║    ✓ NotebookEdit, TodoWrite, WebFetch, Skill                          ║");
+    println!("║  SECTION 3: All 14 Built-in Tools                                      ║");
+    println!("║    ✓ Bash, KillShell, Read, Write, Edit, Glob, Grep                    ║");
+    println!("║    ✓ TodoWrite, Plan, WebFetch, WebSearch                              ║");
+    println!("║    ✓ Task, TaskOutput, Skill                                           ║");
     println!("║    ✓ ToolAccess filtering (All, None, Only, Except)                    ║");
     println!("║                                                                        ║");
     println!("║  SECTION 4: Progressive Disclosure                                     ║");
@@ -1497,13 +1308,7 @@ fn test_summary() {
     println!("║    ✓ CacheStats (hit rate, tokens saved)                               ║");
     println!("║    ✓ TokenUsage with cache_read/cache_creation fields                  ║");
     println!("║                                                                        ║");
-    println!("║  SECTION 6: Extension System                                           ║");
-    println!("║    ✓ ExtensionRegistry with dependency resolution                      ║");
-    println!("║    ✓ Kahn's algorithm (topological sort)                               ║");
-    println!("║    ✓ Extension lifecycle (build/ready/finish/cleanup)                  ║");
-    println!("║    ✓ Extension uniqueness enforcement                                  ║");
-    println!("║                                                                        ║");
-    println!("║  SECTION 7: Memory System                                              ║");
+    println!("║  SECTION 6: Memory System                                              ║");
     println!("║    ✓ CLAUDE.md recursive loading                                       ║");
     println!("║    ✓ CLAUDE.local.md support                                           ║");
     println!("║    ✓ @import syntax with home directory expansion                      ║");
@@ -1511,14 +1316,14 @@ fn test_summary() {
     println!("║    ✓ settings.json / settings.local.json merging                       ║");
     println!("║    ✓ ContextBuilder integration                                        ║");
     println!("║                                                                        ║");
-    println!("║  SECTION 8: Agent Integration (Live API)                               ║");
+    println!("║  SECTION 7: Agent Integration (Live API)                               ║");
     println!("║    ✓ Agent with Read tool                                              ║");
     println!("║    ✓ Agent with Bash tool                                              ║");
     println!("║    ✓ Agent with custom Skill                                           ║");
     println!("║    ✓ Multiple tool calls in single session                             ║");
     println!("║    ✓ Token usage tracking                                              ║");
     println!("║                                                                        ║");
-    println!("║  SECTION 9: Hook System                                                ║");
+    println!("║  SECTION 8: Hook System                                                ║");
     println!("║    ✓ PreToolUse / PostToolUse hooks                                    ║");
     println!("║    ✓ HookOutput (continue, block, modify)                              ║");
     println!("║                                                                        ║");

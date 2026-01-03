@@ -1,133 +1,58 @@
 //! Comprehensive verification tests for newly implemented features.
 //!
 //! Tests:
-//! - Bedrock/Vertex AI authentication strategies
 //! - CLAUDE.md recursive loading
 //! - CLAUDE.local.md support
 //! - @import syntax
 //! - .claude/rules/ directory loading
-//! - Cloud provider auto-resolution
+//! - Cloud provider enum
 //!
 //! Run: cargo test --test new_features_verification -- --nocapture
 
 use claude_agent::{
-    auth::{AuthStrategy, BedrockStrategy, VertexStrategy},
-    client::{ClientBuilder, CloudProvider},
+    client::CloudProvider,
     context::{ContextBuilder, MemoryLoader},
 };
 use tempfile::tempdir;
 use tokio::fs;
 
 // =============================================================================
-// Part 1: Bedrock Strategy Tests
+// Part 1: Bedrock Strategy Tests (AWS feature only)
 // =============================================================================
 
+#[cfg(feature = "aws")]
 mod bedrock_tests {
-    use super::*;
+    use claude_agent::client::BedrockAdapter;
 
-    #[test]
-    fn test_bedrock_strategy_creation() {
-        let strategy = BedrockStrategy::new("us-west-2");
-        assert_eq!(strategy.region(), "us-west-2");
-        assert_eq!(strategy.name(), "bedrock");
-    }
-
-    #[test]
-    fn test_bedrock_base_url_construction() {
-        let strategy = BedrockStrategy::new("us-east-1");
-        let url = strategy.get_base_url();
-        assert!(url.contains("bedrock-runtime"));
-        assert!(url.contains("us-east-1"));
-        assert!(url.contains("amazonaws.com"));
-    }
-
-    #[test]
-    fn test_bedrock_custom_base_url() {
-        let strategy =
-            BedrockStrategy::new("us-east-1").with_base_url("https://my-gateway.com/bedrock");
-        assert_eq!(strategy.get_base_url(), "https://my-gateway.com/bedrock");
-    }
-
-    #[test]
-    fn test_bedrock_skip_auth() {
-        let strategy = BedrockStrategy::new("us-east-1").skip_auth();
-        // Just verify it doesn't panic
-        let _ = strategy.extra_headers();
-    }
-
-    #[test]
-    fn test_bedrock_with_credentials() {
-        let strategy = BedrockStrategy::new("us-east-1").with_credentials(
-            "AKIAIOSFODNN7EXAMPLE",
-            "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY",
-        );
-        assert_eq!(strategy.name(), "bedrock");
-    }
-
-    #[test]
-    fn test_bedrock_auth_header() {
-        let strategy = BedrockStrategy::new("us-east-1");
-        let (name, value) = strategy.auth_header();
-        assert_eq!(name, "x-bedrock-auth");
-        assert_eq!(value, "aws-sigv4");
+    #[tokio::test]
+    async fn test_bedrock_adapter_from_env() {
+        // This test only verifies the API exists, actual connection requires credentials
+        use claude_agent::client::ProviderConfig;
+        let _config = ProviderConfig::default();
+        // Just verify the type exists and can be referenced
+        let _: fn(ProviderConfig) -> _ = |c| async move {
+            let _ = BedrockAdapter::from_env(c).await;
+        };
     }
 }
 
 // =============================================================================
-// Part 2: Vertex AI Strategy Tests
+// Part 2: Vertex AI Strategy Tests (GCP feature only)
 // =============================================================================
 
+#[cfg(feature = "gcp")]
 mod vertex_tests {
-    use super::*;
+    use claude_agent::client::VertexAdapter;
 
-    #[test]
-    fn test_vertex_strategy_creation() {
-        let strategy = VertexStrategy::new("my-project", "us-central1");
-        assert_eq!(strategy.project_id(), "my-project");
-        assert_eq!(strategy.region(), "us-central1");
-        assert_eq!(strategy.name(), "vertex");
-    }
-
-    #[test]
-    fn test_vertex_base_url_construction() {
-        let strategy = VertexStrategy::new("my-project", "europe-west1");
-        let url = strategy.get_base_url();
-        assert!(url.contains("aiplatform.googleapis.com"));
-        assert!(url.contains("my-project"));
-        assert!(url.contains("europe-west1"));
-        assert!(url.contains("anthropic"));
-    }
-
-    #[test]
-    fn test_vertex_custom_base_url() {
-        let strategy = VertexStrategy::new("p", "r").with_base_url("https://my-gateway.com/vertex");
-        assert_eq!(strategy.get_base_url(), "https://my-gateway.com/vertex");
-    }
-
-    #[test]
-    fn test_vertex_skip_auth() {
-        let strategy = VertexStrategy::new("p", "r").skip_auth();
-        let _ = strategy.extra_headers();
-    }
-
-    #[test]
-    fn test_vertex_with_access_token() {
-        let strategy = VertexStrategy::new("p", "r").with_access_token("ya29.example-token");
-        let (name, value) = strategy.auth_header();
-        assert_eq!(name, "Authorization");
-        assert!(value.starts_with("Bearer "));
-        assert!(value.contains("ya29.example-token"));
-    }
-
-    #[test]
-    fn test_vertex_extra_headers() {
-        let strategy = VertexStrategy::new("my-project", "us-central1");
-        let headers = strategy.extra_headers();
-        assert!(
-            headers
-                .iter()
-                .any(|(k, v)| k == "x-goog-user-project" && v == "my-project")
-        );
+    #[tokio::test]
+    async fn test_vertex_adapter_from_env() {
+        // This test only verifies the API exists, actual connection requires credentials
+        use claude_agent::client::ProviderConfig;
+        let _config = ProviderConfig::default();
+        // Just verify the type exists and can be referenced
+        let _: fn(ProviderConfig) -> _ = |c| async move {
+            let _ = VertexAdapter::from_env(c).await;
+        };
     }
 }
 
@@ -146,36 +71,37 @@ mod cloud_provider_tests {
 
     #[test]
     fn test_cloud_provider_equality() {
-        assert_eq!(CloudProvider::Bedrock, CloudProvider::Bedrock);
-        assert_eq!(CloudProvider::Vertex, CloudProvider::Vertex);
-        assert_ne!(CloudProvider::Bedrock, CloudProvider::Vertex);
+        assert_eq!(CloudProvider::Anthropic, CloudProvider::Anthropic);
+        #[cfg(feature = "aws")]
+        {
+            assert_eq!(CloudProvider::Bedrock, CloudProvider::Bedrock);
+            assert_ne!(CloudProvider::Bedrock, CloudProvider::Anthropic);
+        }
+        #[cfg(feature = "gcp")]
+        {
+            assert_eq!(CloudProvider::Vertex, CloudProvider::Vertex);
+            assert_ne!(CloudProvider::Vertex, CloudProvider::Anthropic);
+        }
+    }
+
+    #[cfg(feature = "aws")]
+    #[test]
+    fn test_bedrock_model_config() {
+        let models = CloudProvider::Bedrock.default_models();
+        assert!(models.primary.contains("global.anthropic"));
+    }
+
+    #[cfg(feature = "gcp")]
+    #[test]
+    fn test_vertex_model_config() {
+        let models = CloudProvider::Vertex.default_models();
+        assert!(models.primary.contains("@"));
     }
 
     #[test]
-    fn test_client_builder_bedrock() {
-        let _builder = ClientBuilder::default().bedrock("us-west-2");
-        // Just verify it doesn't panic
-    }
-
-    #[test]
-    fn test_client_builder_vertex() {
-        let _builder = ClientBuilder::default().vertex("my-project", "us-central1");
-    }
-
-    #[test]
-    fn test_client_builder_bedrock_strategy() {
-        let strategy = BedrockStrategy::new("eu-west-1")
-            .with_base_url("https://proxy.example.com")
-            .skip_auth();
-        let _builder = ClientBuilder::default().bedrock_strategy(strategy);
-    }
-
-    #[test]
-    fn test_client_builder_vertex_strategy() {
-        let strategy = VertexStrategy::new("project", "region")
-            .with_access_token("token")
-            .skip_auth();
-        let _builder = ClientBuilder::default().vertex_strategy(strategy);
+    fn test_anthropic_model_config() {
+        let models = CloudProvider::Anthropic.default_models();
+        assert!(models.primary.contains("claude"));
     }
 }
 
@@ -256,9 +182,13 @@ mod memory_loader_tests {
         let mut loader = MemoryLoader::new();
         let content = loader.load_all(dir.path()).await.unwrap();
 
-        assert_eq!(content.rules.len(), 3);
+        assert_eq!(content.rule_indices.len(), 3);
 
-        let rule_names: Vec<_> = content.rules.iter().map(|r| r.name.as_str()).collect();
+        let rule_names: Vec<_> = content
+            .rule_indices
+            .iter()
+            .map(|r| r.name.as_str())
+            .collect();
         assert!(rule_names.contains(&"rust"));
         assert!(rule_names.contains(&"security"));
         assert!(rule_names.contains(&"typescript"));
@@ -289,7 +219,7 @@ mod memory_loader_tests {
         let mut loader = MemoryLoader::new();
         let content = loader.load_all(dir.path()).await.unwrap();
 
-        let combined = content.combined();
+        let combined = content.combined_claude_md();
         assert!(combined.contains("# Project"));
         assert!(combined.contains("## Guidelines"));
         assert!(combined.contains("Follow these rules"));
@@ -318,7 +248,7 @@ mod memory_loader_tests {
         let mut loader = MemoryLoader::new();
         let content = loader.load_all(dir.path()).await.unwrap();
 
-        let combined = content.combined();
+        let combined = content.combined_claude_md();
         assert!(combined.contains("Top"));
         assert!(combined.contains("Mid content"));
         assert!(combined.contains("Deep content"));
@@ -360,7 +290,7 @@ mod memory_loader_tests {
         let mut loader = MemoryLoader::new();
         let content = loader.load_all(dir.path()).await.unwrap();
 
-        let combined = content.combined();
+        let combined = content.combined_claude_md();
         assert!(combined.contains("Content"));
         assert!(combined.contains("@nonexistent.md")); // Kept as-is
         assert!(combined.contains("More content"));
@@ -385,11 +315,14 @@ mod memory_loader_tests {
         let mut loader = MemoryLoader::new();
         let content = loader.load_all(dir.path()).await.unwrap();
 
-        let combined = content.combined();
+        let combined = content.combined_claude_md();
         assert!(combined.contains("Main content"));
         assert!(combined.contains("Local content"));
-        assert!(combined.contains("Rule content"));
-        assert!(combined.contains("# Rule: test"));
+
+        // Rules are now loaded as indices, not directly in combined content
+        assert!(!content.rule_indices.is_empty());
+        let rule = content.rule_indices.iter().find(|r| r.name == "test");
+        assert!(rule.is_some());
     }
 
     #[tokio::test]
@@ -407,7 +340,7 @@ mod memory_loader_tests {
         let mut loader = MemoryLoader::new();
         let content = loader.load_all(dir.path()).await.unwrap();
 
-        let combined = content.combined();
+        let combined = content.combined_claude_md();
         assert!(combined.contains("@@user@example.com"));
         assert!(combined.contains("@@ is escaped"));
     }
@@ -431,9 +364,9 @@ mod context_builder_tests {
         .unwrap();
 
         let context = ContextBuilder::new()
-            .load_memory_recursive(dir.path())
+            .load_from_directory(dir.path())
             .await
-            .build_sync()
+            .build()
             .unwrap();
 
         let static_ctx = context.static_context();
@@ -458,58 +391,42 @@ mod context_builder_tests {
             .unwrap();
 
         let context = ContextBuilder::new()
-            .load_memory_recursive(dir.path())
+            .load_from_directory(dir.path())
             .await
-            .build_sync()
+            .build()
             .unwrap();
 
         let md = &context.static_context().claude_md;
         assert!(md.contains("Main"));
         assert!(md.contains("Local"));
-        assert!(md.contains("Rule 1 content"));
+
+        // Rules are loaded as indices in RulesEngine, not in claude_md
+        let summary = context.build_rules_summary();
+        assert!(summary.contains("rule1"));
     }
 }
 
 // =============================================================================
-// Part 6: Environment Variable Tests
-// =============================================================================
-
-mod env_var_tests {
-    use super::*;
-
-    #[test]
-    fn test_bedrock_from_env_disabled() {
-        unsafe { std::env::remove_var("CLAUDE_CODE_USE_BEDROCK") };
-        let strategy = BedrockStrategy::from_env();
-        assert!(strategy.is_none());
-    }
-
-    #[test]
-    fn test_vertex_from_env_disabled() {
-        unsafe { std::env::remove_var("CLAUDE_CODE_USE_VERTEX") };
-        let strategy = VertexStrategy::from_env();
-        assert!(strategy.is_none());
-    }
-}
-
-// =============================================================================
-// Live Tests (require CLI credentials)
+// Part 6: Live Tests (require CLI credentials)
 // =============================================================================
 
 mod live_tests {
-    use super::*;
-    use claude_agent::{Agent, Client, ToolAccess};
+    use claude_agent::{Agent, Auth, Client, ToolAccess};
+    use tempfile::tempdir;
+    use tokio::fs;
 
     #[tokio::test]
     #[ignore = "Requires CLI credentials"]
     async fn test_cli_auth_with_new_features() {
         let client = Client::builder()
-            .from_claude_cli()
+            .auth(Auth::FromEnv)
+            .await
+            .expect("Auth failed")
             .build()
+            .await
             .expect("Failed to create client");
 
-        println!("Auth strategy: {}", client.config().auth_strategy.name());
-        assert_eq!(client.config().auth_strategy.name(), "oauth");
+        println!("Provider: {}", client.adapter().name());
 
         let response = client
             .query("What is 1+1? Answer with just the number.")
@@ -539,7 +456,9 @@ mod live_tests {
             .unwrap();
 
         let agent = Agent::builder()
-            .from_claude_cli()
+            .auth(Auth::FromEnv)
+            .await
+            .expect("Auth failed")
             .tools(ToolAccess::only(["Read"]))
             .working_dir(dir.path())
             .max_iterations(3)
@@ -558,71 +477,22 @@ mod live_tests {
 }
 
 // =============================================================================
-// Part 7: Foundry Strategy Tests
+// Part 7: Foundry Strategy Tests (Azure feature only)
 // =============================================================================
 
+#[cfg(feature = "azure")]
 mod foundry_tests {
-    use claude_agent::auth::{AuthStrategy, FoundryStrategy};
+    use claude_agent::client::FoundryAdapter;
 
-    #[test]
-    fn test_foundry_strategy_creation() {
-        let strategy = FoundryStrategy::new("my-resource").with_deployment("claude-sonnet");
-        assert_eq!(strategy.resource_name(), "my-resource");
-        assert_eq!(strategy.deployment_name(), Some("claude-sonnet"));
-        assert_eq!(strategy.name(), "foundry");
-    }
-
-    #[test]
-    fn test_foundry_base_url_construction() {
-        let strategy = FoundryStrategy::new("my-resource").with_deployment("claude-sonnet");
-        let url = strategy.get_base_url();
-        assert!(url.contains("my-resource"));
-        assert!(url.contains("services.ai.azure.com"));
-    }
-
-    #[test]
-    fn test_foundry_custom_base_url() {
-        let strategy = FoundryStrategy::new("r")
-            .with_deployment("d")
-            .with_base_url("https://my-gateway.com/foundry");
-        assert_eq!(strategy.get_base_url(), "https://my-gateway.com/foundry");
-    }
-
-    #[test]
-    fn test_foundry_api_version() {
-        let strategy = FoundryStrategy::new("r")
-            .with_deployment("d")
-            .with_api_version("2025-01-01");
-        let query = strategy.url_query_string();
-        assert!(query.is_some());
-        assert!(query.unwrap().contains("2025-01-01"));
-    }
-
-    #[test]
-    fn test_foundry_auth_with_api_key() {
-        let strategy = FoundryStrategy::new("r")
-            .with_deployment("d")
-            .with_api_key("my-key");
-        let (header, value) = strategy.auth_header();
-        assert_eq!(header, "api-key");
-        assert_eq!(value, "my-key");
-    }
-
-    #[test]
-    fn test_foundry_auth_with_token() {
-        let strategy = FoundryStrategy::new("r")
-            .with_deployment("d")
-            .with_access_token("my-token");
-        let (header, value) = strategy.auth_header();
-        assert_eq!(header, "Authorization");
-        assert!(value.contains("Bearer my-token"));
-    }
-
-    #[test]
-    fn test_foundry_from_env_disabled() {
-        unsafe { std::env::remove_var("CLAUDE_CODE_USE_FOUNDRY") };
-        let strategy = FoundryStrategy::from_env();
-        assert!(strategy.is_none());
+    #[tokio::test]
+    async fn test_foundry_adapter_from_env() {
+        // This test only verifies the API exists, actual connection requires credentials
+        use claude_agent::client::ProviderConfig;
+        let _config = ProviderConfig::default();
+        // Just verify the type exists and can be referenced
+        let _: fn(ProviderConfig) -> _ = |c| async move {
+            let _ = FoundryAdapter::from_env(c).await;
+        };
     }
 }
 
@@ -631,26 +501,39 @@ mod foundry_tests {
 // =============================================================================
 
 mod small_model_tests {
-    use claude_agent::client::ClientBuilder;
+    use claude_agent::Client;
 
-    #[test]
-    fn test_small_model_builder() {
-        // Builder should accept small_model configuration
-        let _builder = ClientBuilder::default()
-            .api_key("test-key")
-            .model("claude-sonnet-4-5")
-            .small_model("claude-haiku-4-5");
+    #[tokio::test]
+    async fn test_client_builder_api() {
+        // Builder should accept model configuration
+        let _builder = Client::builder()
+            .auth("test-key")
+            .await
+            .expect("Auth failed")
+            .anthropic();
     }
 
     #[test]
-    fn test_cloud_provider_with_foundry() {
+    fn test_cloud_provider_variants() {
         use claude_agent::client::CloudProvider;
 
-        let foundry = CloudProvider::Foundry;
-        assert_eq!(foundry, CloudProvider::Foundry);
-        assert_ne!(foundry, CloudProvider::Anthropic);
-        assert_ne!(foundry, CloudProvider::Bedrock);
-        assert_ne!(foundry, CloudProvider::Vertex);
+        // Always available
+        assert_eq!(CloudProvider::Anthropic, CloudProvider::Anthropic);
+
+        #[cfg(feature = "azure")]
+        {
+            let foundry = CloudProvider::Foundry;
+            assert_eq!(foundry, CloudProvider::Foundry);
+            assert_ne!(foundry, CloudProvider::Anthropic);
+        }
+        #[cfg(feature = "aws")]
+        {
+            assert_ne!(CloudProvider::Bedrock, CloudProvider::Anthropic);
+        }
+        #[cfg(feature = "gcp")]
+        {
+            assert_ne!(CloudProvider::Vertex, CloudProvider::Anthropic);
+        }
     }
 }
 
@@ -725,10 +608,10 @@ mod settings_tests {
     }
 
     #[test]
-    fn test_permission_pattern_exact() {
+    fn test_permission_settings_default() {
         let loader = SettingsLoader::new();
-        // Pattern matching is internal, test via is_denied when settings loaded
-        assert!(!loader.is_denied("random_file"));
+        // Default permissions are empty
+        assert!(loader.settings().permissions.is_empty());
     }
 
     #[tokio::test]
@@ -827,7 +710,7 @@ mod home_dir_tests {
         let content = loader.load_all(dir.path()).await.unwrap();
 
         // Should gracefully handle missing home dir files
-        let combined = content.combined();
+        let combined = content.combined_claude_md();
         assert!(combined.contains("# Project"));
         assert!(combined.contains("@~/nonexistent_file.md")); // Kept as-is since file doesn't exist
     }
@@ -840,24 +723,26 @@ mod home_dir_tests {
 #[test]
 fn test_all_new_features_summary() {
     println!("\n");
-    println!("╔══════════════════════════════════════════════════════════════╗");
-    println!("║         New Features Verification Test Suite                 ║");
-    println!("╠══════════════════════════════════════════════════════════════╣");
-    println!("║ Features tested:                                             ║");
-    println!("║ - AWS Bedrock authentication strategy                        ║");
-    println!("║ - Google Vertex AI authentication strategy                   ║");
-    println!("║ - Microsoft Azure AI Foundry authentication strategy         ║");
-    println!("║ - Cloud provider auto-resolution                             ║");
-    println!("║ - ANTHROPIC_SMALL_FAST_MODEL configuration                   ║");
-    println!("║ - CLAUDE.md recursive loading                                ║");
-    println!("║ - CLAUDE.local.md support                                    ║");
-    println!("║ - @import syntax with home directory (~) expansion           ║");
-    println!("║ - .claude/rules/ directory loading                           ║");
-    println!("║ - Slash commands (.claude/commands/)                         ║");
-    println!("║ - $ARGUMENTS template substitution                           ║");
-    println!("║ - settings.json and settings.local.json loading              ║");
-    println!("║ - permissions.deny patterns                                  ║");
-    println!("║ - Circular import prevention                                 ║");
-    println!("╚══════════════════════════════════════════════════════════════╝");
+    println!("========================================================================");
+    println!("         New Features Verification Test Suite                           ");
+    println!("========================================================================");
+    println!(" Features tested:                                                       ");
+    println!(" - Cloud provider auto-resolution                                       ");
+    println!(" - CLAUDE.md recursive loading                                          ");
+    println!(" - CLAUDE.local.md support                                              ");
+    println!(" - @import syntax with home directory (~) expansion                     ");
+    println!(" - .claude/rules/ directory loading                                     ");
+    println!(" - Slash commands (.claude/commands/)                                   ");
+    println!(" - $ARGUMENTS template substitution                                     ");
+    println!(" - settings.json and settings.local.json loading                        ");
+    println!(" - permissions.deny patterns                                            ");
+    println!(" - Circular import prevention                                           ");
+    #[cfg(feature = "aws")]
+    println!(" - AWS Bedrock adapter (feature = aws)                                  ");
+    #[cfg(feature = "gcp")]
+    println!(" - Google Vertex AI adapter (feature = gcp)                             ");
+    #[cfg(feature = "azure")]
+    println!(" - Microsoft Azure AI Foundry adapter (feature = azure)                 ");
+    println!("========================================================================");
     println!();
 }

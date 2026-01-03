@@ -1,31 +1,31 @@
-//! Claude Code CLI vs claude-agent-rs SDK 비교 검증 테스트
+//! Claude Code CLI vs claude-agent-rs SDK Comparison Verification Tests
 //!
-//! 이 테스트 모듈은 Claude Code CLI와 동일한 가치를 제공하는지 심층 검증합니다.
+//! This test module performs deep verification that the SDK provides the same value as Claude Code CLI.
 //!
-//! ## 테스트 시나리오
+//! ## Test Scenarios
 //!
-//! ### 1. 기본 API 호출 (Basic API)
-//! - Simple query (단일 응답)
-//! - Streaming query (스트리밍 응답)
+//! ### 1. Basic API
+//! - Simple query (single response)
+//! - Streaming query (streaming response)
 //!
-//! ### 2. Tool Use (도구 사용)
+//! ### 2. Tool Use
 //! - File tools: Read, Write, Edit, Glob, Grep
 //! - Shell tools: Bash, KillShell
 //! - Web tools: WebFetch (WebSearch is built-in API)
 //! - Productivity: TodoWrite
-//! - Notebook: NotebookEdit
+//! - Planning: Plan
 //!
-//! ### 3. Agent Loop (에이전트 루프)
+//! ### 3. Agent Loop
 //! - Multi-turn conversation
 //! - Tool execution chain
 //! - Context management
 //!
-//! ### 4. Session Management (세션 관리)
+//! ### 4. Session Management
 //! - Session creation/restoration
 //! - Context compaction
 //! - Message history
 //!
-//! ### 5. Advanced Features (고급 기능)
+//! ### 5. Advanced Features
 //! - Permission system
 //! - Hook system
 //! - Skill system
@@ -34,15 +34,26 @@
 use tempfile::TempDir;
 
 // ============================================================================
-// 1. Tool Implementation Tests - CLI와 동일한 도구 스펙 검증
+// 1. Tool Implementation Tests - Verify same tool specs as CLI
 // ============================================================================
 
 mod tool_spec_tests {
     use super::*;
-    use claude_agent::tools::*;
+    use claude_agent::ToolOutput;
+    use claude_agent::session::SessionId;
+    use claude_agent::session::ToolState;
+    use claude_agent::tools::{
+        BashTool, EditTool, ExecutionContext, GlobTool, GrepTool, ReadTool, TodoWriteTool, Tool,
+        WriteTool,
+    };
     use serde_json::json;
 
-    /// Read Tool - CLI 스펙 준수 검증
+    fn create_test_context(temp_dir: &TempDir) -> ExecutionContext {
+        ExecutionContext::from_path(std::fs::canonicalize(temp_dir.path()).unwrap())
+            .unwrap_or_else(|_| ExecutionContext::permissive())
+    }
+
+    /// Read Tool - CLI spec compliance verification
     /// CLI: file_path (required), offset (optional), limit (optional)
     #[tokio::test]
     async fn test_read_tool_cli_spec() {
@@ -50,59 +61,70 @@ mod tool_spec_tests {
         let file_path = temp_dir.path().join("test.txt");
         std::fs::write(&file_path, "Line 1\nLine 2\nLine 3\nLine 4\nLine 5\n").unwrap();
 
-        let tool = ReadTool::new(temp_dir.path().to_path_buf());
+        let tool = ReadTool;
 
-        // 기본 읽기
+        // Basic read
+        let ctx = create_test_context(&temp_dir);
         let result = tool
-            .execute(json!({
-                "file_path": file_path.to_str().unwrap()
-            }))
+            .execute(
+                json!({
+                    "file_path": file_path.to_str().unwrap()
+                }),
+                &ctx,
+            )
             .await;
 
-        match result {
-            ToolResult::Success(content) => {
+        match &result.output {
+            ToolOutput::Success(content) => {
                 assert!(content.contains("Line 1"));
                 assert!(content.contains("Line 5"));
-                // CLI 형식: 라인 번호 포함 (cat -n 스타일)
+                // CLI format: includes line numbers (cat -n style)
                 assert!(content.contains("1\t") || content.contains("1→"));
             }
-            _ => panic!("Expected success"),
+            other => panic!("Expected success, got: {:?}", other),
         }
 
-        // offset/limit 지원
+        // offset/limit support
         let result = tool
-            .execute(json!({
-                "file_path": file_path.to_str().unwrap(),
-                "offset": 2,
-                "limit": 2
-            }))
+            .execute(
+                json!({
+                    "file_path": file_path.to_str().unwrap(),
+                    "offset": 2,
+                    "limit": 2
+                }),
+                &ctx,
+            )
             .await;
 
-        match result {
-            ToolResult::Success(content) => {
+        match &result.output {
+            ToolOutput::Success(content) => {
                 assert!(content.contains("Line 3") || content.contains("Line 2"));
             }
             _ => panic!("Expected success with offset/limit"),
         }
     }
 
-    /// Write Tool - CLI 스펙 준수 검증
+    /// Write Tool - CLI spec compliance verification
     /// CLI: file_path (required), content (required)
     #[tokio::test]
     async fn test_write_tool_cli_spec() {
         let temp_dir = TempDir::new().unwrap();
         let file_path = temp_dir.path().join("new_file.txt");
 
-        let tool = WriteTool::new(temp_dir.path().to_path_buf());
+        let tool = WriteTool;
+        let ctx = create_test_context(&temp_dir);
 
         let result = tool
-            .execute(json!({
-                "file_path": file_path.to_str().unwrap(),
-                "content": "Hello, World!"
-            }))
+            .execute(
+                json!({
+                    "file_path": file_path.to_str().unwrap(),
+                    "content": "Hello, World!"
+                }),
+                &ctx,
+            )
             .await;
 
-        assert!(!result.is_error());
+        assert!(!result.is_error(), "Write failed: {:?}", result);
         assert!(file_path.exists());
         assert_eq!(
             std::fs::read_to_string(&file_path).unwrap(),
@@ -110,26 +132,31 @@ mod tool_spec_tests {
         );
     }
 
-    /// Write Tool - 디렉토리 자동 생성
+    /// Write Tool - auto-creates directories
     #[tokio::test]
     async fn test_write_tool_creates_directories() {
         let temp_dir = TempDir::new().unwrap();
-        let file_path = temp_dir.path().join("deep/nested/dir/file.txt");
+        let canonical_root = std::fs::canonicalize(temp_dir.path()).unwrap();
+        let file_path = canonical_root.join("deep/nested/dir/file.txt");
 
-        let tool = WriteTool::new(temp_dir.path().to_path_buf());
+        let tool = WriteTool;
+        let ctx = create_test_context(&temp_dir);
 
         let result = tool
-            .execute(json!({
-                "file_path": file_path.to_str().unwrap(),
-                "content": "Nested content"
-            }))
+            .execute(
+                json!({
+                    "file_path": file_path.to_str().unwrap(),
+                    "content": "Nested content"
+                }),
+                &ctx,
+            )
             .await;
 
-        assert!(!result.is_error());
+        assert!(!result.is_error(), "Write failed: {:?}", result);
         assert!(file_path.exists());
     }
 
-    /// Edit Tool - CLI 스펙 준수 검증
+    /// Edit Tool - CLI spec compliance verification
     /// CLI: file_path, old_string, new_string, replace_all (optional)
     ///
     /// Note: Edit tool requires old_string to be unique in the file when replace_all is false.
@@ -139,18 +166,22 @@ mod tool_spec_tests {
         let temp_dir = TempDir::new().unwrap();
         let file_path = temp_dir.path().join("edit_test.txt");
 
-        // 유니크한 문자열로 테스트 (CLI와 동일한 동작)
+        // Test with unique string (same behavior as CLI)
         std::fs::write(&file_path, "hello world").unwrap();
 
-        let tool = EditTool::new(temp_dir.path().to_path_buf());
+        let tool = EditTool;
+        let ctx = create_test_context(&temp_dir);
 
-        // 단일 치환 (유니크한 문자열)
+        // Single replacement (unique string)
         let result = tool
-            .execute(json!({
-                "file_path": file_path.to_str().unwrap(),
-                "old_string": "hello",
-                "new_string": "hi"
-            }))
+            .execute(
+                json!({
+                    "file_path": file_path.to_str().unwrap(),
+                    "old_string": "hello",
+                    "new_string": "hi"
+                }),
+                &ctx,
+            )
             .await;
 
         assert!(
@@ -160,63 +191,73 @@ mod tool_spec_tests {
         let content = std::fs::read_to_string(&file_path).unwrap();
         assert_eq!(content, "hi world");
 
-        // 전체 치환 (replace_all)
+        // Replace all occurrences (replace_all)
         std::fs::write(&file_path, "foo bar foo baz").unwrap();
         let result = tool
-            .execute(json!({
-                "file_path": file_path.to_str().unwrap(),
-                "old_string": "foo",
-                "new_string": "qux",
-                "replace_all": true
-            }))
+            .execute(
+                json!({
+                    "file_path": file_path.to_str().unwrap(),
+                    "old_string": "foo",
+                    "new_string": "qux",
+                    "replace_all": true
+                }),
+                &ctx,
+            )
             .await;
 
         assert!(!result.is_error(), "Edit should succeed with replace_all");
         let content = std::fs::read_to_string(&file_path).unwrap();
-        assert_eq!(content, "qux bar qux baz"); // 모두 치환
+        assert_eq!(content, "qux bar qux baz"); // All replaced
 
-        // 중복 문자열에 대해 에러 반환 확인 (CLI와 동일한 동작)
+        // Verify error is returned for duplicate strings (same behavior as CLI)
         std::fs::write(&file_path, "foo bar foo baz").unwrap();
         let result = tool
-            .execute(json!({
-                "file_path": file_path.to_str().unwrap(),
-                "old_string": "foo",
-                "new_string": "qux"
-            }))
+            .execute(
+                json!({
+                    "file_path": file_path.to_str().unwrap(),
+                    "old_string": "foo",
+                    "new_string": "qux"
+                }),
+                &ctx,
+            )
             .await;
 
-        // 중복된 old_string은 에러를 반환해야 함 (더 많은 컨텍스트 필요)
+        // Duplicate old_string should return error (needs more context)
         assert!(
             result.is_error(),
             "Edit should fail when old_string is not unique"
         );
     }
 
-    /// Glob Tool - CLI 스펙 준수 검증
+    /// Glob Tool - CLI spec compliance verification
     /// CLI: pattern (required), path (optional)
     #[tokio::test]
     async fn test_glob_tool_cli_spec() {
         let temp_dir = TempDir::new().unwrap();
 
-        // 테스트 파일 생성
+        // Create test files
         std::fs::write(temp_dir.path().join("test1.rs"), "").unwrap();
         std::fs::write(temp_dir.path().join("test2.rs"), "").unwrap();
         std::fs::write(temp_dir.path().join("test.txt"), "").unwrap();
         std::fs::create_dir(temp_dir.path().join("subdir")).unwrap();
         std::fs::write(temp_dir.path().join("subdir/nested.rs"), "").unwrap();
 
-        let tool = GlobTool::new(temp_dir.path().to_path_buf());
+        let tool = GlobTool;
+        let ctx = create_test_context(&temp_dir);
 
-        // 기본 패턴 매칭
+        // Basic pattern matching
         let result = tool
-            .execute(json!({
-                "pattern": "*.rs",
-                "path": temp_dir.path().to_str().unwrap()
-            }))
+            .execute(
+                json!({
+                    "pattern": "*.rs",
+                    "path": temp_dir.path().to_str().unwrap()
+                }),
+                &ctx,
+            )
             .await;
 
-        match result {
-            ToolResult::Success(output) => {
+        match &result.output {
+            ToolOutput::Success(output) => {
                 assert!(output.contains("test1.rs"));
                 assert!(output.contains("test2.rs"));
                 assert!(!output.contains("test.txt"));
@@ -224,24 +265,27 @@ mod tool_spec_tests {
             _ => panic!("Expected success"),
         }
 
-        // 재귀 패턴
+        // Recursive pattern
         let result = tool
-            .execute(json!({
-                "pattern": "**/*.rs",
-                "path": temp_dir.path().to_str().unwrap()
-            }))
+            .execute(
+                json!({
+                    "pattern": "**/*.rs",
+                    "path": temp_dir.path().to_str().unwrap()
+                }),
+                &ctx,
+            )
             .await;
 
-        match result {
-            ToolResult::Success(output) => {
+        match &result.output {
+            ToolOutput::Success(output) => {
                 assert!(output.contains("nested.rs"));
             }
             _ => panic!("Expected success with recursive pattern"),
         }
     }
 
-    /// Grep Tool - CLI 스펙 준수 검증
-    /// CLI: pattern, path, output_mode, glob, type, -i, -n, -A, -B, -C 등
+    /// Grep Tool - CLI spec compliance verification
+    /// CLI: pattern, path, output_mode, glob, type, -i, -n, -A, -B, -C, etc.
     #[tokio::test]
     async fn test_grep_tool_cli_spec() {
         let temp_dir = TempDir::new().unwrap();
@@ -252,101 +296,122 @@ mod tool_spec_tests {
         )
         .unwrap();
 
-        let tool = GrepTool::new(temp_dir.path().to_path_buf());
+        let tool = GrepTool;
+        let ctx = create_test_context(&temp_dir);
 
-        // 기본 검색
+        // Basic search
         let result = tool
-            .execute(json!({
-                "pattern": "Hello",
-                "path": temp_dir.path().to_str().unwrap(),
-                "output_mode": "content"
-            }))
+            .execute(
+                json!({
+                    "pattern": "Hello",
+                    "path": temp_dir.path().to_str().unwrap(),
+                    "output_mode": "content"
+                }),
+                &ctx,
+            )
             .await;
 
-        match result {
-            ToolResult::Success(output) => {
+        match &result.output {
+            ToolOutput::Success(output) => {
                 assert!(output.contains("Hello World"));
                 assert!(output.contains("Hello Again"));
             }
             _ => panic!("Expected success"),
         }
 
-        // 대소문자 무시
+        // Case-insensitive search
         let result = tool
-            .execute(json!({
-                "pattern": "hello",
-                "path": temp_dir.path().to_str().unwrap(),
-                "output_mode": "content",
-                "-i": true
-            }))
+            .execute(
+                json!({
+                    "pattern": "hello",
+                    "path": temp_dir.path().to_str().unwrap(),
+                    "output_mode": "content",
+                    "-i": true
+                }),
+                &ctx,
+            )
             .await;
 
-        match result {
-            ToolResult::Success(output) => {
+        match &result.output {
+            ToolOutput::Success(output) => {
                 assert!(output.contains("Hello"));
             }
             _ => panic!("Expected success with case-insensitive search"),
         }
     }
 
-    /// Bash Tool - CLI 스펙 준수 검증
+    /// Bash Tool - CLI spec compliance verification
     /// CLI: command (required), timeout (optional), description (optional)
     #[tokio::test]
     async fn test_bash_tool_cli_spec() {
         let temp_dir = TempDir::new().unwrap();
-        let tool = BashTool::new(temp_dir.path().to_path_buf());
+        let tool = BashTool::new();
+        let ctx = create_test_context(&temp_dir);
 
-        // 기본 명령 실행
+        // Basic command execution
         let result = tool
-            .execute(json!({
-                "command": "echo 'Hello from Bash'",
-                "description": "Echo test"
-            }))
+            .execute(
+                json!({
+                    "command": "echo 'Hello from Bash'",
+                    "description": "Echo test"
+                }),
+                &ctx,
+            )
             .await;
 
-        match result {
-            ToolResult::Success(output) => {
+        match &result.output {
+            ToolOutput::Success(output) => {
                 assert!(output.contains("Hello from Bash"));
             }
             _ => panic!("Expected success"),
         }
 
-        // 타임아웃 테스트
+        // Timeout test
         let result = tool
-            .execute(json!({
-                "command": "sleep 0.1 && echo 'done'",
-                "timeout": 5000
-            }))
+            .execute(
+                json!({
+                    "command": "sleep 0.1 && echo 'done'",
+                    "timeout": 5000
+                }),
+                &ctx,
+            )
             .await;
 
-        match result {
-            ToolResult::Success(output) => {
+        match &result.output {
+            ToolOutput::Success(output) => {
                 assert!(output.contains("done"));
             }
             _ => panic!("Expected success with timeout"),
         }
     }
 
-    /// TodoWrite Tool - CLI 스펙 준수 검증
+    /// TodoWrite Tool - CLI spec compliance verification
     #[tokio::test]
     async fn test_todo_tool_cli_spec() {
-        let tool = TodoWriteTool::new();
+        let temp_dir = TempDir::new().unwrap();
+        let session_id = SessionId::new();
+        let session_ctx = ToolState::new(session_id);
+        let tool = TodoWriteTool::new(session_ctx, session_id);
+        let ctx = create_test_context(&temp_dir);
 
         let result = tool
-            .execute(json!({
-                "todos": [
-                    {
-                        "content": "First task",
-                        "status": "pending",
-                        "activeForm": "Working on first task"
-                    },
-                    {
-                        "content": "Second task",
-                        "status": "in_progress",
-                        "activeForm": "Working on second task"
-                    }
-                ]
-            }))
+            .execute(
+                json!({
+                    "todos": [
+                        {
+                            "content": "First task",
+                            "status": "pending",
+                            "activeForm": "Working on first task"
+                        },
+                        {
+                            "content": "Second task",
+                            "status": "in_progress",
+                            "activeForm": "Working on second task"
+                        }
+                    ]
+                }),
+                &ctx,
+            )
             .await;
 
         assert!(!result.is_error());
@@ -354,19 +419,19 @@ mod tool_spec_tests {
 }
 
 // ============================================================================
-// 2. Agent Loop Tests - CLI와 동일한 에이전트 동작 검증
+// 2. Agent Loop Tests - Verify same agent behavior as CLI
 // ============================================================================
 
 mod agent_loop_tests {
     use claude_agent::{Agent, AgentEvent, ToolAccess};
 
-    /// Agent 빌더 패턴 검증
+    /// Agent builder pattern verification
     #[tokio::test]
     async fn test_agent_builder_pattern() {
-        // CLI의 옵션들과 대응되는 빌더 메서드 검증
-        // API 키를 제공해야 빌드 성공
+        // Verify builder methods correspond to CLI options
+        // Requires API key to build successfully
         let agent_result = Agent::builder()
-            .api_key("test-api-key") // 테스트용 API 키 제공
+            .auth("test-api-key").await.expect("Auth failed") // Test API key
             .model("claude-sonnet-4-5-20250514")
             .tools(ToolAccess::all())
             .working_dir(".")
@@ -379,7 +444,7 @@ mod agent_loop_tests {
         assert!(agent_result.is_ok());
     }
 
-    /// Tool Access 모드 검증 (CLI의 --allowedTools 대응)
+    /// Tool Access mode verification (corresponds to CLI's --allowedTools)
     #[test]
     fn test_tool_access_modes() {
         // All tools
@@ -392,7 +457,7 @@ mod agent_loop_tests {
         let access = ToolAccess::none();
         assert!(!access.is_allowed("Read"));
 
-        // Custom selection - 직접 String 배열 사용
+        // Custom selection - using String array directly
         let access = ToolAccess::only(["Read".to_string(), "Glob".to_string(), "Grep".to_string()]);
         assert!(access.is_allowed("Read"));
         assert!(!access.is_allowed("Bash"));
@@ -403,14 +468,14 @@ mod agent_loop_tests {
         assert!(!access.is_allowed("Bash"));
     }
 
-    /// AgentEvent 스트림 이벤트 검증 (CLI 출력과 대응)
+    /// AgentEvent stream event verification (corresponds to CLI output)
     #[test]
     fn test_agent_events_match_cli_output() {
-        // CLI가 출력하는 이벤트 유형들:
-        // - Text: 텍스트 응답
-        // - ToolStart: [Tool: name] 출력
-        // - ToolEnd: 도구 결과 출력
-        // - Complete: 최종 통계
+        // Event types output by CLI:
+        // - Text: text response
+        // - ToolStart: [Tool: name] output
+        // - ToolEnd: tool result output
+        // - Complete: final statistics
 
         let text_event = AgentEvent::Text("Hello".to_string());
         let tool_start = AgentEvent::ToolStart {
@@ -424,7 +489,7 @@ mod agent_loop_tests {
             is_error: false,
         };
 
-        // 이벤트 타입 매칭 검증
+        // Event type matching verification
         assert!(matches!(text_event, AgentEvent::Text(_)));
         assert!(matches!(tool_start, AgentEvent::ToolStart { .. }));
         assert!(matches!(tool_end, AgentEvent::ToolEnd { .. }));
@@ -441,13 +506,13 @@ mod session_tests {
     };
     use claude_agent::types::ContentBlock;
 
-    /// Session 생성 및 메시지 관리
+    /// Session creation and message management
     #[test]
     fn test_session_management() {
         let config = SessionConfig::default();
         let mut session = Session::new(config);
 
-        // 메시지 추가 (SessionMessage 사용)
+        // Add messages (using SessionMessage)
         let user_msg = SessionMessage::user(vec![ContentBlock::text("Hello")]);
         session.add_message(user_msg);
 
@@ -458,7 +523,7 @@ mod session_tests {
         assert!(session.current_leaf_id.is_some());
     }
 
-    /// Context Compaction (CLI의 자동 컨텍스트 관리 대응)
+    /// Context Compaction (corresponds to CLI's automatic context management)
     #[test]
     fn test_context_compaction() {
         let strategy = CompactStrategy::default()
@@ -467,93 +532,106 @@ mod session_tests {
 
         let executor = CompactExecutor::new(strategy);
 
-        // 80% 이상에서 compact 필요
+        // Compact needed at 80% or above
         assert!(!executor.needs_compact(70_000, 100_000));
         assert!(executor.needs_compact(80_000, 100_000));
         assert!(executor.needs_compact(90_000, 100_000));
     }
 
-    /// Session Manager - 다중 세션 관리
+    /// Session Manager - multi-session management
     #[tokio::test]
     async fn test_session_manager() {
-        // in-memory persistence로 생성
-        let manager = SessionManager::new_memory();
+        // Create with in-memory persistence
+        let manager = SessionManager::in_memory();
 
-        // 세션 생성
+        // Create sessions
         let session1 = manager.create(SessionConfig::default()).await.unwrap();
         let session2 = manager.create(SessionConfig::default()).await.unwrap();
 
         assert_ne!(session1.id, session2.id);
 
-        // 세션 검색
+        // Search session
         let found = manager.get(&session1.id).await;
         assert!(found.is_ok());
     }
 }
 
 // ============================================================================
-// 4. Client API Tests - Claude API 통신 스펙 검증
+// 4. Client API Tests - Claude API communication spec verification
 // ============================================================================
 
 mod client_tests {
-    use claude_agent::Client;
+    use claude_agent::client::{DEFAULT_SMALL_MODEL, GatewayConfig, ModelConfig, ProviderConfig};
+    use claude_agent::{Auth, Client};
 
-    /// Client 설정 검증 (CLI 환경변수 대응)
-    #[test]
-    fn test_client_builder() {
+    /// Client configuration verification (corresponds to CLI env vars)
+    #[tokio::test]
+    async fn test_client_builder() {
+        let models = ModelConfig::new("claude-sonnet-4-5-20250514", DEFAULT_SMALL_MODEL);
+        let config = ProviderConfig::new(models).with_max_tokens(4096);
+
         let client_result = Client::builder()
-            .api_key("test-key")
-            .model("claude-sonnet-4-5-20250514")
-            .max_tokens(4096)
+            .auth("test-key")
+            .await
+            .expect("Auth failed")
+            .config(config)
             .timeout(std::time::Duration::from_secs(120))
-            .build();
+            .build()
+            .await;
 
         assert!(client_result.is_ok());
         let client = client_result.unwrap();
-        assert_eq!(client.config().model, "claude-sonnet-4-5-20250514");
         assert_eq!(client.config().max_tokens, 4096);
     }
 
-    /// API URL 설정 (CLI의 --api-base-url 대응)
-    #[test]
-    fn test_custom_base_url() {
+    /// API URL configuration (corresponds to CLI's --api-base-url)
+    #[tokio::test]
+    async fn test_custom_base_url() {
+        let gateway = GatewayConfig::with_base_url("https://custom.api.com/v1");
         let client = Client::builder()
-            .api_key("test-key")
-            .base_url("https://custom.api.com/v1")
-            .build();
+            .auth("test-key")
+            .await
+            .expect("Auth failed")
+            .gateway(gateway)
+            .build()
+            .await;
 
         assert!(client.is_ok());
     }
 
-    /// OAuth 토큰 인증 테스트
-    #[test]
-    fn test_oauth_token() {
+    /// OAuth token authentication test
+    #[tokio::test]
+    async fn test_oauth_token() {
         let client = Client::builder()
-            .oauth_token("sk-ant-oat01-test-token")
-            .build();
+            .auth(Auth::oauth("sk-ant-oat01-test-token"))
+            .await
+            .expect("Auth failed")
+            .build()
+            .await;
 
         assert!(client.is_ok());
         let client = client.unwrap();
-        assert_eq!(client.config().auth_strategy.name(), "oauth");
+        // Verify by adapter name
+        assert_eq!(client.adapter().name(), "anthropic");
     }
 
-    /// Claude CLI 인증 빌더 테스트
-    #[test]
-    fn test_from_claude_cli_builder() {
-        // CLI credentials가 없어도 빌더 자체는 생성됨
-        let _builder = Client::builder().from_claude_cli();
-    }
-
-    /// 자동 해결 빌더 테스트
-    #[test]
-    fn test_auto_resolve_builder() {
-        // 빌더가 올바르게 설정되는지 확인
-        let _builder = Client::builder().auto_resolve();
+    /// Auto-resolve builder test (failure is expected without env var)
+    #[tokio::test]
+    async fn test_auto_resolve_builder() {
+        // Verify builder configuration works correctly
+        // Success if ANTHROPIC_API_KEY is set, error otherwise
+        let result = Client::builder().auth(Auth::FromEnv).await;
+        // In test environment without env var, error is expected
+        if std::env::var("ANTHROPIC_API_KEY").is_err() {
+            assert!(result.is_err(), "Should fail without ANTHROPIC_API_KEY");
+        } else {
+            assert!(result.is_ok(), "Should succeed with ANTHROPIC_API_KEY");
+        }
     }
 }
 
 // ============================================================================
-// 5. Permission System Tests - 보안 기능 검증
+// 5. Permission System Tests - Security feature verification
 // ============================================================================
 
 mod permission_tests {
@@ -561,10 +639,10 @@ mod permission_tests {
         PermissionMode, PermissionPolicyBuilder, is_file_tool, is_read_only_tool, is_shell_tool,
     };
 
-    /// 도구 분류 검증
+    /// Tool classification verification
     #[test]
     fn test_tool_classification() {
-        // Read-only tools (안전)
+        // Read-only tools (safe)
         assert!(is_read_only_tool("Read"));
         assert!(is_read_only_tool("Glob"));
         assert!(is_read_only_tool("Grep"));
@@ -576,13 +654,13 @@ mod permission_tests {
         assert!(is_file_tool("Edit"));
         assert!(!is_file_tool("Bash"));
 
-        // Shell tools (위험)
+        // Shell tools (dangerous)
         assert!(is_shell_tool("Bash"));
         assert!(is_shell_tool("KillShell"));
         assert!(!is_shell_tool("Read"));
     }
 
-    /// Permission Mode 검증 (CLI의 --permission-mode 대응)
+    /// Permission Mode verification (corresponds to CLI's --permission-mode)
     #[test]
     fn test_permission_modes() {
         let default = PermissionMode::default();
@@ -591,21 +669,21 @@ mod permission_tests {
         let bypass = PermissionMode::BypassPermissions;
         let plan = PermissionMode::Plan;
 
-        // 모드별 동작 확인
+        // Verify behavior per mode
         assert!(matches!(bypass, PermissionMode::BypassPermissions));
         assert!(matches!(plan, PermissionMode::Plan));
     }
 
-    /// Permission Policy 빌더
+    /// Permission Policy builder
     #[test]
     fn test_permission_policy_builder() {
         let policy = PermissionPolicyBuilder::new()
-            .allow_pattern("Read")
-            .allow_pattern("Glob")
-            .deny_pattern("Bash")
+            .allow("Read")
+            .allow("Glob")
+            .deny("Bash")
             .build();
 
-        // 정책 검증
+        // Policy verification
         let read_result = policy.check("Read", &serde_json::Value::Null);
         assert!(read_result.is_allowed());
 
@@ -615,14 +693,14 @@ mod permission_tests {
 }
 
 // ============================================================================
-// 6. Hook System Tests - 실행 중 개입 기능 검증
+// 6. Hook System Tests - Execution interception feature verification
 // ============================================================================
 
 mod hook_tests {
     use async_trait::async_trait;
     use claude_agent::hooks::{Hook, HookContext, HookEvent, HookInput, HookManager, HookOutput};
 
-    /// Custom Hook 구현
+    /// Custom Hook implementation
     struct TestHook {
         name: String,
         events: Vec<HookEvent>,
@@ -652,10 +730,7 @@ mod hook_tests {
             input: HookInput,
             _ctx: &HookContext,
         ) -> Result<HookOutput, claude_agent::Error> {
-            // PreToolUse 이벤트에서 Bash 도구 차단 예시
-            if let Some(tool_name) = &input.tool_name
-                && tool_name == "Bash"
-            {
+            if input.tool_name() == Some("Bash") {
                 return Ok(HookOutput::block("Bash blocked by hook"));
             }
             Ok(HookOutput::allow())
@@ -697,13 +772,13 @@ mod hook_tests {
 }
 
 // ============================================================================
-// 7. Skill System Tests - 재사용 가능한 워크플로우 검증
+// 7. Skill System Tests - Reusable workflow verification
 // ============================================================================
 
 mod skill_tests {
     use claude_agent::skills::{SkillDefinition, SkillRegistry, SkillResult, SkillSourceType};
 
-    /// Skill 정의 검증
+    /// Skill definition verification
     #[test]
     fn test_skill_definition() {
         let skill =
@@ -716,7 +791,7 @@ mod skill_tests {
         assert!(!skill.matches_trigger("just commit"));
     }
 
-    /// Skill Registry 검증
+    /// Skill Registry verification
     #[test]
     fn test_skill_registry() {
         let mut registry = SkillRegistry::new();
@@ -732,7 +807,7 @@ mod skill_tests {
         assert!(registry.get("unknown").is_none());
     }
 
-    /// Skill Result 검증
+    /// Skill Result verification
     #[test]
     fn test_skill_result() {
         let success = SkillResult::success("Task completed");
@@ -746,7 +821,7 @@ mod skill_tests {
 }
 
 // ============================================================================
-// 8. Types Compatibility Tests - CLI와 타입 호환성 검증
+// 8. Types Compatibility Tests - CLI type compatibility verification
 // ============================================================================
 
 mod types_tests {
@@ -754,7 +829,7 @@ mod types_tests {
         ContentBlock, Message, Role, StopReason, ToolDefinition, ToolResultBlock, Usage,
     };
 
-    /// Message 구조 검증 (API 스펙 준수)
+    /// Message structure verification (API spec compliance)
     #[test]
     fn test_message_structure() {
         let user_msg = Message::user("Hello");
@@ -764,36 +839,36 @@ mod types_tests {
         assert!(matches!(assistant_msg.role, Role::Assistant));
     }
 
-    /// ContentBlock 유형 검증
+    /// ContentBlock type verification
     #[test]
     fn test_content_blocks() {
         let text = ContentBlock::text("Hello");
         assert!(matches!(text, ContentBlock::Text { .. }));
 
         let tool_result = ToolResultBlock::success("tool-id", "result");
-        // is_error는 Option<bool>이며, success의 경우 None
+        // is_error is Option<bool>, None for success case
         assert!(tool_result.is_error.is_none() || tool_result.is_error == Some(false));
     }
 
-    /// Tool Definition 구조
+    /// Tool Definition structure
     #[test]
     fn test_tool_definition() {
-        let def = ToolDefinition {
-            name: "Read".to_string(),
-            description: "Read files".to_string(),
-            input_schema: serde_json::json!({
+        let def = ToolDefinition::new(
+            "Read",
+            "Read files",
+            serde_json::json!({
                 "type": "object",
                 "properties": {
                     "file_path": {"type": "string"}
                 },
                 "required": ["file_path"]
             }),
-        };
+        );
 
         assert_eq!(def.name, "Read");
     }
 
-    /// Usage 토큰 계산
+    /// Usage token calculation
     #[test]
     fn test_usage_calculation() {
         let usage = Usage {
@@ -801,12 +876,13 @@ mod types_tests {
             output_tokens: 50,
             cache_creation_input_tokens: Some(10),
             cache_read_input_tokens: Some(5),
+            server_tool_use: None,
         };
 
         assert_eq!(usage.total(), 150);
     }
 
-    /// StopReason 검증
+    /// StopReason verification
     #[test]
     fn test_stop_reasons() {
         assert!(matches!(StopReason::EndTurn, StopReason::EndTurn));
@@ -816,26 +892,24 @@ mod types_tests {
 }
 
 // ============================================================================
-// 9. Error Handling Tests - 에러 처리 일관성 검증
+// 9. Error Handling Tests - Error handling consistency verification
 // ============================================================================
 
 mod error_tests {
     use claude_agent::Error;
 
-    /// 에러 타입 검증
+    /// Error type verification
     #[test]
     fn test_error_types() {
         let api_error = Error::Api {
             message: "Invalid API key".to_string(),
             status: Some(401),
+            error_type: None,
         };
         assert!(api_error.to_string().contains("Invalid API key"));
 
-        let tool_error = Error::Tool {
-            tool: "Read".to_string(),
-            message: "File not found".to_string(),
-        };
-        assert!(tool_error.to_string().contains("Read"));
+        let tool_error = Error::Tool(claude_agent::types::ToolError::not_found("/test/file.txt"));
+        assert!(tool_error.to_string().contains("not found"));
 
         let rate_limit = Error::RateLimit {
             retry_after: Some(std::time::Duration::from_secs(60)),
@@ -851,41 +925,56 @@ mod error_tests {
 }
 
 // ============================================================================
-// 10. Integration Scenario Tests - 실제 사용 시나리오 검증
+// 10. Integration Scenario Tests - Real-world usage scenario verification
 // ============================================================================
 
 mod integration_scenarios {
     use super::*;
-    use claude_agent::tools::*;
+    use claude_agent::ToolOutput;
+    use claude_agent::tools::{
+        BashTool, EditTool, ExecutionContext, GlobTool, GrepTool, ReadTool, Tool, WriteTool,
+    };
     use serde_json::json;
 
-    /// 시나리오: 파일 생성 -> 읽기 -> 편집 체인
+    fn create_test_context(temp_dir: &TempDir) -> ExecutionContext {
+        ExecutionContext::from_path(std::fs::canonicalize(temp_dir.path()).unwrap())
+            .unwrap_or_else(|_| ExecutionContext::permissive())
+    }
+
+    /// Scenario: File create -> read -> edit chain
     #[tokio::test]
     async fn test_file_workflow_scenario() {
         let temp_dir = TempDir::new().unwrap();
         let file_path = temp_dir.path().join("workflow.txt");
 
-        let write_tool = WriteTool::new(temp_dir.path().to_path_buf());
-        let read_tool = ReadTool::new(temp_dir.path().to_path_buf());
-        let edit_tool = EditTool::new(temp_dir.path().to_path_buf());
+        let write_tool = WriteTool;
+        let read_tool = ReadTool;
+        let edit_tool = EditTool;
+        let ctx = create_test_context(&temp_dir);
 
         // Step 1: Write
         let result = write_tool
-            .execute(json!({
-                "file_path": file_path.to_str().unwrap(),
-                "content": "function hello() {\n  console.log('Hello');\n}"
-            }))
+            .execute(
+                json!({
+                    "file_path": file_path.to_str().unwrap(),
+                    "content": "function hello() {\n  console.log('Hello');\n}"
+                }),
+                &ctx,
+            )
             .await;
         assert!(!result.is_error());
 
         // Step 2: Read
         let result = read_tool
-            .execute(json!({
-                "file_path": file_path.to_str().unwrap()
-            }))
+            .execute(
+                json!({
+                    "file_path": file_path.to_str().unwrap()
+                }),
+                &ctx,
+            )
             .await;
-        match result {
-            ToolResult::Success(content) => {
+        match &result.output {
+            ToolOutput::Success(content) => {
                 assert!(content.contains("function hello"));
             }
             _ => panic!("Read should succeed"),
@@ -893,11 +982,14 @@ mod integration_scenarios {
 
         // Step 3: Edit
         let result = edit_tool
-            .execute(json!({
-                "file_path": file_path.to_str().unwrap(),
-                "old_string": "Hello",
-                "new_string": "World"
-            }))
+            .execute(
+                json!({
+                    "file_path": file_path.to_str().unwrap(),
+                    "old_string": "Hello",
+                    "new_string": "World"
+                }),
+                &ctx,
+            )
             .await;
         assert!(!result.is_error());
 
@@ -906,12 +998,12 @@ mod integration_scenarios {
         assert!(content.contains("World"));
     }
 
-    /// 시나리오: 코드 검색 -> 분석 체인
+    /// Scenario: Code search -> analysis chain
     #[tokio::test]
     async fn test_code_search_scenario() {
         let temp_dir = TempDir::new().unwrap();
 
-        // 테스트 코드 파일 생성
+        // Create test code files
         std::fs::create_dir(temp_dir.path().join("src")).unwrap();
         std::fs::write(
             temp_dir.path().join("src/main.rs"),
@@ -924,19 +1016,23 @@ mod integration_scenarios {
         )
         .unwrap();
 
-        let glob_tool = GlobTool::new(temp_dir.path().to_path_buf());
-        let grep_tool = GrepTool::new(temp_dir.path().to_path_buf());
+        let glob_tool = GlobTool;
+        let grep_tool = GrepTool;
+        let ctx = create_test_context(&temp_dir);
 
         // Step 1: Find all Rust files
         let result = glob_tool
-            .execute(json!({
-                "pattern": "**/*.rs",
-                "path": temp_dir.path().to_str().unwrap()
-            }))
+            .execute(
+                json!({
+                    "pattern": "**/*.rs",
+                    "path": temp_dir.path().to_str().unwrap()
+                }),
+                &ctx,
+            )
             .await;
 
-        match result {
-            ToolResult::Success(output) => {
+        match &result.output {
+            ToolOutput::Success(output) => {
                 assert!(output.contains("main.rs"));
                 assert!(output.contains("lib.rs"));
             }
@@ -945,37 +1041,44 @@ mod integration_scenarios {
 
         // Step 2: Search for pattern
         let result = grep_tool
-            .execute(json!({
-                "pattern": "println!",
-                "path": temp_dir.path().to_str().unwrap(),
-                "output_mode": "content"
-            }))
+            .execute(
+                json!({
+                    "pattern": "println!",
+                    "path": temp_dir.path().to_str().unwrap(),
+                    "output_mode": "content"
+                }),
+                &ctx,
+            )
             .await;
 
-        match result {
-            ToolResult::Success(output) => {
+        match &result.output {
+            ToolOutput::Success(output) => {
                 assert!(output.contains("Hello"));
             }
             _ => panic!("Grep should succeed"),
         }
     }
 
-    /// 시나리오: Shell 명령 실행 (안전한 명령)
+    /// Scenario: Shell command execution (safe commands)
     #[tokio::test]
     async fn test_shell_command_scenario() {
         let temp_dir = TempDir::new().unwrap();
-        let bash_tool = BashTool::new(temp_dir.path().to_path_buf());
+        let bash_tool = BashTool::new();
+        let ctx = create_test_context(&temp_dir);
 
-        // 안전한 명령 실행
+        // Execute safe command
         let result = bash_tool
-            .execute(json!({
-                "command": "echo 'test' && pwd",
-                "description": "Test echo and pwd"
-            }))
+            .execute(
+                json!({
+                    "command": "echo 'test' && pwd",
+                    "description": "Test echo and pwd"
+                }),
+                &ctx,
+            )
             .await;
 
-        match result {
-            ToolResult::Success(output) => {
+        match &result.output {
+            ToolOutput::Success(output) => {
                 assert!(output.contains("test"));
             }
             _ => panic!("Bash should succeed"),
@@ -987,15 +1090,15 @@ mod integration_scenarios {
 // 11. Feature Parity Checklist
 // ============================================================================
 
-/// CLI와 SDK 기능 대응표 검증
+/// CLI and SDK feature parity verification
 #[test]
 fn test_feature_parity_checklist() {
-    // 이 테스트는 기능 체크리스트를 문서화합니다
+    // This test documents the feature checklist
     let checklist = vec![
-        // 기본 API
+        // Basic API
         ("query()", true, "Simple query"),
         ("stream()", true, "Streaming query"),
-        // 도구
+        // Tools
         ("Read", true, "File reading with offset/limit"),
         ("Write", true, "File writing with directory creation"),
         ("Edit", true, "String replacement with replace_all"),
@@ -1004,9 +1107,9 @@ fn test_feature_parity_checklist() {
         ("Bash", true, "Shell execution with timeout"),
         ("TodoWrite", true, "Task tracking"),
         ("WebFetch", true, "Web fetch"),
-        ("NotebookEdit", true, "Jupyter notebook editing"),
+        ("Plan", true, "Plan mode management"),
         ("KillShell", true, "Kill background shell"),
-        // 에이전트
+        // Agent
         ("Agent Loop", true, "Multi-turn with tools"),
         (
             "Streaming Events",
@@ -1014,13 +1117,13 @@ fn test_feature_parity_checklist() {
             "Text, ToolStart, ToolEnd, Complete",
         ),
         ("Context Management", true, "Token tracking, compaction"),
-        // 세션
+        // Session
         ("Session Management", true, "Create, restore, branch"),
         ("Context Compaction", true, "Automatic summarization"),
-        // 보안
+        // Security
         ("Permission System", true, "Tool/path allow/deny"),
         ("Hook System", true, "Execution interception"),
-        // 확장
+        // Extension
         ("Custom Tools", true, "Tool trait implementation"),
         ("Skill System", true, "Reusable workflows"),
         ("MCP Support", true, "External server integration"),
@@ -1052,7 +1155,7 @@ mod mcp_tests {
     };
     use std::collections::HashMap;
 
-    /// MCP Server Config 검증
+    /// MCP Server Config verification
     #[test]
     fn test_mcp_server_config() {
         // Stdio transport
@@ -1066,15 +1169,6 @@ mod mcp_tests {
         assert!(json.contains("stdio"));
         assert!(json.contains("npx"));
 
-        // HTTP transport
-        let http_config = McpServerConfig::Http {
-            url: "https://api.example.com".to_string(),
-            headers: HashMap::new(),
-        };
-
-        let json = serde_json::to_string(&http_config).unwrap();
-        assert!(json.contains("http"));
-
         // SSE transport
         let sse_config = McpServerConfig::Sse {
             url: "https://sse.example.com".to_string(),
@@ -1085,7 +1179,7 @@ mod mcp_tests {
         assert!(json.contains("sse"));
     }
 
-    /// MCP Server State 검증
+    /// MCP Server State verification
     #[test]
     fn test_mcp_server_state() {
         let state = McpServerState::new(
@@ -1102,7 +1196,7 @@ mod mcp_tests {
         assert!(!state.is_connected());
     }
 
-    /// MCP Content 타입 검증
+    /// MCP Content type verification
     #[test]
     fn test_mcp_content_types() {
         let text_content = McpContent::Text {
@@ -1117,7 +1211,7 @@ mod mcp_tests {
         assert_eq!(image_content.as_text(), None);
     }
 
-    /// MCP Tool Result 검증
+    /// MCP Tool Result verification
     #[test]
     fn test_mcp_tool_result() {
         let result = McpToolResult {
@@ -1143,33 +1237,25 @@ mod mcp_tests {
 
 mod auth_tests {
     use claude_agent::auth::{
-        AuthStrategy, ChainProvider, Credential, CredentialProvider, EnvironmentProvider,
-        ExplicitProvider,
+        ChainProvider, Credential, CredentialProvider, EnvironmentProvider, ExplicitProvider,
     };
 
-    /// API Key Credential 테스트
+    /// API Key Credential test
     #[test]
     fn test_api_key_credential() {
         let cred = Credential::api_key("sk-ant-api-test");
         assert!(!cred.is_expired());
         assert!(!cred.needs_refresh());
         assert_eq!(cred.credential_type(), "api_key");
-
-        // Strategy 패턴으로 헤더 검증
-        use claude_agent::ApiKeyStrategy;
-        let strategy = ApiKeyStrategy::new("sk-ant-api-test");
-        let (header, value) = strategy.auth_header();
-        assert_eq!(header, "x-api-key");
-        assert_eq!(value, "sk-ant-api-test");
     }
 
-    /// OAuth Credential 테스트
+    /// OAuth Credential test
     #[test]
     fn test_oauth_credential() {
         let cred = Credential::oauth("sk-ant-oat01-test");
         assert_eq!(cred.credential_type(), "oauth");
 
-        // OAuth credential의 access_token 확인
+        // Verify OAuth credential's access_token
         match cred {
             Credential::OAuth(oauth) => {
                 assert_eq!(oauth.access_token, "sk-ant-oat01-test");
@@ -1178,7 +1264,7 @@ mod auth_tests {
         }
     }
 
-    /// ExplicitProvider 테스트
+    /// ExplicitProvider test
     #[tokio::test]
     async fn test_explicit_provider() {
         let provider = ExplicitProvider::api_key("test-key");
@@ -1188,7 +1274,7 @@ mod auth_tests {
         assert!(matches!(cred, Credential::ApiKey(k) if k == "test-key"));
     }
 
-    /// EnvironmentProvider 테스트
+    /// EnvironmentProvider test
     #[tokio::test]
     async fn test_environment_provider() {
         unsafe { std::env::set_var("TEST_AUTH_KEY", "env-test-key") };
@@ -1200,7 +1286,7 @@ mod auth_tests {
         unsafe { std::env::remove_var("TEST_AUTH_KEY") };
     }
 
-    /// ChainProvider 테스트
+    /// ChainProvider test
     #[tokio::test]
     async fn test_chain_provider() {
         let chain = ChainProvider::new(vec![]).with(ExplicitProvider::api_key("chain-key"));
@@ -1219,39 +1305,39 @@ mod context_tests {
     use claude_agent::context::StaticContext;
     use claude_agent::types::SystemBlock;
 
-    /// Static Context 검증
+    /// Static Context verification
     #[test]
     fn test_static_context() {
-        let context = StaticContext {
-            system_prompt: "You are a helpful assistant.".to_string(),
-            claude_md: "# Project".to_string(),
-            skill_index_summary: "Available skills: commit, review".to_string(),
-            tool_definitions: vec![],
-            mcp_tool_metadata: vec![],
-        };
+        let context = StaticContext::new()
+            .with_system_prompt("You are a helpful assistant.")
+            .with_claude_md("# Project")
+            .with_skill_summary("Available skills: commit, review");
 
         assert!(!context.system_prompt.is_empty());
         assert!(!context.claude_md.is_empty());
     }
 
-    /// System Block 검증
+    /// System Block verification
     #[test]
     fn test_system_block() {
+        use claude_agent::types::CacheType;
         let cached = SystemBlock::cached("Cached content");
         assert!(cached.cache_control.is_some());
-        assert_eq!(cached.cache_control.unwrap().cache_type, "ephemeral");
+        assert_eq!(
+            cached.cache_control.unwrap().cache_type,
+            CacheType::Ephemeral
+        );
         assert_eq!(cached.block_type, "text");
 
         let uncached = SystemBlock::uncached("Uncached content");
         assert!(uncached.cache_control.is_none());
     }
 
-    /// Cache Control 타입 검증
+    /// Cache Control type verification
     #[test]
     fn test_cache_control() {
-        use claude_agent::types::CacheControl;
+        use claude_agent::types::{CacheControl, CacheType};
         let ephemeral = CacheControl::ephemeral();
-        // Ephemeral은 5분 TTL 캐싱
-        assert_eq!(ephemeral.cache_type, "ephemeral");
+        assert_eq!(ephemeral.cache_type, CacheType::Ephemeral);
     }
 }

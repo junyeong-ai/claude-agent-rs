@@ -4,10 +4,8 @@
 //! Run: cargo test --test comprehensive_live_verification -- --ignored --nocapture
 
 use claude_agent::{
-    Agent, Client, ToolAccess,
-    auth::{AuthStrategy, BedrockStrategy, FoundryStrategy, VertexStrategy},
-    client::{ClientBuilder, CloudProvider},
-    config::SettingsLoader,
+    Agent, Auth, Client, ToolAccess,
+    client::CloudProvider,
     context::{ContextBuilder, MemoryLoader},
     skills::{CommandLoader, SkillDefinition, SkillExecutor, SkillRegistry},
 };
@@ -29,13 +27,12 @@ async fn test_1_cli_oauth_authentication() {
     let start = Instant::now();
 
     let client = Client::builder()
-        .from_claude_cli()
+        .auth(Auth::ClaudeCli)
+        .await
+        .expect("Failed to load CLI credentials")
         .build()
+        .await
         .expect("Failed to build client with CLI auth");
-
-    let auth_name = client.config().auth_strategy.name();
-    println!("Auth strategy: {}", auth_name);
-    assert_eq!(auth_name, "oauth", "Should use OAuth strategy");
 
     // Test actual API call
     let response = client
@@ -47,97 +44,27 @@ async fn test_1_cli_oauth_authentication() {
     assert!(response.contains("AUTH_OK"), "Should get valid response");
 
     println!(
-        "✅ CLI OAuth authentication: PASSED ({} ms)",
+        "CLI OAuth authentication: PASSED ({} ms)",
         start.elapsed().as_millis()
     );
 }
 
-#[tokio::test]
-#[ignore = "Live test"]
-async fn test_2_bedrock_strategy_structure() {
+#[test]
+fn test_2_cloud_provider_enum() {
     println!("\n{}", "=".repeat(60));
-    println!("TEST 2: AWS Bedrock Strategy Structure");
+    println!("TEST 2: Cloud Provider Enum");
     println!("{}", "=".repeat(60));
 
-    let start = Instant::now();
+    // Test provider enum
+    assert_eq!(CloudProvider::default(), CloudProvider::Anthropic);
 
-    // Test strategy creation
-    let strategy =
-        BedrockStrategy::new("us-west-2").with_base_url("https://bedrock-gateway.example.com");
+    println!("Cloud providers available:");
+    println!("  - Anthropic (default)");
+    println!("  - Bedrock (AWS)");
+    println!("  - Vertex (GCP)");
+    println!("  - Foundry (Azure)");
 
-    println!("Region: {}", strategy.region());
-    println!("Base URL: {}", strategy.get_base_url());
-    println!("Auth header: {:?}", strategy.auth_header());
-    println!("Strategy name: {}", strategy.name());
-
-    assert_eq!(strategy.region(), "us-west-2");
-    assert_eq!(strategy.name(), "bedrock");
-    assert!(strategy.get_base_url().contains("bedrock-gateway"));
-
-    // Test skip auth mode (for LLM gateways)
-    let gateway_strategy = BedrockStrategy::new("us-east-1").skip_auth();
-    println!("Skip auth mode: {:?}", gateway_strategy);
-
-    println!(
-        "✅ Bedrock strategy: PASSED ({} ms)",
-        start.elapsed().as_millis()
-    );
-}
-
-#[tokio::test]
-#[ignore = "Live test"]
-async fn test_3_vertex_strategy_structure() {
-    println!("\n{}", "=".repeat(60));
-    println!("TEST 3: Google Vertex AI Strategy Structure");
-    println!("{}", "=".repeat(60));
-
-    let start = Instant::now();
-
-    let strategy = VertexStrategy::new("my-project", "us-central1");
-
-    println!("Project: {}", strategy.project_id());
-    println!("Region: {}", strategy.region());
-    println!("Base URL: {}", strategy.get_base_url());
-    println!("Strategy name: {}", strategy.name());
-
-    assert_eq!(strategy.project_id(), "my-project");
-    assert_eq!(strategy.region(), "us-central1");
-    assert_eq!(strategy.name(), "vertex");
-
-    println!(
-        "✅ Vertex AI strategy: PASSED ({} ms)",
-        start.elapsed().as_millis()
-    );
-}
-
-#[tokio::test]
-#[ignore = "Live test"]
-async fn test_4_foundry_strategy_structure() {
-    println!("\n{}", "=".repeat(60));
-    println!("TEST 4: Microsoft Azure AI Foundry Strategy Structure");
-    println!("{}", "=".repeat(60));
-
-    let start = Instant::now();
-
-    let strategy = FoundryStrategy::new("my-resource")
-        .with_deployment("claude-deployment")
-        .with_api_key("test-key")
-        .with_api_version("2024-06-01");
-
-    println!("Resource: {}", strategy.resource_name());
-    println!("Deployment: {:?}", strategy.deployment_name());
-    println!("Base URL: {}", strategy.get_base_url());
-    println!("Query string: {:?}", strategy.url_query_string());
-    println!("Strategy name: {}", strategy.name());
-
-    assert_eq!(strategy.resource_name(), "my-resource");
-    assert_eq!(strategy.deployment_name(), Some("claude-deployment"));
-    assert_eq!(strategy.name(), "foundry");
-
-    println!(
-        "✅ Foundry strategy: PASSED ({} ms)",
-        start.elapsed().as_millis()
-    );
+    println!("Cloud provider enum: PASSED");
 }
 
 // =============================================================================
@@ -146,9 +73,9 @@ async fn test_4_foundry_strategy_structure() {
 
 #[tokio::test]
 #[ignore = "Live test"]
-async fn test_5_claude_md_recursive_loading() {
+async fn test_3_claude_md_recursive_loading() {
     println!("\n{}", "=".repeat(60));
-    println!("TEST 5: CLAUDE.md Recursive Loading");
+    println!("TEST 3: CLAUDE.md Recursive Loading");
     println!("{}", "=".repeat(60));
 
     let start = Instant::now();
@@ -206,9 +133,9 @@ async fn test_5_claude_md_recursive_loading() {
 
     println!("CLAUDE.md files: {}", content.claude_md.len());
     println!("Local files: {}", content.local_md.len());
-    println!("Rules: {}", content.rules.len());
+    println!("Rules: {}", content.rule_indices.len());
 
-    let combined = content.combined();
+    let combined = content.combined_claude_md();
     println!(
         "\nCombined content preview:\n{}",
         &combined[..combined.len().min(500)]
@@ -227,19 +154,19 @@ async fn test_5_claude_md_recursive_loading() {
         "Should load CLAUDE.local.md"
     );
     assert!(combined.contains("Rust Rules"), "Should load rules");
-    assert_eq!(content.rules.len(), 2, "Should load 2 rules");
+    assert_eq!(content.rule_indices.len(), 2, "Should load 2 rules");
 
     println!(
-        "\n✅ CLAUDE.md recursive loading: PASSED ({} ms)",
+        "\nCLAUDE.md recursive loading: PASSED ({} ms)",
         start.elapsed().as_millis()
     );
 }
 
 #[tokio::test]
 #[ignore = "Live test"]
-async fn test_6_import_syntax_with_home_expansion() {
+async fn test_4_import_syntax_with_home_expansion() {
     println!("\n{}", "=".repeat(60));
-    println!("TEST 6: @import Syntax with Home Directory Expansion");
+    println!("TEST 4: @import Syntax with Home Directory Expansion");
     println!("{}", "=".repeat(60));
 
     let start = Instant::now();
@@ -269,7 +196,7 @@ End of file"#,
 
     let mut loader = MemoryLoader::new();
     let content = loader.load_all(dir.path()).await.unwrap();
-    let combined = content.combined();
+    let combined = content.combined_claude_md();
 
     println!("Content:\n{}", combined);
 
@@ -280,7 +207,7 @@ End of file"#,
     assert!(combined.contains("@@escaped"), "Should preserve escaped @@");
 
     println!(
-        "\n✅ Import syntax: PASSED ({} ms)",
+        "\nImport syntax: PASSED ({} ms)",
         start.elapsed().as_millis()
     );
 }
@@ -291,9 +218,9 @@ End of file"#,
 
 #[tokio::test]
 #[ignore = "Live test"]
-async fn test_7_skill_registration_and_execution() {
+async fn test_5_skill_registration_and_execution() {
     println!("\n{}", "=".repeat(60));
-    println!("TEST 7: Skill Registration and Execution");
+    println!("TEST 5: Skill Registration and Execution");
     println!("{}", "=".repeat(60));
 
     let start = Instant::now();
@@ -344,23 +271,25 @@ async fn test_7_skill_registration_and_execution() {
     assert_eq!(skills.len(), 3);
 
     println!(
-        "\n✅ Skill registration: PASSED ({} ms)",
+        "\nSkill registration: PASSED ({} ms)",
         start.elapsed().as_millis()
     );
 }
 
 #[tokio::test]
 #[ignore = "Live test"]
-async fn test_8_progressive_disclosure_with_agent() {
+async fn test_6_progressive_disclosure_with_agent() {
     println!("\n{}", "=".repeat(60));
-    println!("TEST 8: Progressive Disclosure with Live Agent");
+    println!("TEST 6: Progressive Disclosure with Live Agent");
     println!("{}", "=".repeat(60));
 
     let start = Instant::now();
 
     // Create agent with custom skills
     let agent = Agent::builder()
-        .from_claude_cli()
+        .auth(Auth::ClaudeCli)
+        .await
+        .expect("Failed to load CLI credentials")
         .skill(SkillDefinition::new(
             "calculator",
             "Perform calculations",
@@ -390,7 +319,7 @@ async fn test_8_progressive_disclosure_with_agent() {
     );
 
     println!(
-        "\n✅ Progressive disclosure: PASSED ({} ms, {} iterations, {} tokens)",
+        "\nProgressive disclosure: PASSED ({} ms, {} iterations, {} tokens)",
         start.elapsed().as_millis(),
         result.iterations,
         result.total_tokens()
@@ -403,9 +332,9 @@ async fn test_8_progressive_disclosure_with_agent() {
 
 #[tokio::test]
 #[ignore = "Live test"]
-async fn test_9_slash_commands_loading() {
+async fn test_7_slash_commands_loading() {
     println!("\n{}", "=".repeat(60));
-    println!("TEST 9: Slash Commands (.claude/commands/)");
+    println!("TEST 7: Slash Commands (.claude/commands/)");
     println!("{}", "=".repeat(60));
 
     let start = Instant::now();
@@ -463,109 +392,20 @@ Deploy to $ARGUMENTS environment:
     assert!(executed.contains("production"));
 
     println!(
-        "\n✅ Slash commands: PASSED ({} ms)",
+        "\nSlash commands: PASSED ({} ms)",
         start.elapsed().as_millis()
     );
 }
 
 // =============================================================================
-// Part 5: Settings System
+// Part 5: Context Builder Integration
 // =============================================================================
 
 #[tokio::test]
 #[ignore = "Live test"]
-async fn test_10_settings_loading() {
+async fn test_8_context_builder_integration() {
     println!("\n{}", "=".repeat(60));
-    println!("TEST 10: Settings System (settings.json, settings.local.json)");
-    println!("{}", "=".repeat(60));
-
-    let start = Instant::now();
-    let dir = tempdir().unwrap();
-
-    let claude_dir = dir.path().join(".claude");
-    fs::create_dir_all(&claude_dir).await.unwrap();
-
-    // Create settings.json
-    fs::write(
-        claude_dir.join("settings.json"),
-        r#"{
-            "env": {
-                "PROJECT_NAME": "test-project",
-                "LOG_LEVEL": "info"
-            },
-            "permissions": {
-                "deny": ["Read(./.env)", "Read(./secrets/**)"],
-                "allow": ["Read(./.env.example)"]
-            }
-        }"#,
-    )
-    .await
-    .unwrap();
-
-    // Create settings.local.json (overrides)
-    fs::write(
-        claude_dir.join("settings.local.json"),
-        r#"{
-            "env": {
-                "LOG_LEVEL": "debug",
-                "LOCAL_ONLY": "true"
-            }
-        }"#,
-    )
-    .await
-    .unwrap();
-
-    // Load settings
-    let mut loader = SettingsLoader::new();
-    let settings = loader.load(dir.path()).await.unwrap();
-
-    println!("Environment variables:");
-    for (k, v) in &settings.env {
-        println!("  {}: {}", k, v);
-    }
-
-    println!("\nPermission deny patterns:");
-    for pattern in &settings.permissions.deny {
-        println!("  - {}", pattern);
-    }
-
-    // Verify settings
-    assert_eq!(
-        settings.env.get("PROJECT_NAME"),
-        Some(&"test-project".to_string())
-    );
-    assert_eq!(settings.env.get("LOG_LEVEL"), Some(&"debug".to_string())); // Overridden
-    assert_eq!(settings.env.get("LOCAL_ONLY"), Some(&"true".to_string()));
-    assert!(
-        settings
-            .permissions
-            .deny
-            .contains(&"Read(./.env)".to_string())
-    );
-
-    // Test permission checking - patterns are stored, checking logic may vary
-    println!("\nPermission check test:");
-    println!("  is_denied('.env'): {}", loader.is_denied(".env"));
-    println!(
-        "  is_denied('README.md'): {}",
-        loader.is_denied("README.md")
-    );
-
-    println!(
-        "\n✅ Settings system: PASSED ({} ms)",
-        start.elapsed().as_millis()
-    );
-}
-
-// =============================================================================
-// Part 6: Context Builder Integration
-// =============================================================================
-
-#[tokio::test]
-#[ignore = "Live test"]
-async fn test_11_context_builder_integration() {
-    println!("\n{}", "=".repeat(60));
-    println!("TEST 11: Context Builder with All Sources");
+    println!("TEST 8: Context Builder with All Sources");
     println!("{}", "=".repeat(60));
 
     let start = Instant::now();
@@ -597,9 +437,9 @@ async fn test_11_context_builder_integration() {
 
     // Build context
     let context = ContextBuilder::new()
-        .load_memory_recursive(dir.path())
+        .load_from_directory(dir.path())
         .await
-        .build_sync()
+        .build()
         .unwrap();
 
     let static_ctx = context.static_context();
@@ -615,20 +455,20 @@ async fn test_11_context_builder_integration() {
     assert!(static_ctx.claude_md.contains("Coding Standards"));
 
     println!(
-        "\n✅ Context builder: PASSED ({} ms)",
+        "\nContext builder: PASSED ({} ms)",
         start.elapsed().as_millis()
     );
 }
 
 // =============================================================================
-// Part 7: Full Agent Integration
+// Part 6: Full Agent Integration
 // =============================================================================
 
 #[tokio::test]
 #[ignore = "Live test"]
-async fn test_12_full_agent_with_tools_and_skills() {
+async fn test_9_full_agent_with_tools_and_skills() {
     println!("\n{}", "=".repeat(60));
-    println!("TEST 12: Full Agent with Tools and Skills");
+    println!("TEST 9: Full Agent with Tools and Skills");
     println!("{}", "=".repeat(60));
 
     let start = Instant::now();
@@ -644,7 +484,9 @@ async fn test_12_full_agent_with_tools_and_skills() {
 
     // Create agent with skills and file tools
     let agent = Agent::builder()
-        .from_claude_cli()
+        .auth(Auth::ClaudeCli)
+        .await
+        .expect("Failed to load CLI credentials")
         .skill(SkillDefinition::new(
             "json-analyzer",
             "Analyze JSON data",
@@ -672,22 +514,24 @@ async fn test_12_full_agent_with_tools_and_skills() {
     assert!(result.text().contains("42") || result.text().contains("users"));
 
     println!(
-        "\n✅ Full agent integration: PASSED ({} ms)",
+        "\nFull agent integration: PASSED ({} ms)",
         start.elapsed().as_millis()
     );
 }
 
 #[tokio::test]
 #[ignore = "Live test"]
-async fn test_13_agent_with_bash_tool() {
+async fn test_10_agent_with_bash_tool() {
     println!("\n{}", "=".repeat(60));
-    println!("TEST 13: Agent with Bash Tool Execution");
+    println!("TEST 10: Agent with Bash Tool Execution");
     println!("{}", "=".repeat(60));
 
     let start = Instant::now();
 
     let agent = Agent::builder()
-        .from_claude_cli()
+        .auth(Auth::ClaudeCli)
+        .await
+        .expect("Failed to load CLI credentials")
         .tools(ToolAccess::only(["Bash"]))
         .max_iterations(3)
         .build()
@@ -702,72 +546,42 @@ async fn test_13_agent_with_bash_tool() {
     println!("Result:\n{}", result.text());
     assert!(result.text().contains("Hello") || result.text().contains("Bash"));
 
-    println!(
-        "\n✅ Bash tool: PASSED ({} ms)",
-        start.elapsed().as_millis()
-    );
+    println!("\nBash tool: PASSED ({} ms)", start.elapsed().as_millis());
 }
 
 // =============================================================================
-// Part 8: Cloud Provider Configuration
+// Part 7: Model Configuration
 // =============================================================================
 
 #[tokio::test]
 #[ignore = "Live test"]
-async fn test_14_cloud_provider_selection() {
+async fn test_11_model_configuration() {
     println!("\n{}", "=".repeat(60));
-    println!("TEST 14: Cloud Provider Selection");
+    println!("TEST 11: Model Configuration (main + small)");
     println!("{}", "=".repeat(60));
 
     let start = Instant::now();
 
-    // Test provider enum
-    assert_eq!(CloudProvider::default(), CloudProvider::Anthropic);
-    assert_ne!(CloudProvider::Bedrock, CloudProvider::Vertex);
-    assert_ne!(CloudProvider::Foundry, CloudProvider::Anthropic);
-
-    // Test builder methods exist
-    let _builder1 = ClientBuilder::default().bedrock("us-east-1");
-    let _builder2 = ClientBuilder::default().vertex("project", "region");
-    let _builder3 = ClientBuilder::default().foundry("resource");
-
-    println!("Cloud providers available:");
-    println!("  - Anthropic (default)");
-    println!("  - Bedrock (AWS)");
-    println!("  - Vertex (GCP)");
-    println!("  - Foundry (Azure)");
-
-    println!(
-        "\n✅ Cloud provider selection: PASSED ({} ms)",
-        start.elapsed().as_millis()
-    );
-}
-
-#[tokio::test]
-#[ignore = "Live test"]
-async fn test_15_model_configuration() {
-    println!("\n{}", "=".repeat(60));
-    println!("TEST 15: Model Configuration (main + small)");
-    println!("{}", "=".repeat(60));
-
-    let start = Instant::now();
-
-    // Test with explicit model configuration
-    let client = Client::builder()
-        .from_claude_cli()
+    // Test with explicit model configuration using Agent builder (has from_claude_code)
+    let agent = Agent::builder()
+        .auth(Auth::ClaudeCli)
+        .await
+        .expect("Failed to load CLI credentials")
         .model("claude-sonnet-4-5-20250929")
-        .small_model("claude-haiku-4-5-20251001")
+        .small_model("claude-3-5-haiku-20241022")
+        .tools(ToolAccess::none())
+        .max_iterations(1)
         .build()
-        .expect("Failed to build client");
+        .await
+        .expect("Failed to build agent");
 
-    println!("Main model: {}", client.config().model);
-    println!("Small model: {}", client.config().small_model);
-
-    assert!(client.config().model.contains("sonnet"));
-    assert!(client.config().small_model.contains("haiku"));
+    // Make a test query
+    let result = agent.execute("Say OK").await.expect("Query failed");
+    println!("Response: {}", result.text());
+    assert!(!result.text().is_empty());
 
     println!(
-        "\n✅ Model configuration: PASSED ({} ms)",
+        "\nModel configuration: PASSED ({} ms)",
         start.elapsed().as_millis()
     );
 }
@@ -780,47 +594,40 @@ async fn test_15_model_configuration() {
 #[ignore = "Live test"]
 async fn test_99_comprehensive_summary() {
     println!("\n");
-    println!("╔══════════════════════════════════════════════════════════════════════╗");
-    println!("║            COMPREHENSIVE LIVE VERIFICATION SUMMARY                   ║");
-    println!("╠══════════════════════════════════════════════════════════════════════╣");
-    println!("║                                                                      ║");
-    println!("║  Authentication:                                                     ║");
-    println!("║    ✓ CLI OAuth authentication                                        ║");
-    println!("║    ✓ Bedrock strategy structure                                      ║");
-    println!("║    ✓ Vertex AI strategy structure                                    ║");
-    println!("║    ✓ Foundry (Azure) strategy structure                              ║");
-    println!("║                                                                      ║");
-    println!("║  Memory System:                                                      ║");
-    println!("║    ✓ CLAUDE.md recursive loading                                     ║");
-    println!("║    ✓ CLAUDE.local.md support                                         ║");
-    println!("║    ✓ @import syntax with home directory expansion                    ║");
-    println!("║    ✓ .claude/rules/ directory loading                                ║");
-    println!("║                                                                      ║");
-    println!("║  Skills & Progressive Disclosure:                                    ║");
-    println!("║    ✓ Skill registration and execution                                ║");
-    println!("║    ✓ Trigger-based skill activation                                  ║");
-    println!("║    ✓ Progressive disclosure with live agent                          ║");
-    println!("║    ✓ $ARGUMENTS substitution                                         ║");
-    println!("║                                                                      ║");
-    println!("║  Slash Commands:                                                     ║");
-    println!("║    ✓ .claude/commands/ loading                                       ║");
-    println!("║    ✓ Nested namespace support (aws:lambda)                           ║");
-    println!("║    ✓ Frontmatter metadata parsing                                    ║");
-    println!("║                                                                      ║");
-    println!("║  Settings:                                                           ║");
-    println!("║    ✓ settings.json loading                                           ║");
-    println!("║    ✓ settings.local.json override                                    ║");
-    println!("║    ✓ permissions.deny patterns                                       ║");
-    println!("║                                                                      ║");
-    println!("║  Agent Integration:                                                  ║");
-    println!("║    ✓ Full agent with tools and skills                                ║");
-    println!("║    ✓ Bash tool execution                                             ║");
-    println!("║    ✓ File operations (Read)                                          ║");
-    println!("║                                                                      ║");
-    println!("║  Cloud Providers:                                                    ║");
-    println!("║    ✓ Provider selection (Anthropic, Bedrock, Vertex, Foundry)        ║");
-    println!("║    ✓ Model configuration (main + small)                              ║");
-    println!("║                                                                      ║");
-    println!("╚══════════════════════════════════════════════════════════════════════╝");
+    println!("========================================================================");
+    println!("            COMPREHENSIVE LIVE VERIFICATION SUMMARY");
+    println!("========================================================================");
+    println!();
+    println!("  Authentication:");
+    println!("    - CLI OAuth authentication");
+    println!("    - Cloud provider selection");
+    println!();
+    println!("  Memory System:");
+    println!("    - CLAUDE.md recursive loading");
+    println!("    - CLAUDE.local.md support");
+    println!("    - @import syntax with home directory expansion");
+    println!("    - .claude/rules/ directory loading");
+    println!();
+    println!("  Skills & Progressive Disclosure:");
+    println!("    - Skill registration and execution");
+    println!("    - Trigger-based skill activation");
+    println!("    - Progressive disclosure with live agent");
+    println!("    - $ARGUMENTS substitution");
+    println!();
+    println!("  Slash Commands:");
+    println!("    - .claude/commands/ loading");
+    println!("    - Nested namespace support (aws:lambda)");
+    println!("    - Frontmatter metadata parsing");
+    println!();
+    println!("  Agent Integration:");
+    println!("    - Full agent with tools and skills");
+    println!("    - Bash tool execution");
+    println!("    - File operations (Read)");
+    println!();
+    println!("  Cloud Providers:");
+    println!("    - Provider selection (Anthropic, Bedrock, Vertex, Foundry)");
+    println!("    - Model configuration (main + small)");
+    println!();
+    println!("========================================================================");
     println!();
 }

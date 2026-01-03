@@ -5,11 +5,11 @@
 //! Run: cargo test --test progressive_disclosure_test -- --nocapture
 
 use claude_agent::{
-    Agent, ToolAccess,
+    Agent, Auth, ToolAccess, ToolOutput,
     skills::{
         CommandLoader, ExecutionMode, SkillDefinition, SkillExecutor, SkillRegistry, SkillTool,
     },
-    tools::{Tool, ToolRegistry, ToolResult},
+    tools::{ExecutionContext, Tool, ToolRegistry},
 };
 use tempfile::tempdir;
 use tokio::fs;
@@ -23,7 +23,7 @@ mod skill_tool_tests {
 
     #[tokio::test]
     async fn test_skill_tool_in_default_registry() {
-        let registry = ToolRegistry::default_tools(&ToolAccess::All, None);
+        let registry = ToolRegistry::default_tools(&ToolAccess::All, None, None);
 
         // Skill tool should be in the default registry
         assert!(
@@ -55,17 +55,21 @@ Execute the user's request: $ARGUMENTS
 
         let executor = SkillExecutor::new(skill_registry);
         let skill_tool = SkillTool::new(executor);
+        let ctx = ExecutionContext::permissive();
 
         // Execute the skill
         let result = skill_tool
-            .execute(serde_json::json!({
-                "skill": "atlassian-cli",
-                "args": "list issues in PROJECT-123"
-            }))
+            .execute(
+                serde_json::json!({
+                    "skill": "atlassian-cli",
+                    "args": "list issues in PROJECT-123"
+                }),
+                &ctx,
+            )
             .await;
 
         assert!(!result.is_error());
-        if let ToolResult::Success(content) = result {
+        if let ToolOutput::Success(content) = &result.output {
             println!("Skill output:\n{}", content);
             assert!(content.contains("atlassian"));
             assert!(content.contains("list issues in PROJECT-123"));
@@ -294,7 +298,9 @@ mod live_agent_tests {
     async fn test_agent_with_custom_skill() {
         // Create agent with custom skill registered via builder
         let agent = Agent::builder()
-            .from_claude_cli()
+            .auth(Auth::ClaudeCli)
+            .await
+            .expect("Failed to load CLI credentials")
             .skill(SkillDefinition::new(
                 "math-helper",
                 "Perform mathematical calculations",
@@ -323,7 +329,9 @@ mod live_agent_tests {
     async fn test_agent_with_atlassian_skill() {
         // Simulate atlassian-cli skill
         let agent = Agent::builder()
-            .from_claude_cli()
+            .auth(Auth::ClaudeCli)
+            .await
+            .expect("Failed to load CLI credentials")
             .skill(
                 SkillDefinition::new(
                     "jira",
@@ -365,7 +373,9 @@ Execute the simulated Jira command.
 
         // Agent with multiple skills - only relevant one should be used
         let agent = Agent::builder()
-            .from_claude_cli()
+            .auth(Auth::ClaudeCli)
+            .await
+            .expect("Failed to load CLI credentials")
             .skill(SkillDefinition::new(
                 "file-analyzer",
                 "Analyze file contents",

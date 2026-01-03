@@ -1,5 +1,7 @@
 //! Session and message identifiers.
 
+use std::str::FromStr;
+
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
@@ -37,6 +39,14 @@ impl std::fmt::Display for SessionId {
     }
 }
 
+impl FromStr for SessionId {
+    type Err = uuid::Error;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        Uuid::parse_str(s).map(Self)
+    }
+}
+
 impl From<Uuid> for SessionId {
     fn from(uuid: Uuid) -> Self {
         Self(uuid)
@@ -56,6 +66,7 @@ impl From<String> for SessionId {
 }
 
 #[derive(Clone, Debug, Hash, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(transparent)]
 pub struct MessageId(pub String);
 
 impl MessageId {
@@ -71,6 +82,20 @@ impl MessageId {
 impl Default for MessageId {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+impl std::fmt::Display for MessageId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
+impl FromStr for MessageId {
+    type Err = std::convert::Infallible;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        Ok(Self(s.to_string()))
     }
 }
 

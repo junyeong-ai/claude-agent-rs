@@ -1,31 +1,93 @@
 //! Session-related types for persistence and tracking.
 
+use std::path::{Path, PathBuf};
+
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use super::state::SessionId;
+use super::state::{MessageId, SessionId};
 
-/// Tool execution record for tracking all tool invocations.
+/// Environment context for coding-mode sessions.
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct EnvironmentContext {
+    pub cwd: Option<PathBuf>,
+    pub git_branch: Option<String>,
+    pub git_commit: Option<String>,
+    pub platform: Option<String>,
+    pub sdk_version: Option<String>,
+}
+
+impl EnvironmentContext {
+    pub fn capture(working_dir: Option<&Path>) -> Self {
+        let (git_branch, git_commit) = working_dir.map(Self::git_info).unwrap_or_default();
+
+        Self {
+            cwd: working_dir.map(|p| p.to_path_buf()),
+            git_branch,
+            git_commit,
+            platform: Some(current_platform().to_string()),
+            sdk_version: Some(env!("CARGO_PKG_VERSION").to_string()),
+        }
+    }
+
+    fn git_info(dir: &Path) -> (Option<String>, Option<String>) {
+        let branch = std::process::Command::new("git")
+            .args(["rev-parse", "--abbrev-ref", "HEAD"])
+            .current_dir(dir)
+            .output()
+            .ok()
+            .filter(|o| o.status.success())
+            .and_then(|o| String::from_utf8(o.stdout).ok())
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty());
+
+        let commit = std::process::Command::new("git")
+            .args(["rev-parse", "--short", "HEAD"])
+            .current_dir(dir)
+            .output()
+            .ok()
+            .filter(|o| o.status.success())
+            .and_then(|o| String::from_utf8(o.stdout).ok())
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty());
+
+        (branch, commit)
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.cwd.is_none() && self.git_branch.is_none()
+    }
+}
+
+fn current_platform() -> &'static str {
+    if cfg!(target_os = "macos") {
+        "darwin"
+    } else if cfg!(target_os = "linux") {
+        "linux"
+    } else if cfg!(target_os = "windows") {
+        "windows"
+    } else {
+        "unknown"
+    }
+}
+
+/// Tool execution record.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ToolExecution {
     pub id: Uuid,
     pub session_id: SessionId,
     pub message_id: Option<String>,
-
     pub tool_name: String,
     pub tool_input: serde_json::Value,
     pub tool_output: String,
     pub is_error: bool,
     pub error_message: Option<String>,
-
     pub duration_ms: u64,
     pub input_tokens: Option<u32>,
     pub output_tokens: Option<u32>,
-
     pub plan_id: Option<Uuid>,
     pub spawned_session_id: Option<SessionId>,
-
     pub created_at: DateTime<Utc>,
 }
 
@@ -92,7 +154,6 @@ impl ToolExecution {
     }
 }
 
-/// Plan status in the planning workflow.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum PlanStatus {
@@ -115,22 +176,18 @@ impl PlanStatus {
     }
 }
 
-/// Plan record for tracking planning workflow.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Plan {
     pub id: Uuid,
     pub session_id: SessionId,
-
     pub name: Option<String>,
     pub content: String,
     pub status: PlanStatus,
-
+    pub error: Option<String>,
     pub created_at: DateTime<Utc>,
     pub approved_at: Option<DateTime<Utc>>,
     pub started_at: Option<DateTime<Utc>>,
     pub completed_at: Option<DateTime<Utc>>,
-
-    pub error: Option<String>,
 }
 
 impl Plan {
@@ -141,11 +198,11 @@ impl Plan {
             name: None,
             content: String::new(),
             status: PlanStatus::Draft,
+            error: None,
             created_at: Utc::now(),
             approved_at: None,
             started_at: None,
             completed_at: None,
-            error: None,
         }
     }
 
@@ -186,7 +243,6 @@ impl Plan {
     }
 }
 
-/// Todo item status.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum TodoStatus {
@@ -196,18 +252,14 @@ pub enum TodoStatus {
     Completed,
 }
 
-/// Todo item for task tracking.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct TodoItem {
     pub id: Uuid,
     pub session_id: SessionId,
-
     pub content: String,
     pub active_form: String,
     pub status: TodoStatus,
-
     pub plan_id: Option<Uuid>,
-
     pub created_at: DateTime<Utc>,
     pub started_at: Option<DateTime<Utc>>,
     pub completed_at: Option<DateTime<Utc>>,
@@ -256,48 +308,171 @@ impl TodoItem {
     }
 }
 
-/// Compact history record.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CompactTrigger {
+    #[default]
+    Manual,
+    Auto,
+    Threshold,
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct CompactRecord {
     pub id: Uuid,
     pub session_id: SessionId,
-
+    pub trigger: CompactTrigger,
+    pub pre_tokens: usize,
+    pub post_tokens: usize,
+    pub saved_tokens: usize,
     pub summary: String,
     pub original_count: usize,
     pub new_count: usize,
-    pub saved_tokens: usize,
-    pub instructions: Option<String>,
-
+    pub logical_parent_id: Option<MessageId>,
     pub created_at: DateTime<Utc>,
 }
 
 impl CompactRecord {
-    pub fn new(
-        session_id: SessionId,
-        summary: impl Into<String>,
-        original_count: usize,
-        new_count: usize,
-        saved_tokens: usize,
-    ) -> Self {
+    pub fn new(session_id: SessionId) -> Self {
         Self {
             id: Uuid::new_v4(),
             session_id,
-            summary: summary.into(),
-            original_count,
-            new_count,
-            saved_tokens,
-            instructions: None,
+            trigger: CompactTrigger::default(),
+            pre_tokens: 0,
+            post_tokens: 0,
+            saved_tokens: 0,
+            summary: String::new(),
+            original_count: 0,
+            new_count: 0,
+            logical_parent_id: None,
             created_at: Utc::now(),
         }
     }
 
-    pub fn with_instructions(mut self, instructions: impl Into<String>) -> Self {
-        self.instructions = Some(instructions.into());
+    pub fn with_trigger(mut self, trigger: CompactTrigger) -> Self {
+        self.trigger = trigger;
+        self
+    }
+
+    pub fn with_counts(mut self, original: usize, new: usize) -> Self {
+        self.original_count = original;
+        self.new_count = new;
+        self
+    }
+
+    pub fn with_summary(mut self, summary: impl Into<String>) -> Self {
+        self.summary = summary.into();
+        self
+    }
+
+    pub fn with_saved_tokens(mut self, saved: usize) -> Self {
+        self.saved_tokens = saved;
+        self
+    }
+
+    pub fn with_tokens(mut self, pre: usize, post: usize) -> Self {
+        self.pre_tokens = pre;
+        self.post_tokens = post;
+        self.saved_tokens = pre.saturating_sub(post);
+        self
+    }
+
+    pub fn with_logical_parent(mut self, parent_id: MessageId) -> Self {
+        self.logical_parent_id = Some(parent_id);
         self
     }
 }
 
-/// Filter for querying tool executions.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct SummarySnapshot {
+    pub id: Uuid,
+    pub session_id: SessionId,
+    pub summary: String,
+    pub leaf_message_id: Option<MessageId>,
+    pub created_at: DateTime<Utc>,
+}
+
+impl SummarySnapshot {
+    pub fn new(session_id: SessionId, summary: impl Into<String>) -> Self {
+        Self {
+            id: Uuid::new_v4(),
+            session_id,
+            summary: summary.into(),
+            leaf_message_id: None,
+            created_at: Utc::now(),
+        }
+    }
+
+    pub fn with_leaf(mut self, leaf_id: MessageId) -> Self {
+        self.leaf_message_id = Some(leaf_id);
+        self
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum QueueOperation {
+    Enqueue,
+    Dequeue,
+    Cancel,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum QueueStatus {
+    #[default]
+    Pending,
+    Processing,
+    Completed,
+    Cancelled,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct QueueItem {
+    pub id: Uuid,
+    pub session_id: SessionId,
+    pub operation: QueueOperation,
+    pub content: String,
+    pub priority: i32,
+    pub status: QueueStatus,
+    pub created_at: DateTime<Utc>,
+    pub processed_at: Option<DateTime<Utc>>,
+}
+
+impl QueueItem {
+    pub fn enqueue(session_id: SessionId, content: impl Into<String>) -> Self {
+        Self {
+            id: Uuid::new_v4(),
+            session_id,
+            operation: QueueOperation::Enqueue,
+            content: content.into(),
+            priority: 0,
+            status: QueueStatus::Pending,
+            created_at: Utc::now(),
+            processed_at: None,
+        }
+    }
+
+    pub fn with_priority(mut self, priority: i32) -> Self {
+        self.priority = priority;
+        self
+    }
+
+    pub fn start_processing(&mut self) {
+        self.status = QueueStatus::Processing;
+    }
+
+    pub fn complete(&mut self) {
+        self.status = QueueStatus::Completed;
+        self.processed_at = Some(Utc::now());
+    }
+
+    pub fn cancel(&mut self) {
+        self.status = QueueStatus::Cancelled;
+        self.processed_at = Some(Utc::now());
+    }
+}
+
 #[derive(Clone, Debug, Default)]
 pub struct ToolExecutionFilter {
     pub tool_name: Option<String>,
@@ -335,7 +510,6 @@ impl ToolExecutionFilter {
     }
 }
 
-/// Aggregated statistics for a session.
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct SessionStats {
     pub total_messages: usize,
@@ -367,7 +541,6 @@ impl SessionStats {
     }
 }
 
-/// Session tree for hierarchical view with subagents.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct SessionTree {
     pub session_id: SessionId,
@@ -379,6 +552,14 @@ pub struct SessionTree {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_environment_context() {
+        let ctx = EnvironmentContext::capture(None);
+        assert!(ctx.cwd.is_none());
+        assert!(ctx.platform.is_some());
+        assert!(ctx.sdk_version.is_some());
+    }
 
     #[test]
     fn test_tool_execution_builder() {
@@ -428,6 +609,47 @@ mod tests {
         todo.complete();
         assert_eq!(todo.status, TodoStatus::Completed);
         assert_eq!(todo.status_icon(), "●");
+    }
+
+    #[test]
+    fn test_compact_record() {
+        let session_id = SessionId::new();
+        let record = CompactRecord::new(session_id)
+            .with_trigger(CompactTrigger::Threshold)
+            .with_tokens(100_000, 20_000)
+            .with_counts(50, 5)
+            .with_summary("Summary of conversation");
+
+        assert_eq!(record.pre_tokens, 100_000);
+        assert_eq!(record.post_tokens, 20_000);
+        assert_eq!(record.saved_tokens, 80_000);
+        assert_eq!(record.original_count, 50);
+        assert_eq!(record.new_count, 5);
+    }
+
+    #[test]
+    fn test_summary_snapshot() {
+        let session_id = SessionId::new();
+        let snapshot = SummarySnapshot::new(session_id, "Working on feature X");
+
+        assert!(!snapshot.summary.is_empty());
+        assert!(snapshot.leaf_message_id.is_none());
+    }
+
+    #[test]
+    fn test_queue_item() {
+        let session_id = SessionId::new();
+        let mut item = QueueItem::enqueue(session_id, "Process this").with_priority(10);
+
+        assert_eq!(item.status, QueueStatus::Pending);
+        assert_eq!(item.priority, 10);
+
+        item.start_processing();
+        assert_eq!(item.status, QueueStatus::Processing);
+
+        item.complete();
+        assert_eq!(item.status, QueueStatus::Completed);
+        assert!(item.processed_at.is_some());
     }
 
     #[test]

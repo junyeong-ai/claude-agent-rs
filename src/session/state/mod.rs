@@ -248,6 +248,11 @@ impl Session {
         self.compact_history.push(record);
         self.updated_at = Utc::now();
     }
+
+    pub fn update_summary(&mut self, summary: impl Into<String>) {
+        self.summary = Some(summary.into());
+        self.updated_at = Utc::now();
+    }
 }
 
 #[cfg(test)]

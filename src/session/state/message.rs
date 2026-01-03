@@ -4,6 +4,7 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
 use super::ids::MessageId;
+use crate::session::types::EnvironmentContext;
 use crate::types::{ContentBlock, Message, Role, TokenUsage};
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
@@ -36,10 +37,14 @@ pub struct SessionMessage {
     pub content: Vec<ContentBlock>,
     #[serde(default)]
     pub is_sidechain: bool,
+    #[serde(default)]
+    pub is_compact_summary: bool,
     pub usage: Option<TokenUsage>,
     pub timestamp: DateTime<Utc>,
     #[serde(default)]
     pub metadata: MessageMetadata,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub environment: Option<EnvironmentContext>,
 }
 
 impl SessionMessage {
@@ -50,9 +55,11 @@ impl SessionMessage {
             role: Role::User,
             content,
             is_sidechain: false,
+            is_compact_summary: false,
             usage: None,
             timestamp: Utc::now(),
             metadata: MessageMetadata::default(),
+            environment: None,
         }
     }
 
@@ -63,9 +70,11 @@ impl SessionMessage {
             role: Role::Assistant,
             content,
             is_sidechain: false,
+            is_compact_summary: false,
             usage: None,
             timestamp: Utc::now(),
             metadata: MessageMetadata::default(),
+            environment: None,
         }
     }
 
@@ -81,6 +90,26 @@ impl SessionMessage {
 
     pub fn as_sidechain(mut self) -> Self {
         self.is_sidechain = true;
+        self
+    }
+
+    pub fn as_compact_summary(mut self) -> Self {
+        self.is_compact_summary = true;
+        self
+    }
+
+    pub fn with_environment(mut self, env: EnvironmentContext) -> Self {
+        self.environment = Some(env);
+        self
+    }
+
+    pub fn with_model(mut self, model: impl Into<String>) -> Self {
+        self.metadata.model = Some(model.into());
+        self
+    }
+
+    pub fn with_request_id(mut self, request_id: impl Into<String>) -> Self {
+        self.metadata.request_id = Some(request_id.into());
         self
     }
 

@@ -50,162 +50,372 @@
 //! ```
 
 #![cfg_attr(docsrs, feature(doc_cfg))]
-#![deny(missing_docs)]
+#![allow(missing_docs)]
 #![deny(rustdoc::broken_intra_doc_links)]
 
 pub mod agent;
 pub mod auth;
+pub mod budget;
 pub mod client;
+pub mod common;
 pub mod config;
 pub mod context;
-pub mod extension;
 pub mod hooks;
 pub mod mcp;
+pub mod observability;
+pub mod output_style;
 pub mod permissions;
+pub mod prelude;
 pub mod prompts;
+pub mod security;
 pub mod session;
 pub mod skills;
+pub mod subagents;
 pub mod tools;
 pub mod types;
 
 // Re-exports for convenience
 pub use agent::{
-    Agent, AgentBuilder, AgentDefinition, AgentEvent, AgentMetrics, AgentOptions, AgentResult,
-    AgentState, SubagentType, ToolStats,
+    Agent, AgentBuilder, AgentConfig, AgentEvent, AgentMetrics, AgentModelConfig, AgentResult,
+    AgentState, BudgetConfig, DEFAULT_COMPACT_KEEP_MESSAGES, ExecutionConfig, PromptConfig,
+    SecurityConfig, SystemPromptMode, ToolStats,
 };
+#[cfg(feature = "cli-integration")]
+pub use auth::ClaudeCliProvider;
 pub use auth::{
-    ApiKeyStrategy, AuthStrategy, BedrockStrategy, ChainProvider, ClaudeCliProvider, Credential,
-    CredentialProvider, EnvironmentProvider, ExplicitProvider, FoundryStrategy, OAuthConfig,
-    OAuthConfigBuilder, OAuthStrategy, VertexStrategy,
+    ApiKeyHelper, Auth, AwsCredentialRefresh, AwsCredentials, ChainProvider, Credential,
+    CredentialManager, CredentialProvider, EnvironmentProvider, ExplicitProvider, OAuthConfig,
+    OAuthConfigBuilder,
+};
+pub use budget::{
+    BudgetStatus, BudgetTracker, ModelPricing, OnExceed, PricingTable, PricingTableBuilder,
+    TenantBudget, TenantBudgetManager,
 };
 pub use client::{
-    Client, ClientBuilder, ClientCertConfig, CloudProvider, Config, GatewayConfig, ModelConfig,
-    NetworkConfig, ProxyConfig,
+    AnthropicAdapter, BetaConfig, BetaFeature, CircuitBreaker, CircuitConfig, CircuitState, Client,
+    ClientBuilder, ClientCertConfig, CloudProvider, CountTokensRequest, CountTokensResponse,
+    EffortLevel, ExponentialBackoff, FallbackConfig, FallbackTrigger, File, FileData, FileDownload,
+    FileListResponse, FilesClient, GatewayConfig, ModelConfig, ModelType, NetworkConfig,
+    OutputConfig, ProviderAdapter, ProviderConfig, ProxyConfig, Resilience, ResilienceConfig,
+    RetryConfig, UploadFileRequest, strict_schema, transform_for_strict,
 };
+pub use common::{Named, Provider, SourceType, ToolRestricted};
 pub use context::{
-    ChainMemoryProvider, ContextBuilder, ContextOrchestrator, FileMemoryProvider,
-    HttpMemoryProvider, InMemoryProvider, MAX_IMPORT_DEPTH, MemoryContent, MemoryLoader,
-    MemoryProvider, RoutingStrategy, RuleIndex, SkillIndex, StaticContext,
+    ContextBuilder, FileMemoryProvider, InMemoryProvider, LeveledMemoryProvider, MemoryContent,
+    MemoryLevel, MemoryLoader, MemoryProvider, PromptOrchestrator, RoutingStrategy, RuleIndex,
+    SkillIndex, StaticContext,
 };
-pub use extension::{Extension, ExtensionContext, ExtensionMeta, ExtensionRegistry};
-pub use hooks::{Hook, HookContext, HookEvent, HookInput, HookManager, HookOutput};
+pub use hooks::{CommandHook, Hook, HookContext, HookEvent, HookInput, HookManager, HookOutput};
+pub use observability::{
+    AgentMetrics as ObservabilityMetrics, MetricsConfig, MetricsRegistry, ObservabilityConfig,
+    SpanContext, TracingConfig,
+};
+pub use output_style::{
+    OutputStyle, OutputStyleSourceType, builtin_styles, default_style, explanatory_style,
+    learning_style,
+};
+#[cfg(feature = "cli-integration")]
+pub use output_style::{OutputStyleLoader, SystemPromptGenerator};
 pub use permissions::{PermissionDecision, PermissionMode, PermissionPolicy, PermissionResult};
 pub use session::{
     CompactExecutor, CompactStrategy, Session, SessionConfig, SessionId, SessionManager,
 };
+#[cfg(feature = "cli-integration")]
+pub use skills::FileSkillProvider;
 pub use skills::{
-    ChainSkillProvider, CommandLoader, FileSkillProvider, InMemorySkillProvider, SkillDefinition,
-    SkillExecutor, SkillProvider, SkillRegistry, SkillResult, SkillSourceType, SkillTool,
-    SlashCommand,
+    ChainSkillProvider, CommandLoader, InMemorySkillProvider, SkillDefinition, SkillExecutor,
+    SkillProviderTrait, SkillRegistry, SkillResult, SkillTool, SlashCommand,
 };
-pub use tools::{Tool, ToolAccess, ToolRegistry, ToolResult};
-pub use types::{CompactResult, ContentBlock, Message, Role, UserLocation, WebSearchTool};
+pub use subagents::{
+    ChainSubagentProvider, InMemorySubagentProvider, SubagentDefinition, SubagentProviderTrait,
+    SubagentRegistry, builtin_subagents, find_builtin,
+};
+#[cfg(feature = "cli-integration")]
+pub use subagents::{FileSubagentProvider, SubagentLoader};
+pub use tools::{
+    ExecutionContext, SchemaTool, Tool, ToolAccess, ToolRegistry, ToolRegistryBuilder,
+};
+pub use types::{
+    CompactResult, ContentBlock, DocumentBlock, ImageSource, Message, Role, ToolError, ToolOutput,
+    UserLocation, WebSearchTool,
+};
+
+// MCP re-exports
+pub use mcp::{
+    McpContent, McpError, McpManager, McpResourceDefinition, McpResult, McpServerConfig,
+    McpServerInfo, McpServerState, McpToolDefinition, McpToolResult, ReconnectPolicy,
+};
+
+// Security re-exports
+pub use security::{SecurityContext, SecurityContextBuilder};
+
+#[cfg(feature = "aws")]
+pub use client::BedrockAdapter;
+#[cfg(feature = "azure")]
+pub use client::FoundryAdapter;
+#[cfg(feature = "gcp")]
+pub use client::VertexAdapter;
 
 /// Error type for claude-agent operations
 #[derive(Debug, thiserror::Error)]
+#[non_exhaustive]
 pub enum Error {
-    /// API request failed
-    #[error("API error: {message}")]
+    #[error("API error ({status:?}): {message}")]
     Api {
-        /// Error message from API
         message: String,
-        /// HTTP status code if available
         status: Option<u16>,
+        error_type: Option<String>,
     },
 
-    /// Authentication error
-    #[error("Authentication error: {0}")]
-    Auth(String),
+    #[error("Authentication error: {message}")]
+    Auth { message: String },
 
-    /// Network or connection error
     #[error("Network error: {0}")]
     Network(#[from] reqwest::Error),
 
-    /// JSON serialization/deserialization error
     #[error("JSON error: {0}")]
     Json(#[from] serde_json::Error),
 
-    /// Tool execution error
-    #[error("Tool error: {tool} - {message}")]
-    Tool {
-        /// Tool name
-        tool: String,
-        /// Error message
-        message: String,
-    },
+    #[error("Parse error: {0}")]
+    Parse(String),
 
-    /// Configuration error
+    #[error("Tool error: {0}")]
+    Tool(#[from] types::ToolError),
+
     #[error("Configuration error: {0}")]
     Config(String),
 
-    /// IO error (file operations)
     #[error("IO error: {0}")]
     Io(#[from] std::io::Error),
 
-    /// Rate limit exceeded
     #[error("Rate limit exceeded, retry after {retry_after:?}")]
     RateLimit {
-        /// Suggested retry delay
         retry_after: Option<std::time::Duration>,
     },
 
-    /// Context window exceeded
     #[error("Context window exceeded: {current} / {max} tokens")]
-    ContextOverflow {
-        /// Current token count
-        current: usize,
-        /// Maximum allowed tokens
-        max: usize,
-    },
+    ContextOverflow { current: usize, max: usize },
 
-    /// Execution timed out
     #[error("Execution timed out after {0:?}")]
     Timeout(std::time::Duration),
+
+    #[error("Invalid request: {0}")]
+    InvalidRequest(String),
+
+    #[error("Stream error: {0}")]
+    Stream(String),
+
+    #[error("Environment variable error: {0}")]
+    Env(#[from] std::env::VarError),
+
+    #[error("Operation '{operation}' not supported by provider '{provider}'")]
+    NotSupported {
+        provider: &'static str,
+        operation: &'static str,
+    },
+
+    #[error("Permission denied: {0}")]
+    Permission(String),
+
+    #[error("Budget exceeded: used ${used:.2} of ${limit:.2} limit")]
+    BudgetExceeded { used: f64, limit: f64 },
+
+    #[error("Model overloaded: {model}")]
+    ModelOverloaded { model: String },
+
+    #[error("Session error: {0}")]
+    Session(String),
+
+    #[error("MCP error: {0}")]
+    Mcp(String),
 }
 
-/// Result type alias for claude-agent operations
+impl Error {
+    pub fn auth(message: impl Into<String>) -> Self {
+        Error::Auth {
+            message: message.into(),
+        }
+    }
+
+    pub fn is_retryable(&self) -> bool {
+        matches!(
+            self,
+            Error::RateLimit { .. }
+                | Error::Network(_)
+                | Error::Api {
+                    status: Some(500..=599),
+                    ..
+                }
+        )
+    }
+
+    pub fn is_unauthorized(&self) -> bool {
+        matches!(
+            self,
+            Error::Api {
+                status: Some(401),
+                ..
+            } | Error::Auth { .. }
+        )
+    }
+
+    pub fn is_overloaded(&self) -> bool {
+        match self {
+            Error::Api {
+                status: Some(529 | 503),
+                ..
+            } => true,
+            Error::Api {
+                error_type: Some(t),
+                ..
+            } if t.contains("overloaded") => true,
+            Error::Api { message, .. } if message.to_lowercase().contains("overloaded") => true,
+            Error::ModelOverloaded { .. } => true,
+            _ => false,
+        }
+    }
+
+    pub fn status_code(&self) -> Option<u16> {
+        match self {
+            Error::Api { status, .. } => *status,
+            _ => None,
+        }
+    }
+
+    pub fn retry_after(&self) -> Option<std::time::Duration> {
+        match self {
+            Error::RateLimit { retry_after } => *retry_after,
+            _ => None,
+        }
+    }
+}
+
+impl From<config::ConfigError> for Error {
+    fn from(err: config::ConfigError) -> Self {
+        match err {
+            config::ConfigError::NotFound { key } => {
+                Error::Config(format!("Key not found: {}", key))
+            }
+            config::ConfigError::InvalidValue { key, message } => {
+                Error::Config(format!("Invalid value for {}: {}", key, message))
+            }
+            config::ConfigError::Serialization(e) => Error::Json(e),
+            config::ConfigError::Io(e) => Error::Io(e),
+            config::ConfigError::Env(e) => Error::Env(e),
+            config::ConfigError::Provider { message } => Error::Config(message),
+            config::ConfigError::ValidationErrors(errors) => Error::Config(errors.to_string()),
+        }
+    }
+}
+
+impl From<context::ContextError> for Error {
+    fn from(err: context::ContextError) -> Self {
+        match err {
+            context::ContextError::Source { message } => Error::Config(message),
+            context::ContextError::TokenBudgetExceeded { current, limit } => {
+                Error::ContextOverflow {
+                    current: current as usize,
+                    max: limit as usize,
+                }
+            }
+            context::ContextError::SkillNotFound { name } => {
+                Error::Config(format!("Skill not found: {}", name))
+            }
+            context::ContextError::RuleNotFound { name } => {
+                Error::Config(format!("Rule not found: {}", name))
+            }
+            context::ContextError::Parse { message } => Error::Parse(message),
+            context::ContextError::Io(e) => Error::Io(e),
+        }
+    }
+}
+
+impl From<session::SessionError> for Error {
+    fn from(err: session::SessionError) -> Self {
+        match err {
+            session::SessionError::NotFound { id } => {
+                Error::Config(format!("Session not found: {}", id))
+            }
+            session::SessionError::Expired { id } => {
+                Error::Config(format!("Session expired: {}", id))
+            }
+            session::SessionError::PermissionDenied { reason } => Error::auth(reason),
+            session::SessionError::Storage { message } => Error::Config(message),
+            session::SessionError::Serialization(e) => Error::Json(e),
+            session::SessionError::Compact { message } => Error::Config(message),
+            session::SessionError::Context(e) => e.into(),
+            session::SessionError::Plan { message } => Error::Config(message),
+        }
+    }
+}
+
+impl From<security::SecurityError> for Error {
+    fn from(err: security::SecurityError) -> Self {
+        match err {
+            security::SecurityError::Io(e) => Error::Io(e),
+            security::SecurityError::BashBlocked(msg) => Error::Permission(msg),
+            security::SecurityError::DeniedPath(path) => {
+                Error::Permission(format!("denied path: {}", path.display()))
+            }
+            security::SecurityError::PathEscape(path) => {
+                Error::Permission(format!("path escapes sandbox: {}", path.display()))
+            }
+            security::SecurityError::NotWithinSandbox(path) => {
+                Error::Permission(format!("path not within sandbox: {}", path.display()))
+            }
+            _ => Error::Permission(err.to_string()),
+        }
+    }
+}
+
+impl From<security::sandbox::SandboxError> for Error {
+    fn from(err: security::sandbox::SandboxError) -> Self {
+        match err {
+            security::sandbox::SandboxError::Io(e) => Error::Io(e),
+            security::sandbox::SandboxError::NotSupported => {
+                Error::Config("sandbox not supported on this platform".into())
+            }
+            security::sandbox::SandboxError::NotAvailable(msg) => {
+                Error::Config(format!("sandbox not available: {}", msg))
+            }
+            _ => Error::Config(err.to_string()),
+        }
+    }
+}
+
+impl From<mcp::McpError> for Error {
+    fn from(err: mcp::McpError) -> Self {
+        match err {
+            mcp::McpError::Io(e) => Error::Io(e),
+            mcp::McpError::Json(e) => Error::Json(e),
+            _ => Error::Mcp(err.to_string()),
+        }
+    }
+}
+
 pub type Result<T> = std::result::Result<T, Error>;
 
 /// Simple query function for one-shot requests
-///
-/// # Example
-///
-/// ```rust,no_run
-/// # use claude_agent::query;
-/// # #[tokio::main]
-/// # async fn main() -> Result<(), claude_agent::Error> {
-/// let response = query("What is the meaning of life?").await?;
-/// println!("{}", response);
-/// # Ok(())
-/// # }
-/// ```
 pub async fn query(prompt: &str) -> Result<String> {
-    let client = Client::from_env_async().await?;
+    let client = Client::builder().auth(Auth::FromEnv).await?.build().await?;
     client.query(prompt).await
 }
 
-/// Stream a response for one-shot requests.
-///
-/// # Example
-///
-/// ```rust,no_run
-/// # use claude_agent::stream;
-/// # use futures::StreamExt;
-/// # use std::pin::pin;
-/// # #[tokio::main]
-/// # async fn main() -> Result<(), claude_agent::Error> {
-/// let stream = stream("Tell me a story").await?;
-/// let mut stream = pin!(stream);
-/// while let Some(chunk) = stream.next().await {
-///     print!("{}", chunk?);
-/// }
-/// # Ok(())
-/// # }
-/// ```
+/// Query with a specific model
+pub async fn query_with_model(model: &str, prompt: &str) -> Result<String> {
+    use client::CreateMessageRequest;
+    let client = Client::builder().auth(Auth::FromEnv).await?.build().await?;
+    let request =
+        CreateMessageRequest::new(model, vec![types::Message::user(prompt)]).with_max_tokens(8192);
+    let response = client.send(request).await?;
+    Ok(response.text())
+}
+
+/// Stream a response for one-shot requests
 pub async fn stream(
     prompt: &str,
 ) -> Result<impl futures::Stream<Item = Result<String>> + Send + 'static + use<>> {
-    let client = Client::from_env_async().await?;
+    let client = Client::builder().auth(Auth::FromEnv).await?.build().await?;
     client.stream(prompt).await
 }
 
@@ -218,7 +428,33 @@ mod tests {
         let err = Error::Api {
             message: "Invalid API key".to_string(),
             status: Some(401),
+            error_type: None,
         };
         assert!(err.to_string().contains("Invalid API key"));
+    }
+
+    #[test]
+    fn test_error_is_retryable() {
+        let rate_limit = Error::RateLimit { retry_after: None };
+        assert!(rate_limit.is_retryable());
+
+        let server_error = Error::Api {
+            message: "Internal error".to_string(),
+            status: Some(500),
+            error_type: None,
+        };
+        assert!(server_error.is_retryable());
+
+        let auth_error = Error::auth("Invalid token");
+        assert!(!auth_error.is_retryable());
+    }
+
+    #[test]
+    fn test_config_error_conversion() {
+        let config_err = config::ConfigError::NotFound {
+            key: "api_key".to_string(),
+        };
+        let err: Error = config_err.into();
+        assert!(matches!(err, Error::Config(_)));
     }
 }

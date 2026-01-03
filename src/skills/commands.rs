@@ -2,102 +2,121 @@
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::process::Stdio;
+use std::sync::OnceLock;
 
+use regex::Regex;
 use serde::{Deserialize, Serialize};
+use tokio::process::Command;
 
 use crate::Result;
 
-/// Slash command definition.
+fn backtick_regex() -> &'static Regex {
+    static RE: OnceLock<Regex> = OnceLock::new();
+    RE.get_or_init(|| Regex::new(r"!\`([^`]+)\`").expect("valid backtick regex"))
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SlashCommand {
-    /// Command name (without leading /)
     pub name: String,
-    /// Short description
     pub description: Option<String>,
-    /// Command prompt content
     pub content: String,
-    /// Source location
     pub location: PathBuf,
-    /// Allowed tools (from frontmatter)
     #[serde(default)]
     pub allowed_tools: Vec<String>,
-    /// Argument hint for display
     #[serde(default)]
     pub argument_hint: Option<String>,
-    /// Model override
     #[serde(default)]
     pub model: Option<String>,
 }
 
 impl SlashCommand {
-    /// Execute the command with given arguments.
-    ///
-    /// Supports:
-    /// - `$ARGUMENTS` - Full argument string
-    /// - `$1`, `$2`, etc. - Positional arguments (space-separated)
     pub fn execute(&self, arguments: &str) -> String {
         let mut result = self.content.clone();
-
-        // Split arguments for positional substitution
         let args: Vec<&str> = arguments.split_whitespace().collect();
 
-        // Replace positional args $1, $2, $3, ... $9
         for (i, arg) in args.iter().take(9).enumerate() {
             result = result.replace(&format!("${}", i + 1), arg);
         }
 
-        // Replace $ARGUMENTS with full string (after positional to avoid conflicts)
         result.replace("$ARGUMENTS", arguments)
     }
 
-    /// Execute with async file reference processing.
-    ///
-    /// Supports:
-    /// - `@path` - Include file contents
-    /// - `$ARGUMENTS`, `$1`, `$2` - Argument substitution
-    pub async fn execute_with_files(&self, arguments: &str, base_dir: &std::path::Path) -> String {
+    pub async fn execute_full(&self, arguments: &str, base_dir: &Path) -> String {
         let mut result = self.content.clone();
 
-        // Process @path file references
+        result = Self::process_bash_backticks(&result, base_dir).await;
         result = Self::process_file_references(&result, base_dir).await;
 
-        // Split arguments for positional substitution
         let args: Vec<&str> = arguments.split_whitespace().collect();
-
-        // Replace positional args
         for (i, arg) in args.iter().take(9).enumerate() {
             result = result.replace(&format!("${}", i + 1), arg);
         }
 
-        // Replace $ARGUMENTS
         result.replace("$ARGUMENTS", arguments)
     }
 
-    /// Process @path file references in content.
-    async fn process_file_references(content: &str, base_dir: &std::path::Path) -> String {
+    async fn process_bash_backticks(content: &str, working_dir: &Path) -> String {
+        let backtick_re = backtick_regex();
+        let mut result = content.to_string();
+        let mut replacements = Vec::new();
+
+        for cap in backtick_re.captures_iter(content) {
+            let full_match = cap.get(0).expect("capture group 0 always exists").as_str();
+            let cmd = &cap[1];
+
+            let output = match Command::new("sh")
+                .arg("-c")
+                .arg(cmd)
+                .current_dir(working_dir)
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped())
+                .output()
+                .await
+            {
+                Ok(output) => {
+                    let stdout = String::from_utf8_lossy(&output.stdout);
+                    let stderr = String::from_utf8_lossy(&output.stderr);
+                    if output.status.success() {
+                        stdout.trim().to_string()
+                    } else {
+                        format!("[Error: {}]\n{}", stderr.trim(), stdout.trim())
+                    }
+                }
+                Err(e) => format!("[Failed to execute: {}]", e),
+            };
+
+            replacements.push((full_match.to_string(), output));
+        }
+
+        for (pattern, replacement) in replacements {
+            result = result.replace(&pattern, &replacement);
+        }
+
+        result
+    }
+
+    async fn process_file_references(content: &str, base_dir: &Path) -> String {
         let mut result = String::new();
 
         for line in content.lines() {
             let trimmed = line.trim();
 
-            // Check for @path pattern (but not @@escaped)
             if trimmed.starts_with('@') && !trimmed.starts_with("@@") {
                 let path_str = trimmed.trim_start_matches('@').trim();
                 if !path_str.is_empty() {
                     let full_path = if path_str.starts_with("~/") {
-                        // Home directory expansion
-                        if let Some(home) = dirs::home_dir() {
+                        if let Some(home) = crate::common::home_dir() {
                             home.join(path_str.strip_prefix("~/").unwrap_or(path_str))
                         } else {
                             base_dir.join(path_str)
                         }
                     } else if path_str.starts_with('/') {
-                        std::path::PathBuf::from(path_str)
+                        PathBuf::from(path_str)
                     } else {
                         base_dir.join(path_str)
                     };
 
-                    // Try to read the file
                     if let Ok(file_content) = tokio::fs::read_to_string(&full_path).await {
                         result.push_str(&file_content);
                         result.push('\n');
@@ -114,7 +133,6 @@ impl SlashCommand {
     }
 }
 
-/// Frontmatter for slash command files.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(rename_all = "kebab-case")]
 struct CommandFrontmatter {
@@ -128,26 +146,23 @@ struct CommandFrontmatter {
     model: Option<String>,
 }
 
-/// Loader for slash commands from .claude/commands/ directories.
 #[derive(Debug, Default)]
 pub struct CommandLoader {
     commands: HashMap<String, SlashCommand>,
 }
 
 impl CommandLoader {
-    /// Create a new command loader.
     pub fn new() -> Self {
         Self::default()
     }
 
-    /// Load commands from project and user directories.
     pub async fn load_all(&mut self, project_dir: &Path) -> Result<()> {
         let project_commands = project_dir.join(".claude").join("commands");
         if project_commands.exists() {
             self.load_directory(&project_commands, "").await?;
         }
 
-        if let Some(home) = dirs::home_dir() {
+        if let Some(home) = crate::common::home_dir() {
             let user_commands = home.join(".claude").join("commands");
             if user_commands.exists() {
                 self.load_directory(&user_commands, "").await?;
@@ -157,7 +172,6 @@ impl CommandLoader {
         Ok(())
     }
 
-    /// Load commands from a directory with namespace prefix.
     fn load_directory<'a>(
         &'a mut self,
         dir: &'a Path,
@@ -195,7 +209,6 @@ impl CommandLoader {
         })
     }
 
-    /// Load a single command file.
     async fn load_file(&self, path: &Path, namespace: &str) -> Result<SlashCommand> {
         let content = tokio::fs::read_to_string(path)
             .await
@@ -225,7 +238,6 @@ impl CommandLoader {
         })
     }
 
-    /// Parse YAML frontmatter from content.
     fn parse_frontmatter(&self, content: &str) -> Result<(CommandFrontmatter, String)> {
         if let Some(after_first) = content.strip_prefix("---")
             && let Some(end_pos) = after_first.find("---")
@@ -233,8 +245,8 @@ impl CommandLoader {
             let frontmatter_str = after_first[..end_pos].trim();
             let body = after_first[end_pos + 3..].trim().to_string();
 
-            let frontmatter: CommandFrontmatter =
-                serde_yaml::from_str(frontmatter_str).unwrap_or_default();
+            let frontmatter: CommandFrontmatter = serde_yaml_ng::from_str(frontmatter_str)
+                .map_err(|e| crate::Error::Config(format!("Invalid command frontmatter: {}", e)))?;
 
             return Ok((frontmatter, body));
         }
@@ -242,17 +254,14 @@ impl CommandLoader {
         Ok((CommandFrontmatter::default(), content.to_string()))
     }
 
-    /// Get a command by name.
     pub fn get(&self, name: &str) -> Option<&SlashCommand> {
         self.commands.get(name)
     }
 
-    /// List all loaded commands.
     pub fn list(&self) -> Vec<&SlashCommand> {
         self.commands.values().collect()
     }
 
-    /// Check if a command exists.
     pub fn exists(&self, name: &str) -> bool {
         self.commands.contains_key(name)
     }
@@ -347,8 +356,49 @@ mod tests {
             model: None,
         };
 
-        let result = cmd.execute_with_files("", dir.path()).await;
+        let result = cmd.execute_full("", dir.path()).await;
         assert!(result.contains("test-config"));
         assert!(result.contains("End"));
+    }
+
+    #[tokio::test]
+    async fn test_bash_backticks() {
+        use tempfile::tempdir;
+
+        let dir = tempdir().unwrap();
+
+        let cmd = SlashCommand {
+            name: "status".to_string(),
+            description: None,
+            content: "Echo: !`echo hello`\nPwd: !`pwd`".to_string(),
+            location: PathBuf::from("/test"),
+            allowed_tools: vec![],
+            argument_hint: None,
+            model: None,
+        };
+
+        let result = cmd.execute_full("", dir.path()).await;
+        assert!(result.contains("Echo: hello"));
+        assert!(result.contains(&dir.path().to_string_lossy().to_string()));
+    }
+
+    #[tokio::test]
+    async fn test_bash_backtick_error() {
+        use tempfile::tempdir;
+
+        let dir = tempdir().unwrap();
+
+        let cmd = SlashCommand {
+            name: "fail".to_string(),
+            description: None,
+            content: "Result: !`exit 1`".to_string(),
+            location: PathBuf::from("/test"),
+            allowed_tools: vec![],
+            argument_hint: None,
+            model: None,
+        };
+
+        let result = cmd.execute_full("", dir.path()).await;
+        assert!(result.contains("[Error:") || result.contains("Result:"));
     }
 }

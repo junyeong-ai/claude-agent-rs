@@ -1,13 +1,9 @@
 //! Skill executor - runs skills and manages execution context.
-//!
-//! The executor handles the actual execution of skills, including
-//! argument substitution and context management.
 
 use std::sync::Arc;
 
 use super::{SkillDefinition, SkillRegistry, SkillResult};
 
-/// Callback for executing skill prompts through an LLM
 pub type SkillExecutionCallback = Arc<
     dyn Fn(
             String,
@@ -17,30 +13,21 @@ pub type SkillExecutionCallback = Arc<
         + Sync,
 >;
 
-/// Executor for running skills
 pub struct SkillExecutor {
-    /// Reference to the skill registry
     registry: SkillRegistry,
-    /// Optional execution callback for running skills through LLM
     execution_callback: Option<SkillExecutionCallback>,
-    /// Execution mode
     mode: ExecutionMode,
 }
 
-/// How skills are executed
 #[derive(Clone, Copy, Debug, Default)]
 pub enum ExecutionMode {
-    /// Return the expanded prompt for the agent to process inline
     #[default]
     InlinePrompt,
-    /// Execute through callback and return result
     Callback,
-    /// Just return the skill content for inspection
     DryRun,
 }
 
 impl SkillExecutor {
-    /// Create a new executor with the given registry
     pub fn new(registry: SkillRegistry) -> Self {
         Self {
             registry,
@@ -49,35 +36,29 @@ impl SkillExecutor {
         }
     }
 
-    /// Create an executor with default skills
     pub fn with_defaults() -> Self {
-        Self::new(SkillRegistry::with_defaults())
+        Self::new(SkillRegistry::new())
     }
 
-    /// Set execution callback for running skills through LLM
     pub fn with_callback(mut self, callback: SkillExecutionCallback) -> Self {
         self.execution_callback = Some(callback);
         self.mode = ExecutionMode::Callback;
         self
     }
 
-    /// Set execution mode
     pub fn with_mode(mut self, mode: ExecutionMode) -> Self {
         self.mode = mode;
         self
     }
 
-    /// Get the registry
     pub fn registry(&self) -> &SkillRegistry {
         &self.registry
     }
 
-    /// Get mutable registry access
     pub fn registry_mut(&mut self) -> &mut SkillRegistry {
         &mut self.registry
     }
 
-    /// Execute a skill by name
     pub async fn execute(&self, name: &str, args: Option<&str>) -> SkillResult {
         let skill = match self.registry.get(name) {
             Some(s) => s,
@@ -89,16 +70,15 @@ impl SkillExecutor {
         self.execute_skill(skill, args).await
     }
 
-    /// Execute a skill by trigger pattern
     pub async fn execute_by_trigger(&self, input: &str) -> Option<SkillResult> {
         let skill = self.registry.get_by_trigger(input)?;
         let args = self.extract_args(input, skill);
         Some(self.execute_skill(skill, args.as_deref()).await)
     }
 
-    /// Execute a skill definition
     async fn execute_skill(&self, skill: &SkillDefinition, args: Option<&str>) -> SkillResult {
-        let prompt = self.substitute_args(&skill.content, args);
+        let content = skill.content_with_resolved_paths();
+        let prompt = self.substitute_args(&content, args);
 
         let base_result = match self.mode {
             ExecutionMode::DryRun => SkillResult::success(format!(
@@ -115,37 +95,28 @@ impl SkillExecutor {
                     SkillResult::error("No execution callback configured")
                 }
             }
-            ExecutionMode::InlinePrompt => {
-                // Return the expanded prompt for the agent to execute inline
-                // This is the progressive disclosure pattern - the skill content
-                // becomes part of the conversation for Claude to act upon
-                SkillResult::success(format!(
-                    "Execute the following skill instructions:\n\n---\n{}\n---\n\nSkill: {}\nArguments: {}",
-                    prompt,
-                    skill.name,
-                    args.unwrap_or("(none)")
-                ))
-            }
+            ExecutionMode::InlinePrompt => SkillResult::success(format!(
+                "Execute the following skill instructions:\n\n---\n{}\n---\n\nSkill: {}\nArguments: {}",
+                prompt,
+                skill.name,
+                args.unwrap_or("(none)")
+            )),
         };
 
-        // Attach execution context from skill definition
         base_result
             .with_allowed_tools(skill.allowed_tools.clone())
             .with_model(skill.model.clone())
+            .with_base_dir(skill.base_dir.clone())
     }
 
-    /// Substitute arguments into skill content
     fn substitute_args(&self, content: &str, args: Option<&str>) -> String {
         let args_value = args.unwrap_or("");
-
         content
             .replace("$ARGUMENTS", args_value)
             .replace("${ARGUMENTS}", args_value)
     }
 
-    /// Extract arguments from trigger input
     fn extract_args(&self, input: &str, skill: &SkillDefinition) -> Option<String> {
-        // Find which trigger matched and extract remaining text
         for trigger in &skill.triggers {
             if let Some(pos) = input.to_lowercase().find(&trigger.to_lowercase()) {
                 let after_trigger = &input[pos + trigger.len()..].trim();
@@ -157,12 +128,10 @@ impl SkillExecutor {
         None
     }
 
-    /// List available skills
     pub fn list_skills(&self) -> Vec<&str> {
         self.registry.list()
     }
 
-    /// Check if a skill exists
     pub fn has_skill(&self, name: &str) -> bool {
         self.registry.get(name).is_some()
     }

@@ -3,6 +3,8 @@
 use serde::{Deserialize, Serialize};
 
 use super::ContentBlock;
+use super::document::DocumentBlock;
+use super::search::SearchResultBlock;
 
 /// Role of a message participant
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -24,23 +26,20 @@ pub struct Message {
 }
 
 impl Message {
-    /// Create a new user message with text content
     pub fn user(text: impl Into<String>) -> Self {
         Self {
             role: Role::User,
-            content: vec![ContentBlock::Text { text: text.into() }],
+            content: vec![ContentBlock::text(text)],
         }
     }
 
-    /// Create a new assistant message with text content
     pub fn assistant(text: impl Into<String>) -> Self {
         Self {
             role: Role::Assistant,
-            content: vec![ContentBlock::Text { text: text.into() }],
+            content: vec![ContentBlock::text(text)],
         }
     }
 
-    /// Create a user message with tool results
     pub fn tool_results(results: Vec<super::ToolResultBlock>) -> Self {
         Self {
             role: Role::User,
@@ -48,26 +47,58 @@ impl Message {
         }
     }
 
-    /// Get the text content of the message (concatenated)
+    pub fn user_with_content(content: Vec<ContentBlock>) -> Self {
+        Self {
+            role: Role::User,
+            content,
+        }
+    }
+
+    pub fn user_with_document(text: impl Into<String>, doc: DocumentBlock) -> Self {
+        Self {
+            role: Role::User,
+            content: vec![ContentBlock::Document(doc), ContentBlock::text(text)],
+        }
+    }
+
+    pub fn user_with_documents(text: impl Into<String>, docs: Vec<DocumentBlock>) -> Self {
+        let mut content: Vec<ContentBlock> = docs.into_iter().map(ContentBlock::Document).collect();
+        content.push(ContentBlock::text(text));
+        Self {
+            role: Role::User,
+            content,
+        }
+    }
+
+    pub fn user_with_search_results(
+        text: impl Into<String>,
+        results: Vec<SearchResultBlock>,
+    ) -> Self {
+        let mut content: Vec<ContentBlock> = results
+            .into_iter()
+            .map(ContentBlock::SearchResult)
+            .collect();
+        content.push(ContentBlock::text(text));
+        Self {
+            role: Role::User,
+            content,
+        }
+    }
+
     pub fn text(&self) -> String {
         self.content
             .iter()
-            .filter_map(|block| match block {
-                ContentBlock::Text { text } => Some(text.as_str()),
-                _ => None,
-            })
+            .filter_map(|block| block.as_text())
             .collect::<Vec<_>>()
             .join("")
     }
 
-    /// Check if the message contains tool use blocks
     pub fn has_tool_use(&self) -> bool {
         self.content
             .iter()
             .any(|block| matches!(block, ContentBlock::ToolUse { .. }))
     }
 
-    /// Extract all tool use blocks from the message
     pub fn tool_uses(&self) -> Vec<&super::ToolUseBlock> {
         self.content
             .iter()
@@ -75,6 +106,20 @@ impl Message {
                 ContentBlock::ToolUse(tool_use) => Some(tool_use),
                 _ => None,
             })
+            .collect()
+    }
+
+    pub fn documents(&self) -> Vec<&DocumentBlock> {
+        self.content
+            .iter()
+            .filter_map(|block| block.as_document())
+            .collect()
+    }
+
+    pub fn search_results(&self) -> Vec<&SearchResultBlock> {
+        self.content
+            .iter()
+            .filter_map(|block| block.as_search_result())
             .collect()
     }
 }
@@ -87,6 +132,38 @@ pub enum SystemPrompt {
     Text(String),
     /// Structured system prompt with cache control
     Blocks(Vec<SystemBlock>),
+}
+
+impl Default for SystemPrompt {
+    fn default() -> Self {
+        Self::Text(String::new())
+    }
+}
+
+impl SystemPrompt {
+    pub fn is_empty(&self) -> bool {
+        match self {
+            Self::Text(s) => s.is_empty(),
+            Self::Blocks(b) => b.is_empty(),
+        }
+    }
+
+    pub fn as_text(&self) -> String {
+        match self {
+            Self::Text(s) => s.clone(),
+            Self::Blocks(b) => b
+                .iter()
+                .map(|block| block.text.as_str())
+                .collect::<Vec<_>>()
+                .join("\n\n"),
+        }
+    }
+}
+
+impl std::fmt::Display for SystemPrompt {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.as_text())
+    }
 }
 
 /// A block in a structured system prompt.
@@ -123,19 +200,77 @@ impl SystemBlock {
 }
 
 /// Cache control for prompt caching.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct CacheControl {
-    /// Cache type.
     #[serde(rename = "type")]
-    pub cache_type: String,
+    pub cache_type: CacheType,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ttl: Option<CacheTtl>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CacheType {
+    Ephemeral,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CacheTtl {
+    FiveMinutes,
+    OneHour,
+}
+
+impl Serialize for CacheTtl {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        match self {
+            CacheTtl::FiveMinutes => serializer.serialize_str("5m"),
+            CacheTtl::OneHour => serializer.serialize_str("1h"),
+        }
+    }
+}
+
+impl<'de> Deserialize<'de> for CacheTtl {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let s = String::deserialize(deserializer)?;
+        match s.as_str() {
+            "5m" => Ok(CacheTtl::FiveMinutes),
+            "1h" => Ok(CacheTtl::OneHour),
+            _ => Err(serde::de::Error::custom(format!("unknown TTL: {}", s))),
+        }
+    }
 }
 
 impl CacheControl {
-    /// Create ephemeral cache control (5 minute TTL).
     pub fn ephemeral() -> Self {
         Self {
-            cache_type: "ephemeral".to_string(),
+            cache_type: CacheType::Ephemeral,
+            ttl: None,
         }
+    }
+
+    pub fn ephemeral_5m() -> Self {
+        Self {
+            cache_type: CacheType::Ephemeral,
+            ttl: Some(CacheTtl::FiveMinutes),
+        }
+    }
+
+    pub fn ephemeral_1h() -> Self {
+        Self {
+            cache_type: CacheType::Ephemeral,
+            ttl: Some(CacheTtl::OneHour),
+        }
+    }
+
+    pub fn with_ttl(mut self, ttl: CacheTtl) -> Self {
+        self.ttl = Some(ttl);
+        self
     }
 }
 
@@ -151,7 +286,8 @@ impl SystemPrompt {
             block_type: "text".to_string(),
             text: prompt.into(),
             cache_control: Some(CacheControl {
-                cache_type: "ephemeral".to_string(),
+                cache_type: CacheType::Ephemeral,
+                ttl: None,
             }),
         }])
     }

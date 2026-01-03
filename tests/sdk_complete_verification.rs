@@ -936,7 +936,7 @@ mod compact_tests {
         let strategy = CompactStrategy::default();
         assert!(strategy.enabled);
         assert_eq!(strategy.threshold_percent, 0.8);
-        assert_eq!(strategy.keep_recent_messages, 4);
+        // Claude Code CLI style: summarizes entire conversation
     }
 
     #[test]
@@ -949,11 +949,10 @@ mod compact_tests {
     fn test_compact_strategy_custom() {
         let strategy = CompactStrategy::default()
             .with_threshold(0.9)
-            .with_model("claude-haiku-4-5-20251001")
-            .with_keep_recent(6);
+            .with_model("claude-haiku-4-5-20251001");
 
         assert_eq!(strategy.threshold_percent, 0.9);
-        assert_eq!(strategy.keep_recent_messages, 6);
+        assert_eq!(strategy.summary_model, "claude-haiku-4-5-20251001");
     }
 }
 

@@ -524,11 +524,10 @@ mod session_tests {
     }
 
     /// Context Compaction (corresponds to CLI's automatic context management)
+    /// Claude Code CLI style: summarizes entire conversation when threshold reached
     #[test]
     fn test_context_compaction() {
-        let strategy = CompactStrategy::default()
-            .with_threshold(0.8)
-            .with_keep_recent(4);
+        let strategy = CompactStrategy::default().with_threshold(0.8);
 
         let executor = CompactExecutor::new(strategy);
 

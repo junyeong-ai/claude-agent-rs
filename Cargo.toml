@@ -87,7 +87,8 @@ azure_identity = { version = "0.30", optional = true }
 azure_core = { version = "0.30", optional = true }
 
 # Persistence backends - optional
-sqlx = { version = "0.8", features = ["runtime-tokio", "postgres", "json", "chrono"], optional = true }
+sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio", "postgres", "json", "chrono", "uuid", "rust_decimal"], optional = true }
+rust_decimal = { version = "1", optional = true }
 redis = { version = "1", features = ["tokio-comp", "connection-manager"], optional = true }
 
 # OpenTelemetry - optional
@@ -129,7 +130,7 @@ azure = ["azure_identity", "azure_core"]
 cloud-all = ["aws", "gcp", "azure"]
 
 # Persistence backends
-postgres = ["sqlx"]
+postgres = ["sqlx", "rust_decimal"]
 redis-backend = ["redis"]
 persistence-all = ["postgres", "redis-backend"]
 

@@ -1,41 +1,44 @@
 //! Built-in tools for the agent.
 
+mod access;
 mod bash;
+mod builder;
+mod context;
 mod edit;
+mod env;
 mod glob;
 mod grep;
 mod kill;
-pub mod notebook;
+mod matcher;
+pub mod mcp;
+mod plan;
 mod process;
 mod read;
 mod registry;
+#[cfg(test)]
+mod testing;
 mod todo;
-pub mod web;
+mod traits;
 mod write;
 
+pub use access::ToolAccess;
 pub use bash::BashTool;
+pub use builder::ToolRegistryBuilder;
+pub use context::ExecutionContext;
 pub use edit::EditTool;
+pub use env::ToolExecutionEnv;
 pub use glob::GlobTool;
 pub use grep::GrepTool;
 pub use kill::KillShellTool;
-pub use notebook::NotebookEditTool;
+pub use matcher::{is_tool_allowed, matches_tool_pattern};
+pub use mcp::{McpToolWrapper, create_mcp_tools};
+pub use plan::PlanTool;
 pub use process::{ProcessId, ProcessInfo, ProcessManager};
 pub use read::ReadTool;
-pub use registry::{Tool, ToolRegistry, ToolResult};
-
-pub(crate) use registry::TypedTool;
+pub use registry::ToolRegistry;
 pub use todo::TodoWriteTool;
-pub use web::WebFetchTool;
+pub use traits::{SchemaTool, Tool};
 pub use write::WriteTool;
 
-pub use crate::agent::ToolAccess;
-
-use std::path::{Path, PathBuf};
-
-pub(crate) fn resolve_path(working_dir: &Path, input_path: &str) -> PathBuf {
-    if input_path.starts_with('/') {
-        PathBuf::from(input_path)
-    } else {
-        working_dir.join(input_path)
-    }
-}
+pub use crate::security::sandbox::{DomainCheck, NetworkSandbox};
+pub use crate::types::{ToolOutput, ToolResult, WebFetchTool, WebSearchTool};

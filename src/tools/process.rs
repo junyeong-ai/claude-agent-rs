@@ -1,4 +1,4 @@
-//! Process manager for background shell execution.
+//! Process manager for background shell execution with security hardening.
 
 use std::collections::HashMap;
 use std::path::Path;
@@ -8,6 +8,8 @@ use std::time::Instant;
 use tokio::io::AsyncReadExt;
 use tokio::process::{Child, Command};
 use tokio::sync::Mutex;
+
+use crate::security::bash::SanitizedEnv;
 
 /// Unique identifier for a managed process.
 pub type ProcessId = String;
@@ -24,6 +26,8 @@ pub struct ProcessInfo {
     /// OS process ID if available.
     pub pid: Option<u32>,
 }
+
+const MAX_OUTPUT_BUFFER_SIZE: usize = 1024 * 1024; // 1MB limit
 
 struct ManagedProcess {
     child: Child,
@@ -48,9 +52,22 @@ impl ProcessManager {
 
     /// Spawn a new background process.
     pub async fn spawn(&self, command: &str, working_dir: &Path) -> Result<ProcessId, String> {
+        self.spawn_with_env(command, working_dir, SanitizedEnv::from_current())
+            .await
+    }
+
+    /// Spawn a new background process with custom sanitized environment.
+    pub async fn spawn_with_env(
+        &self,
+        command: &str,
+        working_dir: &Path,
+        env: SanitizedEnv,
+    ) -> Result<ProcessId, String> {
         let mut cmd = Command::new("bash");
         cmd.arg("-c").arg(command);
         cmd.current_dir(working_dir);
+        cmd.env_clear();
+        cmd.envs(env);
         cmd.stdout(std::process::Stdio::piped());
         cmd.stderr(std::process::Stdio::piped());
 
@@ -100,12 +117,15 @@ impl ProcessManager {
 
         // Try to read available stdout
         if let Some(ref mut stdout) = proc.child.stdout {
-            let mut buf = vec![0u8; 8192];
-            match tokio::time::timeout(std::time::Duration::from_millis(100), stdout.read(&mut buf))
-                .await
+            let mut buffer = vec![0u8; 8192];
+            match tokio::time::timeout(
+                std::time::Duration::from_millis(100),
+                stdout.read(&mut buffer),
+            )
+            .await
             {
                 Ok(Ok(n)) if n > 0 => {
-                    let s = String::from_utf8_lossy(&buf[..n]);
+                    let s = String::from_utf8_lossy(&buffer[..n]);
                     proc.output_buffer.push_str(&s);
                 }
                 _ => {}
@@ -114,16 +134,32 @@ impl ProcessManager {
 
         // Try to read available stderr
         if let Some(ref mut stderr) = proc.child.stderr {
-            let mut buf = vec![0u8; 8192];
-            match tokio::time::timeout(std::time::Duration::from_millis(100), stderr.read(&mut buf))
-                .await
+            let mut buffer = vec![0u8; 8192];
+            match tokio::time::timeout(
+                std::time::Duration::from_millis(100),
+                stderr.read(&mut buffer),
+            )
+            .await
             {
                 Ok(Ok(n)) if n > 0 => {
-                    let s = String::from_utf8_lossy(&buf[..n]);
+                    let s = String::from_utf8_lossy(&buffer[..n]);
                     proc.output_buffer.push_str(&s);
                 }
                 _ => {}
             }
+        }
+
+        // Truncate buffer if it exceeds the limit (keep the most recent data)
+        // Uses drain() for in-place removal without new allocation
+        if proc.output_buffer.len() > MAX_OUTPUT_BUFFER_SIZE {
+            let remove_bytes = proc.output_buffer.len() - MAX_OUTPUT_BUFFER_SIZE;
+            // Find safe UTF-8 character boundary
+            let boundary = proc
+                .output_buffer
+                .char_indices()
+                .find(|(i, _)| *i >= remove_bytes)
+                .map_or(remove_bytes, |(i, _)| i);
+            proc.output_buffer.drain(..boundary);
         }
 
         Ok(proc.output_buffer.clone())
@@ -217,5 +253,72 @@ mod tests {
         tokio::time::sleep(std::time::Duration::from_millis(100)).await;
         let output = mgr.get_output(&id).await.unwrap();
         assert!(output.contains("hello"));
+    }
+
+    #[tokio::test]
+    async fn test_cleanup_finished() {
+        let mgr = ProcessManager::new();
+        let id = mgr
+            .spawn("echo done", &PathBuf::from("/tmp"))
+            .await
+            .unwrap();
+
+        tokio::time::sleep(std::time::Duration::from_millis(150)).await;
+        // Read output into buffer before cleanup
+        let _ = mgr.get_output(&id).await;
+        assert!(!mgr.is_running(&id).await);
+
+        let finished = mgr.cleanup_finished().await;
+        assert_eq!(finished.len(), 1);
+        assert!(finished[0].1.contains("done"));
+    }
+
+    #[tokio::test]
+    async fn test_process_not_found() {
+        let mgr = ProcessManager::new();
+        let result = mgr.get_output(&"nonexistent".to_string()).await;
+        assert!(result.is_err());
+
+        let result = mgr.kill(&"nonexistent".to_string()).await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_buffer_overflow_keeps_recent_data() {
+        let mgr = ProcessManager::new();
+
+        // Generate output larger than MAX_OUTPUT_BUFFER_SIZE (1MB)
+        // We generate 1.5MB of data: 1500 lines of 1000 chars each
+        let id = mgr
+            .spawn(
+                "for i in $(seq 1 1500); do printf 'LINE%04d:%0990d\\n' $i $i; done",
+                &PathBuf::from("/tmp"),
+            )
+            .await
+            .unwrap();
+
+        // Wait for process to complete and read all output
+        let mut output = String::new();
+        for _ in 0..50 {
+            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+            output = mgr.get_output(&id).await.unwrap();
+            if !mgr.is_running(&id).await && output.len() > MAX_OUTPUT_BUFFER_SIZE / 2 {
+                break;
+            }
+        }
+
+        // Buffer should be truncated to ~1MB
+        assert!(
+            output.len() <= MAX_OUTPUT_BUFFER_SIZE + 4,
+            "Buffer should be truncated to MAX_OUTPUT_BUFFER_SIZE, got {}",
+            output.len()
+        );
+
+        // When buffer overflows, recent data should be preserved
+        if output.len() > MAX_OUTPUT_BUFFER_SIZE / 2 {
+            // Check that we have some later lines (not necessarily the last one due to timing)
+            let has_later_lines = (1000..=1500).any(|n| output.contains(&format!("LINE{:04}", n)));
+            assert!(has_later_lines, "Some later data should be preserved");
+        }
     }
 }

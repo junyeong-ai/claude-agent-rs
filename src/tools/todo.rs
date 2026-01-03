@@ -1,84 +1,256 @@
-//! TodoWrite tool - task tracking.
-
-use std::sync::Mutex;
+//! Todo tools for task tracking.
 
 use async_trait::async_trait;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-use super::{ToolResult, TypedTool};
+use super::SchemaTool;
+use super::context::ExecutionContext;
+use crate::session::SessionId;
+use crate::session::session_state::ToolState;
+use crate::session::types::{TodoItem, TodoStatus};
+use crate::types::ToolResult;
 
-/// A todo item.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-pub struct TodoItem {
-    /// Task description (imperative form).
+#[schemars(deny_unknown_fields)]
+pub struct TodoInputItem {
+    #[schemars(length(min = 1))]
     pub content: String,
-    /// Task status.
-    pub status: TodoStatus,
-    /// Task description (present continuous form).
+    pub status: TodoInputStatus,
     #[serde(rename = "activeForm")]
+    #[schemars(length(min = 1))]
     pub active_form: String,
 }
 
-/// Todo status.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
-pub enum TodoStatus {
-    /// Not started.
+pub enum TodoInputStatus {
     Pending,
-    /// Currently working on.
     InProgress,
-    /// Done.
     Completed,
 }
 
-/// Input for the TodoWrite tool.
-#[derive(Debug, Deserialize, JsonSchema)]
-pub struct TodoWriteInput {
-    /// The updated todo list.
-    pub todos: Vec<TodoItem>,
+impl From<TodoInputStatus> for TodoStatus {
+    fn from(status: TodoInputStatus) -> Self {
+        match status {
+            TodoInputStatus::Pending => TodoStatus::Pending,
+            TodoInputStatus::InProgress => TodoStatus::InProgress,
+            TodoInputStatus::Completed => TodoStatus::Completed,
+        }
+    }
 }
 
-/// Tool for managing a task list.
 pub struct TodoWriteTool {
-    todos: Mutex<Vec<TodoItem>>,
+    state: ToolState,
+    session_id: SessionId,
 }
 
 impl TodoWriteTool {
-    /// Create a new TodoWrite tool.
-    pub fn new() -> Self {
-        Self {
-            todos: Mutex::new(Vec::new()),
-        }
-    }
-
-    /// Get current todos.
-    pub fn get_todos(&self) -> Vec<TodoItem> {
-        self.todos.lock().unwrap().clone()
+    pub fn new(state: ToolState, session_id: SessionId) -> Self {
+        Self { state, session_id }
     }
 }
 
-impl Default for TodoWriteTool {
-    fn default() -> Self {
-        Self::new()
-    }
+#[derive(Debug, Deserialize, JsonSchema)]
+#[schemars(deny_unknown_fields)]
+pub struct TodoWriteInput {
+    /// The updated todo list
+    pub todos: Vec<TodoInputItem>,
 }
 
 #[async_trait]
-impl TypedTool for TodoWriteTool {
+impl SchemaTool for TodoWriteTool {
     type Input = TodoWriteInput;
 
     const NAME: &'static str = "TodoWrite";
-    const DESCRIPTION: &'static str = "Create and manage a structured task list. Use for multi-step tasks, \
-        complex work that benefits from tracking, or when explicitly requested. \
-        Each task needs 'content' (imperative form like 'Fix bug') and \
-        'activeForm' (present continuous like 'Fixing bug').";
+    const DESCRIPTION: &'static str = r#"Use this tool to create and manage a structured task list for your current coding session. This helps you track progress, organize complex tasks, and demonstrate thoroughness to the user.
+It also helps the user understand the progress of the task and overall progress of their requests.
 
-    async fn handle(&self, input: TodoWriteInput) -> ToolResult {
+## When to Use This Tool
+Use this tool proactively in these scenarios:
+
+1. Complex multi-step tasks - When a task requires 3 or more distinct steps or actions
+2. Non-trivial and complex tasks - Tasks that require careful planning or multiple operations
+3. User explicitly requests todo list - When the user directly asks you to use the todo list
+4. User provides multiple tasks - When users provide a list of things to be done (numbered or comma-separated)
+5. After receiving new instructions - Immediately capture user requirements as todos
+6. When you start working on a task - Mark it as in_progress BEFORE beginning work. Ideally you should only have one todo as in_progress at a time
+7. After completing a task - Mark it as completed and add any new follow-up tasks discovered during implementation
+
+## When NOT to Use This Tool
+
+Skip using this tool when:
+1. There is only a single, straightforward task
+2. The task is trivial and tracking it provides no organizational benefit
+3. The task can be completed in less than 3 trivial steps
+4. The task is purely conversational or informational
+
+NOTE that you should not use this tool if there is only one trivial task to do. In this case you are better off just doing the task directly.
+
+## Examples of When to Use the Todo List
+
+<example>
+User: I want to add a dark mode toggle to the application settings. Make sure you run the tests and build when you're done!
+Assistant: I'll help you add a dark mode toggle to your application settings. Let me create a todo list to track this implementation.
+*Creates todo list with the following items:*
+1. Creating dark mode toggle component in Settings page
+2. Adding dark mode state management (context/store)
+3. Implementing CSS-in-JS styles for dark theme
+4. Updating existing components to support theme switching
+5. Running tests and build process, addressing any failures or errors that occur
+*Begins working on the first task*
+
+<reasoning>
+The assistant used the todo list because:
+1. Adding dark mode is a multi-step feature requiring UI, state management, and styling changes
+2. The user explicitly requested tests and build be run afterward
+3. The assistant inferred that tests and build need to pass by adding "Ensure tests and build succeed" as the final task
+</reasoning>
+</example>
+
+<example>
+User: Help me rename the function getCwd to getCurrentWorkingDirectory across my project
+Assistant: Let me first search through your codebase to find all occurrences of 'getCwd'.
+*Uses grep or search tools to locate all instances of getCwd in the codebase*
+Assistant: I've found 15 instances of 'getCwd' across 8 different files. Let me create a todo list to track these changes.
+*Creates todo list with specific items for each file that needs updating*
+
+<reasoning>
+The assistant used the todo list because:
+1. First, the assistant searched to understand the scope of the task
+2. Upon finding multiple occurrences across different files, it determined this was a complex task with multiple steps
+3. The todo list helps ensure every instance is tracked and updated systematically
+4. This approach prevents missing any occurrences and maintains code consistency
+</reasoning>
+</example>
+
+
+<example>
+User: I need to implement these features for my e-commerce site: user registration, product catalog, shopping cart, and checkout flow.
+Assistant: I'll help implement these features. First, let's add all the features to the todo list.
+*Creates a todo list breaking down each feature into specific tasks based on the project architecture*
+Assistant: Let's start with user registration. This will involve creating database models, API endpoints, and frontend forms that integrate with your existing authentication system.
+
+<reasoning>
+The assistant used the todo list because:
+1. The user provided multiple complex features to implement in a comma separated list
+2. The todo list helps organize these large features into manageable tasks
+3. This approach allows for tracking progress across the entire implementation
+</reasoning>
+</example>
+
+<example>
+User: Can you help optimize my React application? It's rendering slowly and has performance issues.</user>
+Assistant: I'll help optimize your React application. First, let me examine your codebase to identify potential performance bottlenecks.
+*Reviews component structure, render patterns, state management, and data fetching*
+Assistant: After analyzing your codebase, I've identified several performance issues. Let me create a todo list to track our optimization efforts.
+*Creates todo list with items like: 1) Implementing memoization for expensive calculations in ProductList, 2) Adding virtualization for long lists in Dashboard, 3) Optimizing image loading in Gallery component, 4) Fixing state update loops in ShoppingCart, 5) Reviewing bundle size and implementing code splitting*
+Let's start by implementing memoization for the expensive calculations in your ProductList component.</assistant>
+
+<reasoning>
+The assistant used the todo list because:
+1. First, the assistant examined the codebase to identify specific performance issues
+2. Based on this analysis, it identified multiple optimization opportunities
+3. Performance optimization is a non-trivial task requiring multiple steps
+4. The todo list helps methodically track improvements across different components
+5. This systematic approach ensures all performance bottlenecks are addressed
+</reasoning>
+</example>
+
+## Examples of When NOT to Use the Todo List
+
+<example>
+User: How do I print 'Hello World' in Python?
+Assistant: In Python, you can print "Hello World" with this simple code:
+
+python
+print("Hello World")
+
+This will output the text "Hello World" to the console when executed.</assistant>
+
+<reasoning>
+The assistant did not use the todo list because this is a single, trivial task that can be completed in one step. There's no need to track multiple tasks or steps for such a straightforward request.
+</reasoning>
+</example>
+
+<example>
+User: What does the git status command do?
+Assistant: The git status command shows the current state of your working directory and staging area. It displays which changes have been staged, which haven't, and which files aren't being tracked by Git. This is a fundamental command for understanding the current state of your repository before making commits.
+
+<reasoning>
+The assistant did not use the todo list because this is an informational request with no actual coding task to complete. The user is simply asking for an explanation, not for the assistant to perform multiple steps or tasks.
+</reasoning>
+</example>
+
+<example>
+User: Can you add a comment to the calculateTotal function to explain what it does?
+Assistant: Sure, let me add a comment to the calculateTotal function to explain what it does.
+* Uses the Edit tool to add a comment to the calculateTotal function *
+
+<reasoning>
+The assistant did not use the todo list because this is a single, straightforward task confined to one location in the code. Adding a comment doesn't require tracking multiple steps or systematic organization.
+</reasoning>
+</example>
+
+<example>
+User: Run npm install for me and tell me what happens.
+Assistant: I'll run the npm install command for you.
+
+*Executes: npm install*
+
+The command completed successfully. Here's the output:
+[Output of npm install command]
+
+All dependencies have been installed according to your package.json file.
+
+<reasoning>
+The assistant did not use the todo list because this is a single command execution with immediate results. There are no multiple steps to track or organize, making the todo list unnecessary for this straightforward task.
+</reasoning>
+</example>
+
+## Task States and Management
+
+1. **Task States**: Use these states to track progress:
+   - pending: Task not yet started
+   - in_progress: Currently working on (limit to ONE task at a time)
+   - completed: Task finished successfully
+
+   **IMPORTANT**: Task descriptions must have two forms:
+   - content: The imperative form describing what needs to be done (e.g., "Run tests", "Build the project")
+   - activeForm: The present continuous form shown during execution (e.g., "Running tests", "Building the project")
+
+2. **Task Management**:
+   - Update task status in real-time as you work
+   - Mark tasks complete IMMEDIATELY after finishing (don't batch completions)
+   - Exactly ONE task must be in_progress at any time (not less, not more)
+   - Complete current tasks before starting new ones
+   - Remove tasks that are no longer relevant from the list entirely
+
+3. **Task Completion Requirements**:
+   - ONLY mark a task as completed when you have FULLY accomplished it
+   - If you encounter errors, blockers, or cannot finish, keep the task as in_progress
+   - When blocked, create a new task describing what needs to be resolved
+   - Never mark a task as completed if:
+     - Tests are failing
+     - Implementation is partial
+     - You encountered unresolved errors
+     - You couldn't find necessary files or dependencies
+
+4. **Task Breakdown**:
+   - Create specific, actionable items
+   - Break complex tasks into smaller, manageable steps
+   - Use clear, descriptive task names
+   - Always provide both forms:
+     - content: "Fix authentication bug"
+     - activeForm: "Fixing authentication bug"
+
+When in doubt, use this tool. Being proactive with task management demonstrates attentiveness and ensures you complete all requirements successfully."#;
+
+    async fn handle(&self, input: Self::Input, _context: &ExecutionContext) -> ToolResult {
         let in_progress_count = input
             .todos
             .iter()
-            .filter(|t| t.status == TodoStatus::InProgress)
+            .filter(|t| matches!(t.status, TodoInputStatus::InProgress))
             .count();
 
         if in_progress_count > 1 {
@@ -87,16 +259,32 @@ impl TypedTool for TodoWriteTool {
             );
         }
 
-        *self.todos.lock().unwrap() = input.todos.clone();
+        let todos: Vec<TodoItem> = input
+            .todos
+            .into_iter()
+            .map(|t| {
+                let mut item = TodoItem::new(self.session_id, &t.content, &t.active_form);
+                match t.status {
+                    TodoInputStatus::Pending => {}
+                    TodoInputStatus::InProgress => item.start(),
+                    TodoInputStatus::Completed => item.complete(),
+                }
+                item
+            })
+            .collect();
+
+        if let Err(e) = self.state.set_todos(todos.clone()).await {
+            return ToolResult::error(format!("Failed to save todos: {}", e));
+        }
 
         let mut response = String::from("Todo list updated:\n");
-        for (i, todo) in input.todos.iter().enumerate() {
-            let status_icon = match todo.status {
-                TodoStatus::Pending => "○",
-                TodoStatus::InProgress => "◐",
-                TodoStatus::Completed => "●",
-            };
-            response.push_str(&format!("{}. {} {}\n", i + 1, status_icon, todo.content));
+        for (i, todo) in todos.iter().enumerate() {
+            response.push_str(&format!(
+                "{}. {} {}\n",
+                i + 1,
+                todo.status_icon(),
+                todo.content
+            ));
         }
 
         ToolResult::success(response)
@@ -110,46 +298,44 @@ mod tests {
 
     #[tokio::test]
     async fn test_todo_write() {
-        let tool = TodoWriteTool::new();
+        let session_id = SessionId::new();
+        let state = ToolState::new(session_id);
+        let tool = TodoWriteTool::new(state, session_id);
+        let execution_context = ExecutionContext::default();
+
         let result = tool
-            .execute(serde_json::json!({
-                "todos": [
-                    {
-                        "content": "Fix the bug",
-                        "status": "in_progress",
-                        "activeForm": "Fixing the bug"
-                    },
-                    {
-                        "content": "Write tests",
-                        "status": "pending",
-                        "activeForm": "Writing tests"
-                    }
-                ]
-            }))
+            .execute(
+                serde_json::json!({
+                    "todos": [
+                        {"content": "Fix bug", "status": "in_progress", "activeForm": "Fixing bug"},
+                        {"content": "Write tests", "status": "pending", "activeForm": "Writing tests"}
+                    ]
+                }),
+                &execution_context,
+            )
             .await;
 
         assert!(!result.is_error());
-        assert_eq!(tool.get_todos().len(), 2);
+        assert!(result.text().contains("Fix bug"));
     }
 
     #[tokio::test]
-    async fn test_todo_multiple_in_progress() {
-        let tool = TodoWriteTool::new();
+    async fn test_multiple_in_progress_rejected() {
+        let session_id = SessionId::new();
+        let state = ToolState::new(session_id);
+        let tool = TodoWriteTool::new(state, session_id);
+        let execution_context = ExecutionContext::default();
+
         let result = tool
-            .execute(serde_json::json!({
-                "todos": [
-                    {
-                        "content": "Task 1",
-                        "status": "in_progress",
-                        "activeForm": "Doing task 1"
-                    },
-                    {
-                        "content": "Task 2",
-                        "status": "in_progress",
-                        "activeForm": "Doing task 2"
-                    }
-                ]
-            }))
+            .execute(
+                serde_json::json!({
+                    "todos": [
+                        {"content": "Task 1", "status": "in_progress", "activeForm": "Doing 1"},
+                        {"content": "Task 2", "status": "in_progress", "activeForm": "Doing 2"}
+                    ]
+                }),
+                &execution_context,
+            )
             .await;
 
         assert!(result.is_error());

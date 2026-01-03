@@ -1,92 +1,117 @@
-//! Edit tool - performs string replacements in files.
-
-use std::path::PathBuf;
+//! Edit tool - performs string replacements in files with TOCTOU protection.
 
 use async_trait::async_trait;
 use schemars::JsonSchema;
 use serde::Deserialize;
 
-use super::{ToolResult, TypedTool};
+use super::SchemaTool;
+use super::context::ExecutionContext;
+use crate::security::fs::SecureFileHandle;
+use crate::types::ToolResult;
 
-/// Input for the Edit tool.
 #[derive(Debug, Deserialize, JsonSchema)]
+#[schemars(deny_unknown_fields)]
 pub struct EditInput {
-    /// The absolute path to the file to modify.
+    /// The absolute path to the file to modify
     pub file_path: String,
-    /// The text to replace.
+    /// The text to replace
     pub old_string: String,
-    /// The text to replace it with.
+    /// The text to replace it with (must be different from old_string)
     pub new_string: String,
-    /// Replace all occurrences (default false).
+    /// Replace all occurences of old_string (default false)
     #[serde(default)]
     pub replace_all: bool,
 }
 
-/// Tool for editing files via string replacement.
-pub struct EditTool {
-    working_dir: PathBuf,
-}
+#[derive(Debug, Clone, Copy, Default)]
+pub struct EditTool;
 
 impl EditTool {
-    /// Create a new Edit tool.
-    pub fn new(working_dir: PathBuf) -> Self {
-        Self { working_dir }
+    pub fn new() -> Self {
+        Self
     }
 }
 
 #[async_trait]
-impl TypedTool for EditTool {
+impl SchemaTool for EditTool {
     type Input = EditInput;
 
     const NAME: &'static str = "Edit";
-    const DESCRIPTION: &'static str = "Performs exact string replacements in files. The old_string must match exactly once \
-        in the file unless replace_all is true. Use replace_all for renaming variables or \
-        strings across the file.";
+    const DESCRIPTION: &'static str = r#"Performs exact string replacements in files.
 
-    async fn handle(&self, input: EditInput) -> ToolResult {
+Usage:
+- You must use your `Read` tool at least once in the conversation before editing. This tool will error if you attempt an edit without reading the file.
+- When editing text from Read tool output, ensure you preserve the exact indentation (tabs/spaces) as it appears AFTER the line number prefix. The line number prefix format is: spaces + line number + tab. Everything after that tab is the actual file content to match. Never include any part of the line number prefix in the old_string or new_string.
+- ALWAYS prefer editing existing files in the codebase. NEVER write new files unless explicitly required.
+- Only use emojis if the user explicitly requests it. Avoid adding emojis to files unless asked.
+- The edit will FAIL if `old_string` is not unique in the file. Either provide a larger string with more surrounding context to make it unique or use `replace_all` to change every instance of `old_string`.
+- Use `replace_all` for replacing and renaming strings across the file. This parameter is useful if you want to rename a variable for instance."#;
+
+    async fn handle(&self, input: EditInput, context: &ExecutionContext) -> ToolResult {
         if input.old_string == input.new_string {
             return ToolResult::error("old_string and new_string must be different");
         }
 
-        let path = super::resolve_path(&self.working_dir, &input.file_path);
-
-        let content = match tokio::fs::read_to_string(&path).await {
-            Ok(c) => c,
-            Err(e) => return ToolResult::error(format!("Failed to read file: {}", e)),
+        let path = match context.try_resolve_for(Self::NAME, &input.file_path) {
+            Ok(p) => p,
+            Err(e) => return e,
         };
 
-        let count = content.matches(&input.old_string).count();
+        let old_string = input.old_string;
+        let new_string = input.new_string;
+        let replace_all = input.replace_all;
+        let display_path = path.as_path().display().to_string();
 
-        if count == 0 {
-            return ToolResult::error(
-                "old_string not found in file. Make sure it matches exactly including whitespace.",
-            );
-        }
+        let result = tokio::task::spawn_blocking(move || {
+            let handle =
+                SecureFileHandle::open_read(path.clone()).map_err(|e| e.to_string())?;
+            let original_content = handle.read_to_string().map_err(|e| e.to_string())?;
 
-        if count > 1 && !input.replace_all {
-            return ToolResult::error(format!(
-                "old_string found {} times. Use replace_all=true to replace all, \
-                 or provide more context to make it unique.",
-                count
-            ));
-        }
+            let count = original_content.matches(&old_string).count();
+            if count == 0 {
+                return Err("old_string not found in file. Make sure it matches exactly including whitespace.".to_string());
+            }
+            if count > 1 && !replace_all {
+                return Err(format!(
+                    "old_string found {} times. Use replace_all=true to replace all, \
+                     or provide more context to make it unique.",
+                    count
+                ));
+            }
 
-        let new_content = if input.replace_all {
-            content.replace(&input.old_string, &input.new_string)
-        } else {
-            content.replacen(&input.old_string, &input.new_string, 1)
-        };
+            let new_content = if replace_all {
+                original_content.replace(&old_string, &new_string)
+            } else {
+                original_content.replacen(&old_string, &new_string, 1)
+            };
 
-        match tokio::fs::write(&path, &new_content).await {
-            Ok(_) => {
-                let msg = if input.replace_all {
-                    format!("Replaced {} occurrences in {}", count, path.display())
+            let recheck_handle =
+                SecureFileHandle::open_read(path.clone()).map_err(|e| e.to_string())?;
+            let current_content = recheck_handle.read_to_string().map_err(|e| e.to_string())?;
+            if current_content != original_content {
+                return Err("File was modified externally; operation aborted".to_string());
+            }
+
+            let write_handle = SecureFileHandle::open_write(path).map_err(|e| e.to_string())?;
+            write_handle
+                .atomic_write(new_content.as_bytes())
+                .map_err(|e| e.to_string())?;
+
+            Ok(count)
+        })
+        .await;
+
+        match result {
+            Ok(Ok(count)) => {
+                let msg = if replace_all {
+                    format!("Replaced {} occurrences in {}", count, display_path)
                 } else {
-                    format!("Replaced 1 occurrence in {}", path.display())
+                    format!("Replaced 1 occurrence in {}", display_path)
                 };
                 ToolResult::success(msg)
             }
-            Err(e) => ToolResult::error(format!("Failed to write file: {}", e)),
+            Ok(Err(e)) => ToolResult::error(e),
+            Err(e) => ToolResult::error(format!("Task failed: {}", e)),
         }
     }
 }
@@ -101,61 +126,200 @@ mod tests {
     #[tokio::test]
     async fn test_edit_single() {
         let dir = tempdir().unwrap();
-        let file_path = dir.path().join("test.txt");
+        let root = std::fs::canonicalize(dir.path()).unwrap();
+        let file_path = root.join("test.txt");
         fs::write(&file_path, "Hello, World!").await.unwrap();
 
-        let tool = EditTool::new(dir.path().to_path_buf());
+        let test_context = ExecutionContext::from_path(&root).unwrap();
+        let tool = EditTool;
+
         let result = tool
-            .execute(serde_json::json!({
-                "file_path": file_path.to_str().unwrap(),
-                "old_string": "World",
-                "new_string": "Rust"
-            }))
+            .execute(
+                serde_json::json!({
+                    "file_path": file_path.to_str().unwrap(),
+                    "old_string": "World",
+                    "new_string": "Rust"
+                }),
+                &test_context,
+            )
             .await;
 
         assert!(!result.is_error());
-
         let content = fs::read_to_string(&file_path).await.unwrap();
         assert_eq!(content, "Hello, Rust!");
     }
 
     #[tokio::test]
-    async fn test_edit_multiple_without_flag() {
+    async fn test_edit_replace_all() {
         let dir = tempdir().unwrap();
-        let file_path = dir.path().join("test.txt");
+        let root = std::fs::canonicalize(dir.path()).unwrap();
+        let file_path = root.join("test.txt");
         fs::write(&file_path, "foo bar foo").await.unwrap();
 
-        let tool = EditTool::new(dir.path().to_path_buf());
+        let test_context = ExecutionContext::from_path(&root).unwrap();
+        let tool = EditTool;
+
         let result = tool
-            .execute(serde_json::json!({
-                "file_path": file_path.to_str().unwrap(),
-                "old_string": "foo",
-                "new_string": "baz"
-            }))
+            .execute(
+                serde_json::json!({
+                    "file_path": file_path.to_str().unwrap(),
+                    "old_string": "foo",
+                    "new_string": "baz",
+                    "replace_all": true
+                }),
+                &test_context,
+            )
+            .await;
+
+        assert!(!result.is_error());
+        let content = fs::read_to_string(&file_path).await.unwrap();
+        assert_eq!(content, "baz bar baz");
+    }
+
+    #[tokio::test]
+    async fn test_edit_same_string_error() {
+        let dir = tempdir().unwrap();
+        let root = std::fs::canonicalize(dir.path()).unwrap();
+        let file_path = root.join("test.txt");
+        fs::write(&file_path, "content").await.unwrap();
+
+        let test_context = ExecutionContext::from_path(&root).unwrap();
+        let tool = EditTool;
+
+        let result = tool
+            .execute(
+                serde_json::json!({
+                    "file_path": file_path.to_str().unwrap(),
+                    "old_string": "same",
+                    "new_string": "same"
+                }),
+                &test_context,
+            )
             .await;
 
         assert!(result.is_error());
     }
 
     #[tokio::test]
-    async fn test_edit_replace_all() {
+    async fn test_edit_not_found_error() {
         let dir = tempdir().unwrap();
-        let file_path = dir.path().join("test.txt");
-        fs::write(&file_path, "foo bar foo").await.unwrap();
+        let root = std::fs::canonicalize(dir.path()).unwrap();
+        let file_path = root.join("test.txt");
+        fs::write(&file_path, "Hello, World!").await.unwrap();
 
-        let tool = EditTool::new(dir.path().to_path_buf());
+        let test_context = ExecutionContext::from_path(&root).unwrap();
+        let tool = EditTool;
+
         let result = tool
-            .execute(serde_json::json!({
-                "file_path": file_path.to_str().unwrap(),
-                "old_string": "foo",
-                "new_string": "baz",
-                "replace_all": true
-            }))
+            .execute(
+                serde_json::json!({
+                    "file_path": file_path.to_str().unwrap(),
+                    "old_string": "notfound",
+                    "new_string": "replacement"
+                }),
+                &test_context,
+            )
             .await;
 
-        assert!(!result.is_error());
+        assert!(result.is_error());
+    }
 
-        let content = fs::read_to_string(&file_path).await.unwrap();
-        assert_eq!(content, "baz bar baz");
+    #[tokio::test]
+    async fn test_edit_multiple_without_replace_all_error() {
+        let dir = tempdir().unwrap();
+        let root = std::fs::canonicalize(dir.path()).unwrap();
+        let file_path = root.join("test.txt");
+        fs::write(&file_path, "foo bar foo").await.unwrap();
+
+        let test_context = ExecutionContext::from_path(&root).unwrap();
+        let tool = EditTool;
+
+        let result = tool
+            .execute(
+                serde_json::json!({
+                    "file_path": file_path.to_str().unwrap(),
+                    "old_string": "foo",
+                    "new_string": "baz"
+                }),
+                &test_context,
+            )
+            .await;
+
+        assert!(result.is_error());
+    }
+
+    #[tokio::test]
+    async fn test_edit_path_escape_blocked() {
+        let dir = tempdir().unwrap();
+        let test_context = ExecutionContext::from_path(dir.path()).unwrap();
+        let tool = EditTool;
+
+        let result = tool
+            .execute(
+                serde_json::json!({
+                    "file_path": "/etc/passwd",
+                    "old_string": "root",
+                    "new_string": "evil"
+                }),
+                &test_context,
+            )
+            .await;
+
+        assert!(result.is_error());
+    }
+
+    #[tokio::test]
+    async fn test_edit_concurrent_modification_detected() {
+        let dir = tempdir().unwrap();
+        let root = std::fs::canonicalize(dir.path()).unwrap();
+        let file_path = root.join("concurrent.txt");
+        let original = "Hello World";
+        std::fs::write(&file_path, original).unwrap();
+
+        let test_context = ExecutionContext::from_path(&root).unwrap();
+
+        std::fs::write(&file_path, "Hello Changed World").unwrap();
+
+        let input = EditInput {
+            file_path: file_path.to_str().unwrap().to_string(),
+            old_string: "Hello".to_string(),
+            new_string: "Hi".to_string(),
+            replace_all: false,
+        };
+
+        let path = test_context.resolve(&input.file_path).unwrap();
+        let old_string = input.old_string.clone();
+        let new_string = input.new_string.clone();
+
+        let result = tokio::task::spawn_blocking(move || {
+            let handle = crate::security::fs::SecureFileHandle::open_read(path.clone()).unwrap();
+            let original_content = handle.read_to_string().unwrap();
+
+            std::fs::write(path.as_path(), "Completely different content").unwrap();
+
+            let new_content = original_content.replacen(&old_string, &new_string, 1);
+
+            let recheck_handle =
+                crate::security::fs::SecureFileHandle::open_read(path.clone()).unwrap();
+            let current_content = recheck_handle.read_to_string().unwrap();
+
+            if current_content != original_content {
+                return Err("File was modified externally; operation aborted".to_string());
+            }
+
+            let write_handle = crate::security::fs::SecureFileHandle::open_write(path).unwrap();
+            write_handle.atomic_write(new_content.as_bytes()).unwrap();
+            Ok(())
+        })
+        .await
+        .unwrap();
+
+        assert!(result.is_err());
+        let message = result.unwrap_err();
+        assert!(
+            message.contains("modified externally"),
+            "Expected 'modified externally' error, got: {}",
+            message
+        );
     }
 }

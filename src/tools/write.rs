@@ -1,58 +1,71 @@
-//! Write tool - creates or overwrites files.
-
-use std::path::PathBuf;
+//! Write tool - creates or overwrites files with atomic operations.
 
 use async_trait::async_trait;
 use schemars::JsonSchema;
 use serde::Deserialize;
 
-use super::{ToolResult, TypedTool};
+use super::SchemaTool;
+use super::context::ExecutionContext;
+use crate::security::fs::SecureFileHandle;
+use crate::types::ToolResult;
 
-/// Input for the Write tool.
+/// Input for the Write tool
 #[derive(Debug, Deserialize, JsonSchema)]
+#[schemars(deny_unknown_fields)]
 pub struct WriteInput {
-    /// The absolute path to the file to write.
+    /// The absolute path to the file to write (must be absolute, not relative)
     pub file_path: String,
-    /// The content to write to the file.
+    /// The content to write to the file
     pub content: String,
 }
 
-/// Tool for writing file contents.
-pub struct WriteTool {
-    working_dir: PathBuf,
-}
+#[derive(Debug, Clone, Copy, Default)]
+pub struct WriteTool;
 
 impl WriteTool {
-    /// Create a new Write tool.
-    pub fn new(working_dir: PathBuf) -> Self {
-        Self { working_dir }
+    pub fn new() -> Self {
+        Self
     }
 }
 
 #[async_trait]
-impl TypedTool for WriteTool {
+impl SchemaTool for WriteTool {
     type Input = WriteInput;
 
     const NAME: &'static str = "Write";
-    const DESCRIPTION: &'static str = "Writes content to a file. Creates the file if it doesn't exist, \
-        or completely overwrites it if it does. The file_path must be an absolute path.";
+    const DESCRIPTION: &'static str = r#"Writes a file to the local filesystem.
 
-    async fn handle(&self, input: WriteInput) -> ToolResult {
-        let path = super::resolve_path(&self.working_dir, &input.file_path);
+Usage:
+- This tool will overwrite the existing file if there is one at the provided path.
+- If this is an existing file, you MUST use the Read tool first to read the file's contents. This tool will fail if you did not read the file first.
+- ALWAYS prefer editing existing files in the codebase. NEVER write new files unless explicitly required.
+- NEVER proactively create documentation files (*.md) or README files. Only create documentation files if explicitly requested by the User.
+- Only use emojis if the user explicitly requests it. Avoid writing emojis to files unless asked."#;
 
-        if let Some(parent) = path.parent()
-            && let Err(e) = tokio::fs::create_dir_all(parent).await
-        {
-            return ToolResult::error(format!("Failed to create directories: {}", e));
-        }
+    async fn handle(&self, input: WriteInput, context: &ExecutionContext) -> ToolResult {
+        let path = match context.try_resolve_for(Self::NAME, &input.file_path) {
+            Ok(p) => p,
+            Err(e) => return e,
+        };
 
-        match tokio::fs::write(&path, &input.content).await {
-            Ok(_) => ToolResult::success(format!(
+        let content = input.content;
+        let content_len = content.len();
+        let display_path = path.as_path().display().to_string();
+
+        let result = tokio::task::spawn_blocking(move || {
+            let handle = SecureFileHandle::for_atomic_write(path)?;
+            handle.atomic_write(content.as_bytes())?;
+            Ok::<_, crate::security::SecurityError>(())
+        })
+        .await;
+
+        match result {
+            Ok(Ok(())) => ToolResult::success(format!(
                 "Successfully wrote {} bytes to {}",
-                input.content.len(),
-                path.display()
+                content_len, display_path
             )),
-            Err(e) => ToolResult::error(format!("Failed to write file: {}", e)),
+            Ok(Err(e)) => ToolResult::error(format!("Failed to write file: {}", e)),
+            Err(e) => ToolResult::error(format!("Task failed: {}", e)),
         }
     }
 }
@@ -67,18 +80,23 @@ mod tests {
     #[tokio::test]
     async fn test_write_file() {
         let dir = tempdir().unwrap();
-        let file_path = dir.path().join("test.txt");
+        let root = std::fs::canonicalize(dir.path()).unwrap();
+        let file_path = root.join("test.txt");
 
-        let tool = WriteTool::new(dir.path().to_path_buf());
+        let test_context = ExecutionContext::from_path(&root).unwrap();
+        let tool = WriteTool;
+
         let result = tool
-            .execute(serde_json::json!({
-                "file_path": file_path.to_str().unwrap(),
-                "content": "Hello, World!"
-            }))
+            .execute(
+                serde_json::json!({
+                    "file_path": file_path.to_str().unwrap(),
+                    "content": "Hello, World!"
+                }),
+                &test_context,
+            )
             .await;
 
         assert!(!result.is_error());
-
         let content = fs::read_to_string(&file_path).await.unwrap();
         assert_eq!(content, "Hello, World!");
     }
@@ -86,17 +104,173 @@ mod tests {
     #[tokio::test]
     async fn test_write_creates_directories() {
         let dir = tempdir().unwrap();
-        let file_path = dir.path().join("subdir/nested/test.txt");
+        let root = std::fs::canonicalize(dir.path()).unwrap();
+        let file_path = root.join("subdir/nested/test.txt");
 
-        let tool = WriteTool::new(dir.path().to_path_buf());
+        let test_context = ExecutionContext::from_path(&root).unwrap();
+        let tool = WriteTool;
+
         let result = tool
-            .execute(serde_json::json!({
-                "file_path": file_path.to_str().unwrap(),
-                "content": "Nested content"
-            }))
+            .execute(
+                serde_json::json!({
+                    "file_path": file_path.to_str().unwrap(),
+                    "content": "Nested content"
+                }),
+                &test_context,
+            )
             .await;
 
         assert!(!result.is_error());
         assert!(file_path.exists());
+    }
+
+    #[tokio::test]
+    async fn test_write_path_escape_blocked() {
+        let dir = tempdir().unwrap();
+        let test_context = ExecutionContext::from_path(dir.path()).unwrap();
+        let tool = WriteTool;
+
+        let result = tool
+            .execute(
+                serde_json::json!({
+                    "file_path": "/etc/passwd",
+                    "content": "bad"
+                }),
+                &test_context,
+            )
+            .await;
+
+        assert!(result.is_error());
+    }
+
+    #[tokio::test]
+    async fn test_write_overwrites_existing() {
+        let dir = tempdir().unwrap();
+        let root = std::fs::canonicalize(dir.path()).unwrap();
+        let file_path = root.join("test.txt");
+        fs::write(&file_path, "original content").await.unwrap();
+
+        let test_context = ExecutionContext::from_path(&root).unwrap();
+        let tool = WriteTool;
+
+        let result = tool
+            .execute(
+                serde_json::json!({
+                    "file_path": file_path.to_str().unwrap(),
+                    "content": "new content"
+                }),
+                &test_context,
+            )
+            .await;
+
+        assert!(!result.is_error());
+        let content = fs::read_to_string(&file_path).await.unwrap();
+        assert_eq!(content, "new content");
+    }
+
+    #[tokio::test]
+    async fn test_write_empty_content() {
+        let dir = tempdir().unwrap();
+        let root = std::fs::canonicalize(dir.path()).unwrap();
+        let file_path = root.join("empty.txt");
+
+        let test_context = ExecutionContext::from_path(&root).unwrap();
+        let tool = WriteTool;
+
+        let result = tool
+            .execute(
+                serde_json::json!({
+                    "file_path": file_path.to_str().unwrap(),
+                    "content": ""
+                }),
+                &test_context,
+            )
+            .await;
+
+        assert!(!result.is_error());
+        let content = fs::read_to_string(&file_path).await.unwrap();
+        assert_eq!(content, "");
+    }
+
+    #[tokio::test]
+    async fn test_write_multiline_content() {
+        let dir = tempdir().unwrap();
+        let root = std::fs::canonicalize(dir.path()).unwrap();
+        let file_path = root.join("multi.txt");
+        let content = "line 1\nline 2\nline 3\n";
+
+        let test_context = ExecutionContext::from_path(&root).unwrap();
+        let tool = WriteTool;
+
+        let result = tool
+            .execute(
+                serde_json::json!({
+                    "file_path": file_path.to_str().unwrap(),
+                    "content": content
+                }),
+                &test_context,
+            )
+            .await;
+
+        assert!(!result.is_error());
+        let read_content = fs::read_to_string(&file_path).await.unwrap();
+        assert_eq!(read_content, content);
+    }
+
+    #[tokio::test]
+    async fn test_write_atomic_no_temp_files_remain() {
+        let dir = tempdir().unwrap();
+        let root = std::fs::canonicalize(dir.path()).unwrap();
+        let file_path = root.join("atomic_test.txt");
+
+        let test_context = ExecutionContext::from_path(&root).unwrap();
+        let tool = WriteTool;
+
+        let result = tool
+            .execute(
+                serde_json::json!({
+                    "file_path": file_path.to_str().unwrap(),
+                    "content": "atomic content"
+                }),
+                &test_context,
+            )
+            .await;
+
+        assert!(!result.is_error());
+
+        let entries: Vec<_> = std::fs::read_dir(&root).unwrap().collect();
+        let has_temp = entries.iter().any(|e| {
+            e.as_ref()
+                .unwrap()
+                .file_name()
+                .to_string_lossy()
+                .contains(".tmp")
+        });
+        assert!(!has_temp, "Temporary files should be cleaned up");
+    }
+
+    #[tokio::test]
+    async fn test_write_atomic_preserves_original_until_complete() {
+        let dir = tempdir().unwrap();
+        let root = std::fs::canonicalize(dir.path()).unwrap();
+        let file_path = root.join("preserve_test.txt");
+        fs::write(&file_path, "original content").await.unwrap();
+
+        let test_context = ExecutionContext::from_path(&root).unwrap();
+        let tool = WriteTool;
+
+        let result = tool
+            .execute(
+                serde_json::json!({
+                    "file_path": file_path.to_str().unwrap(),
+                    "content": "new content"
+                }),
+                &test_context,
+            )
+            .await;
+
+        assert!(!result.is_error());
+        let content = fs::read_to_string(&file_path).await.unwrap();
+        assert_eq!(content, "new content");
     }
 }

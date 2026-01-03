@@ -43,7 +43,7 @@ impl CredentialProvider for EnvironmentProvider {
     async fn resolve(&self) -> Result<Credential> {
         std::env::var(&self.env_var)
             .map(Credential::api_key)
-            .map_err(|_| Error::Auth(format!("{} not set", self.env_var)))
+            .map_err(|_| Error::auth(format!("{} not set", self.env_var)))
     }
 }
 

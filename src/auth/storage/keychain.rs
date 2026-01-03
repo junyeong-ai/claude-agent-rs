@@ -38,7 +38,7 @@ impl KeychainStorage {
         }
 
         let creds: CliCredentials = serde_json::from_str(secret).map_err(|e| {
-            crate::Error::Auth(format!("Failed to parse keychain credentials: {}", e))
+            crate::Error::auth(format!("Failed to parse keychain credentials: {}", e))
         })?;
 
         Ok(Some(creds))

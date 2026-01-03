@@ -56,7 +56,7 @@ impl CredentialProvider for ChainProvider {
             }
         }
 
-        Err(Error::Auth(format!(
+        Err(Error::auth(format!(
             "No credentials found. Tried: {}",
             errors.join(", ")
         )))

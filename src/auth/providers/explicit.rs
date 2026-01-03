@@ -53,11 +53,9 @@ mod tests {
     async fn test_explicit_oauth() {
         let provider = ExplicitProvider::oauth("test-token");
         let cred = provider.resolve().await.unwrap();
-        match cred {
-            Credential::OAuth(oauth) => {
-                assert_eq!(oauth.access_token, "test-token");
-            }
-            _ => panic!("Expected OAuth credential"),
-        }
+        let Credential::OAuth(oauth) = cred else {
+            unreachable!("ExplicitProvider::oauth always creates OAuth credential");
+        };
+        assert_eq!(oauth.access_token, "test-token");
     }
 }

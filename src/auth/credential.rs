@@ -1,26 +1,38 @@
 //! Credential types.
 
+use std::fmt;
+
 use chrono::{DateTime, Duration, Utc};
 use serde::{Deserialize, Serialize};
 
 /// OAuth credential from Claude Code CLI.
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct OAuthCredential {
-    /// Access token.
     pub access_token: String,
-    /// Refresh token.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub refresh_token: Option<String>,
-    /// Expiration timestamp (Unix seconds).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub expires_at: Option<i64>,
-    /// Token scopes.
     #[serde(default)]
     pub scopes: Vec<String>,
-    /// Subscription type.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub subscription_type: Option<String>,
+}
+
+impl fmt::Debug for OAuthCredential {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("OAuthCredential")
+            .field("access_token", &"[redacted]")
+            .field(
+                "refresh_token",
+                &self.refresh_token.as_ref().map(|_| "[redacted]"),
+            )
+            .field("expires_at", &self.expires_at)
+            .field("scopes", &self.scopes)
+            .field("subscription_type", &self.subscription_type)
+            .finish()
+    }
 }
 
 impl OAuthCredential {
@@ -46,12 +58,26 @@ impl OAuthCredential {
 }
 
 /// Authentication credential.
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub enum Credential {
-    /// API Key authentication.
     ApiKey(String),
-    /// OAuth token authentication.
     OAuth(OAuthCredential),
+}
+
+impl fmt::Debug for Credential {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::ApiKey(_) => f.debug_tuple("ApiKey").field(&"[redacted]").finish(),
+            Self::OAuth(oauth) => f.debug_tuple("OAuth").field(oauth).finish(),
+        }
+    }
+}
+
+impl Default for Credential {
+    /// Default credential is an empty API key (placeholder for cloud providers).
+    fn default() -> Self {
+        Self::ApiKey(String::new())
+    }
 }
 
 impl Credential {
@@ -69,6 +95,15 @@ impl Credential {
             scopes: vec![],
             subscription_type: None,
         })
+    }
+
+    /// Check if this is a default (empty) credential.
+    /// Used for cloud providers that handle auth differently.
+    pub fn is_default(&self) -> bool {
+        match self {
+            Self::ApiKey(key) => key.is_empty(),
+            Self::OAuth(oauth) => oauth.access_token.is_empty(),
+        }
     }
 
     /// Check if credential is expired.
@@ -93,6 +128,16 @@ impl Credential {
             Credential::ApiKey(_) => "api_key",
             Credential::OAuth(_) => "oauth",
         }
+    }
+
+    /// Check if this is an OAuth credential.
+    pub fn is_oauth(&self) -> bool {
+        matches!(self, Credential::OAuth(_))
+    }
+
+    /// Check if this is an API key credential.
+    pub fn is_api_key(&self) -> bool {
+        matches!(self, Credential::ApiKey(_))
     }
 }
 

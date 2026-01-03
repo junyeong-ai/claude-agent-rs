@@ -30,10 +30,10 @@ impl FileStorage {
 
         let content = tokio::fs::read_to_string(&path)
             .await
-            .map_err(|e| crate::Error::Auth(format!("Failed to read credentials file: {}", e)))?;
+            .map_err(|e| crate::Error::auth(format!("Failed to read credentials file: {}", e)))?;
 
         let creds: CliCredentials = serde_json::from_str(&content)
-            .map_err(|e| crate::Error::Auth(format!("Failed to parse credentials: {}", e)))?;
+            .map_err(|e| crate::Error::auth(format!("Failed to parse credentials: {}", e)))?;
 
         Ok(Some(creds))
     }

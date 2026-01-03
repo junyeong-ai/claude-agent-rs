@@ -1,0 +1,552 @@
+//! Agent execution logic.
+
+use std::path::Path;
+use std::sync::Arc;
+use std::time::Instant;
+
+use tokio::sync::RwLock;
+use tracing::{debug, error, info, instrument, warn};
+
+use super::events::AgentResult;
+use super::request::RequestBuilder;
+use super::state_formatter::collect_compaction_state;
+use super::{AgentMetrics, AgentState, ConversationContext};
+use crate::context::PromptOrchestrator;
+use crate::hooks::{HookContext, HookEvent, HookInput};
+use crate::types::{
+    CompactResult, ContentBlock, Message, PermissionDenial, StopReason, ToolResultBlock,
+};
+
+use super::executor::Agent;
+use crate::types::ApiResponse;
+
+impl Agent {
+    async fn send_with_retry(
+        &self,
+        request_builder: &RequestBuilder,
+        messages: Vec<Message>,
+        dynamic_rules: &str,
+    ) -> crate::Result<ApiResponse> {
+        const MAX_AUTH_RETRIES: u8 = 2;
+        let mut auth_attempts = 0u8;
+
+        loop {
+            let request = request_builder.build(messages.clone(), dynamic_rules);
+            match self.client.send(request).await {
+                Ok(resp) => return Ok(resp),
+                Err(e) if e.is_unauthorized() && auth_attempts < MAX_AUTH_RETRIES => {
+                    auth_attempts += 1;
+                    debug!(
+                        attempt = auth_attempts,
+                        "Received 401, attempting credential refresh"
+                    );
+                    self.client.refresh_credentials().await?;
+                }
+                Err(e) => {
+                    error!(error = %e, "API request failed");
+                    return Err(e);
+                }
+            }
+        }
+    }
+
+    async fn handle_compaction(
+        &self,
+        context: &mut ConversationContext,
+        hook_ctx: &HookContext,
+        metrics: &mut AgentMetrics,
+    ) {
+        let pre_compact_input = HookInput::pre_compact(&self.session_id);
+        if let Err(e) = self
+            .hooks
+            .execute(HookEvent::PreCompact, pre_compact_input, hook_ctx)
+            .await
+        {
+            warn!(error = %e, "PreCompact hook failed");
+        }
+
+        debug!("Compacting context");
+        match context
+            .compact(&self.client, self.config.execution.compact_keep_messages)
+            .await
+        {
+            Ok(CompactResult::Compacted { saved_tokens, .. }) => {
+                info!(saved_tokens, "Context compacted");
+                metrics.record_compaction();
+
+                let state_sections = collect_compaction_state(&self.tools).await;
+                if !state_sections.is_empty() {
+                    context.push(Message::user(format!(
+                        "<system-reminder>\n# State preserved after compaction\n\n{}\n</system-reminder>",
+                        state_sections.join("\n\n")
+                    )));
+                }
+            }
+            Ok(CompactResult::NotNeeded | CompactResult::Skipped { .. }) => {
+                debug!("Compaction skipped or not needed");
+            }
+            Err(e) => {
+                warn!(error = %e, "Context compaction failed");
+            }
+        }
+    }
+
+    fn check_budget(&self) -> crate::Result<()> {
+        if self.budget_tracker.should_stop() {
+            let status = self.budget_tracker.check();
+            warn!(used = ?status.used(), "Budget exceeded, stopping execution");
+            return Err(crate::Error::BudgetExceeded {
+                used: status.used(),
+                limit: self.config.budget.max_cost_usd.unwrap_or(0.0),
+            });
+        }
+        if let Some(ref tenant_budget) = self.tenant_budget
+            && tenant_budget.should_stop()
+        {
+            warn!(
+                tenant_id = %tenant_budget.tenant_id,
+                used = tenant_budget.used_cost_usd(),
+                "Tenant budget exceeded, stopping execution"
+            );
+            return Err(crate::Error::BudgetExceeded {
+                used: tenant_budget.used_cost_usd(),
+                limit: tenant_budget.max_cost_usd(),
+            });
+        }
+        Ok(())
+    }
+
+    pub async fn execute(&self, prompt: &str) -> crate::Result<AgentResult> {
+        let timeout = self
+            .config
+            .execution
+            .timeout
+            .unwrap_or(std::time::Duration::from_secs(600));
+
+        tokio::time::timeout(timeout, self.execute_inner(prompt))
+            .await
+            .map_err(|_| crate::Error::Timeout(timeout))?
+    }
+
+    pub async fn execute_with_messages(
+        &self,
+        previous_messages: Vec<Message>,
+        prompt: &str,
+    ) -> crate::Result<AgentResult> {
+        let context_summary = previous_messages
+            .iter()
+            .filter_map(|m| {
+                m.content
+                    .iter()
+                    .filter_map(|b| match b {
+                        ContentBlock::Text { text, .. } => Some(text.as_str()),
+                        _ => None,
+                    })
+                    .next()
+            })
+            .collect::<Vec<_>>()
+            .join("\n---\n");
+
+        let enriched_prompt = if context_summary.is_empty() {
+            prompt.to_string()
+        } else {
+            format!(
+                "Previous conversation context:\n{}\n\nContinue with: {}",
+                context_summary, prompt
+            )
+        };
+
+        self.execute(&enriched_prompt).await
+    }
+
+    #[instrument(skip(self, prompt), fields(session_id = %self.session_id))]
+    async fn execute_inner(&self, prompt: &str) -> crate::Result<AgentResult> {
+        let execution_start = Instant::now();
+        let hook_ctx = self.hook_context();
+
+        let session_start_input = HookInput::session_start(&self.session_id);
+        if let Err(e) = self
+            .hooks
+            .execute(HookEvent::SessionStart, session_start_input, &hook_ctx)
+            .await
+        {
+            warn!(error = %e, "SessionStart hook failed");
+        }
+
+        let prompt_input = HookInput::user_prompt_submit(&self.session_id, prompt);
+        let prompt_output = self
+            .hooks
+            .execute(HookEvent::UserPromptSubmit, prompt_input, &hook_ctx)
+            .await?;
+
+        if !prompt_output.continue_execution {
+            let session_end_input = HookInput::session_end(&self.session_id);
+            if let Err(e) = self
+                .hooks
+                .execute(HookEvent::SessionEnd, session_end_input, &hook_ctx)
+                .await
+            {
+                warn!(error = %e, "SessionEnd hook failed");
+            }
+            return Err(crate::Error::Permission(
+                prompt_output
+                    .stop_reason
+                    .unwrap_or_else(|| "Blocked by hook".into()),
+            ));
+        }
+
+        let mut context = ConversationContext::new();
+        context.push(Message::user(prompt));
+
+        let mut metrics = AgentMetrics::default();
+        let mut final_text = String::new();
+        let mut final_stop_reason = StopReason::EndTurn;
+        let mut dynamic_rules_context = String::new();
+
+        let request_builder = RequestBuilder::new(&self.config, Arc::clone(&self.tools));
+
+        info!(prompt_len = prompt.len(), "Starting agent execution");
+
+        loop {
+            metrics.iterations += 1;
+            if metrics.iterations > self.config.execution.max_iterations {
+                warn!(
+                    max = self.config.execution.max_iterations,
+                    "Max iterations reached"
+                );
+                break;
+            }
+
+            self.check_budget()?;
+
+            debug!(iteration = metrics.iterations, "Starting iteration");
+
+            let api_start = Instant::now();
+            let response = self
+                .send_with_retry(
+                    &request_builder,
+                    context.messages().to_vec(),
+                    &dynamic_rules_context,
+                )
+                .await?;
+            let api_duration_ms = api_start.elapsed().as_millis() as u64;
+            metrics.record_api_call_with_timing(api_duration_ms);
+            debug!(api_time_ms = api_duration_ms, "API call completed");
+
+            context.update_usage(response.usage);
+            metrics.add_usage(response.usage.input_tokens, response.usage.output_tokens);
+            metrics.record_model_usage(&self.config.model.primary, &response.usage);
+
+            if let Some(ref server_usage) = response.usage.server_tool_use {
+                metrics.update_server_tool_use_from_api(server_usage);
+            }
+
+            let cost = self
+                .budget_tracker
+                .record(&self.config.model.primary, &response.usage);
+            metrics.add_cost(cost);
+            if let Some(ref tenant_budget) = self.tenant_budget {
+                tenant_budget.record(&self.config.model.primary, &response.usage);
+            }
+
+            if let Some(ref orchestrator) = self.orchestrator {
+                let mut orch = orchestrator.write().await;
+                orch.update_usage(&crate::types::TokenUsage {
+                    input_tokens: response.usage.input_tokens as u64,
+                    output_tokens: response.usage.output_tokens as u64,
+                    cache_read_input_tokens: response.usage.cache_read_input_tokens.unwrap_or(0)
+                        as u64,
+                    cache_creation_input_tokens: response
+                        .usage
+                        .cache_creation_input_tokens
+                        .unwrap_or(0) as u64,
+                });
+            }
+
+            final_text = response.text();
+            final_stop_reason = response.stop_reason.unwrap_or(StopReason::EndTurn);
+
+            context.push(Message {
+                role: crate::types::Role::Assistant,
+                content: response.content.clone(),
+            });
+
+            if !response.wants_tool_use() {
+                debug!("No tool use requested, ending loop");
+                break;
+            }
+
+            let tool_uses = response.tool_uses();
+            let hook_ctx = self.hook_context();
+
+            let mut prepared: Vec<(String, String, serde_json::Value)> = Vec::new();
+            let mut blocked: Vec<ToolResultBlock> = Vec::new();
+
+            for tool_use in &tool_uses {
+                let pre_input = HookInput::pre_tool_use(
+                    &self.session_id,
+                    &tool_use.name,
+                    tool_use.input.clone(),
+                );
+                let pre_output = self
+                    .hooks
+                    .execute(HookEvent::PreToolUse, pre_input, &hook_ctx)
+                    .await?;
+
+                if !pre_output.continue_execution {
+                    debug!(tool = %tool_use.name, "Tool blocked by hook");
+                    let reason = pre_output
+                        .stop_reason
+                        .clone()
+                        .unwrap_or_else(|| "Blocked by hook".into());
+                    blocked.push(ToolResultBlock::error(&tool_use.id, reason.clone()));
+                    metrics.record_permission_denial(
+                        PermissionDenial::new(&tool_use.name, &tool_use.id, tool_use.input.clone())
+                            .with_reason(reason),
+                    );
+                } else {
+                    let input = pre_output.updated_input.unwrap_or(tool_use.input.clone());
+                    prepared.push((tool_use.id.clone(), tool_use.name.clone(), input));
+                }
+            }
+
+            let tool_futures = prepared.into_iter().map(|(id, name, input)| {
+                let tools = &self.tools;
+                async move {
+                    let start = Instant::now();
+                    let result = tools.execute(&name, input.clone()).await;
+                    let duration_ms = start.elapsed().as_millis() as u64;
+                    (id, name, input, result, duration_ms)
+                }
+            });
+
+            let parallel_results: Vec<_> = futures::future::join_all(tool_futures).await;
+
+            let mut results = blocked;
+            for (id, name, input, result, duration_ms) in parallel_results {
+                let is_error = result.is_error();
+                debug!(tool = %name, duration_ms, is_error, "Tool execution completed");
+                metrics.record_tool(&name, duration_ms, is_error);
+
+                if let Some(ref inner_usage) = result.inner_usage {
+                    context.update_usage(*inner_usage);
+                    metrics.add_usage(inner_usage.input_tokens, inner_usage.output_tokens);
+                    let inner_model = result.inner_model.as_deref().unwrap_or("claude-haiku-4-5");
+                    metrics.record_model_usage(inner_model, inner_usage);
+
+                    let inner_cost = self.budget_tracker.record(inner_model, inner_usage);
+                    metrics.add_cost(inner_cost);
+
+                    debug!(
+                        tool = %name,
+                        model = %inner_model,
+                        input_tokens = inner_usage.input_tokens,
+                        output_tokens = inner_usage.output_tokens,
+                        cost_usd = inner_cost,
+                        "Accumulated inner usage from tool"
+                    );
+                }
+
+                if let Some(file_path) = extract_file_path(&name, &input)
+                    && let Some(ref orchestrator) = self.orchestrator
+                {
+                    let new_rules = activate_rules_for_file(orchestrator, &file_path).await;
+                    if !new_rules.is_empty() {
+                        dynamic_rules_context =
+                            build_dynamic_rules_context(orchestrator, &file_path).await;
+                        debug!(rules = ?new_rules, "Activated rules for file");
+                    }
+                }
+
+                if is_error {
+                    let failure_input = HookInput::post_tool_use_failure(
+                        &self.session_id,
+                        &name,
+                        result.error_message(),
+                    );
+                    if let Err(e) = self
+                        .hooks
+                        .execute(HookEvent::PostToolUseFailure, failure_input, &hook_ctx)
+                        .await
+                    {
+                        warn!(tool = %name, error = %e, "PostToolUseFailure hook failed");
+                    }
+                } else {
+                    let post_input =
+                        HookInput::post_tool_use(&self.session_id, &name, result.output.clone());
+                    if let Err(e) = self
+                        .hooks
+                        .execute(HookEvent::PostToolUse, post_input, &hook_ctx)
+                        .await
+                    {
+                        warn!(tool = %name, error = %e, "PostToolUse hook failed");
+                    }
+                }
+                results.push(ToolResultBlock::from_tool_result(&id, result));
+            }
+
+            context.push(Message::tool_results(results));
+
+            if self.config.execution.auto_compact
+                && context.should_compact(
+                    200_000,
+                    self.config.execution.compact_threshold,
+                    self.config.execution.compact_keep_messages,
+                )
+            {
+                self.handle_compaction(&mut context, &hook_ctx, &mut metrics)
+                    .await;
+            }
+        }
+
+        metrics.execution_time_ms = execution_start.elapsed().as_millis() as u64;
+
+        let stop_input = HookInput::stop(&self.session_id);
+        if let Err(e) = self
+            .hooks
+            .execute(HookEvent::Stop, stop_input, &hook_ctx)
+            .await
+        {
+            warn!(error = %e, "Stop hook failed");
+        }
+
+        let session_end_input = HookInput::session_end(&self.session_id);
+        if let Err(e) = self
+            .hooks
+            .execute(HookEvent::SessionEnd, session_end_input, &hook_ctx)
+            .await
+        {
+            warn!(error = %e, "SessionEnd hook failed");
+        }
+
+        info!(
+            iterations = metrics.iterations,
+            tool_calls = metrics.tool_calls,
+            api_calls = metrics.api_calls,
+            total_tokens = metrics.total_tokens(),
+            execution_time_ms = metrics.execution_time_ms,
+            "Agent execution completed"
+        );
+
+        Ok(AgentResult {
+            text: final_text,
+            usage: *context.total_usage(),
+            tool_calls: metrics.tool_calls,
+            iterations: metrics.iterations,
+            stop_reason: final_stop_reason,
+            state: AgentState::Completed,
+            metrics,
+            session_id: self.session_id.clone(),
+            structured_output: None,
+            messages: context.messages().to_vec(),
+            uuid: uuid::Uuid::new_v4().to_string(),
+        })
+    }
+
+    pub(crate) fn hook_context(&self) -> HookContext {
+        HookContext::new(&self.session_id)
+            .with_cwd(self.config.working_dir.clone().unwrap_or_default())
+            .with_env(self.config.security.env.clone())
+    }
+}
+
+pub(crate) fn extract_file_path(tool_name: &str, input: &serde_json::Value) -> Option<String> {
+    match tool_name {
+        "Read" | "Write" | "Edit" => input
+            .get("file_path")
+            .and_then(|v| v.as_str())
+            .map(String::from),
+        "Glob" | "Grep" => input.get("path").and_then(|v| v.as_str()).map(String::from),
+        _ => None,
+    }
+}
+
+pub(crate) async fn activate_rules_for_file(
+    orchestrator: &Arc<RwLock<PromptOrchestrator>>,
+    file_path: &str,
+) -> Vec<String> {
+    let orch = orchestrator.read().await;
+    let path = Path::new(file_path);
+    let rules = orch.rules_engine().find_matching(path);
+    rules.iter().map(|r| r.name.clone()).collect()
+}
+
+pub(crate) async fn build_dynamic_rules_context(
+    orchestrator: &Arc<RwLock<PromptOrchestrator>>,
+    file_path: &str,
+) -> String {
+    let orch = orchestrator.read().await;
+    let path = Path::new(file_path);
+    orch.build_dynamic_context(Some(path)).await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_extract_file_path() {
+        let input = serde_json::json!({"file_path": "/src/lib.rs"});
+        assert_eq!(
+            extract_file_path("Read", &input),
+            Some("/src/lib.rs".to_string())
+        );
+
+        let input = serde_json::json!({"path": "/src"});
+        assert_eq!(extract_file_path("Glob", &input), Some("/src".to_string()));
+
+        let input = serde_json::json!({"command": "ls"});
+        assert_eq!(extract_file_path("Bash", &input), None);
+    }
+
+    #[test]
+    fn test_extract_file_path_all_tools() {
+        let file_input = serde_json::json!({"file_path": "/test/file.rs"});
+        let path_input = serde_json::json!({"path": "/test/dir"});
+
+        assert_eq!(
+            extract_file_path("Read", &file_input),
+            Some("/test/file.rs".to_string())
+        );
+        assert_eq!(
+            extract_file_path("Write", &file_input),
+            Some("/test/file.rs".to_string())
+        );
+        assert_eq!(
+            extract_file_path("Edit", &file_input),
+            Some("/test/file.rs".to_string())
+        );
+
+        assert_eq!(
+            extract_file_path("Glob", &path_input),
+            Some("/test/dir".to_string())
+        );
+        assert_eq!(
+            extract_file_path("Grep", &path_input),
+            Some("/test/dir".to_string())
+        );
+
+        assert_eq!(extract_file_path("WebFetch", &file_input), None);
+        assert_eq!(extract_file_path("Task", &file_input), None);
+    }
+
+    #[test]
+    fn test_extract_file_path_missing_field() {
+        let empty = serde_json::json!({});
+        assert_eq!(extract_file_path("Read", &empty), None);
+        assert_eq!(extract_file_path("Glob", &empty), None);
+
+        let wrong_field = serde_json::json!({"other": "value"});
+        assert_eq!(extract_file_path("Read", &wrong_field), None);
+        assert_eq!(extract_file_path("Glob", &wrong_field), None);
+    }
+
+    #[test]
+    fn test_extract_file_path_non_string() {
+        let input = serde_json::json!({"file_path": 123});
+        assert_eq!(extract_file_path("Read", &input), None);
+
+        let input = serde_json::json!({"path": null});
+        assert_eq!(extract_file_path("Glob", &input), None);
+    }
+}

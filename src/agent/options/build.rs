@@ -1,0 +1,296 @@
+//! Agent build methods.
+
+use std::sync::Arc;
+
+use crate::client::{CloudProvider, ProviderConfig};
+use crate::context::{MemoryProvider, PromptOrchestrator, RulesEngine, StaticContext};
+use crate::skills::SkillExecutor;
+use crate::tools::ToolRegistry;
+
+use super::builder::AgentBuilder;
+
+impl AgentBuilder {
+    pub async fn build(mut self) -> crate::Result<crate::agent::Agent> {
+        self.resolve_output_style().await?;
+        self.connect_mcp_servers().await?;
+
+        let client = self.build_client().await?;
+        let tools = self.build_tools().await;
+        let orchestrator = self.build_orchestrator().await;
+
+        let tenant_budget = self.tenant_budget_manager.as_ref().and_then(|m| {
+            self.config
+                .budget
+                .tenant_id
+                .as_ref()
+                .and_then(|id| m.get(id))
+        });
+
+        let mut agent = crate::agent::Agent::with_orchestrator(
+            client,
+            self.config,
+            tools,
+            self.hooks,
+            orchestrator,
+        );
+
+        if let Some(messages) = self.initial_messages {
+            agent = agent.with_initial_messages(messages);
+        }
+        if let Some(id) = self.resume_session_id {
+            agent = agent.with_session_id(id);
+        }
+        if let Some(mcp) = self.mcp_manager {
+            agent = agent.with_mcp_manager(mcp);
+        }
+        if let Some(budget) = tenant_budget {
+            agent = agent.with_tenant_budget(budget);
+        }
+
+        Ok(agent)
+    }
+
+    #[cfg(feature = "cli-integration")]
+    async fn resolve_output_style(&mut self) -> crate::Result<()> {
+        use crate::common::Provider;
+        use crate::output_style::{
+            ChainOutputStyleProvider, InMemoryOutputStyleProvider, OutputStyleSourceType,
+            builtin_styles, file_output_style_provider,
+        };
+
+        if self.config.prompt.output_style.is_some() {
+            return Ok(());
+        }
+
+        let Some(ref name) = self.output_style_name else {
+            return Ok(());
+        };
+
+        let builtins = InMemoryOutputStyleProvider::new()
+            .with_items(builtin_styles())
+            .with_priority(0)
+            .with_source_type(OutputStyleSourceType::Builtin);
+
+        let mut chain = ChainOutputStyleProvider::new().with(builtins);
+
+        if let Some(ref working_dir) = self.config.working_dir {
+            let project = file_output_style_provider()
+                .with_project_path(working_dir)
+                .with_priority(20)
+                .with_source_type(OutputStyleSourceType::Project);
+            chain = chain.with(project);
+        }
+
+        let user = file_output_style_provider()
+            .with_user_path()
+            .with_priority(10)
+            .with_source_type(OutputStyleSourceType::User);
+        chain = chain.with(user);
+
+        if let Ok(Some(style)) = chain.get(name).await {
+            self.config.prompt.output_style = Some(style);
+        }
+
+        Ok(())
+    }
+
+    #[cfg(not(feature = "cli-integration"))]
+    async fn resolve_output_style(&mut self) -> crate::Result<()> {
+        Ok(())
+    }
+
+    async fn connect_mcp_servers(&mut self) -> crate::Result<()> {
+        if self.mcp_configs.is_empty() && self.mcp_manager.is_none() {
+            return Ok(());
+        }
+
+        let manager = self
+            .mcp_manager
+            .take()
+            .unwrap_or_else(|| std::sync::Arc::new(crate::mcp::McpManager::new()));
+
+        for (name, config) in std::mem::take(&mut self.mcp_configs) {
+            manager
+                .add_server(&name, config)
+                .await
+                .map_err(|e| crate::Error::Mcp(format!("{}: {}", name, e)))?;
+        }
+
+        self.mcp_manager = Some(manager);
+        Ok(())
+    }
+
+    async fn build_orchestrator(&mut self) -> PromptOrchestrator {
+        let mut static_context = StaticContext::new();
+
+        if let Some(ref prompt) = self.config.prompt.system_prompt {
+            static_context = static_context.with_system_prompt(prompt.clone());
+        }
+
+        let mut claude_md = String::new();
+        let mut rule_indices = std::mem::take(&mut self.rule_indices);
+
+        if let Some(ref provider) = self.memory_provider
+            && let Ok(content) = provider.load().await
+        {
+            claude_md = content.combined_claude_md();
+            rule_indices.extend(content.rule_indices);
+        }
+
+        if !claude_md.is_empty() {
+            static_context = static_context.with_claude_md(claude_md);
+        }
+
+        let skill_indices = std::mem::take(&mut self.skill_indices);
+        if !skill_indices.is_empty() {
+            let mut lines = vec!["# Available Skills".to_string()];
+            for skill in &skill_indices {
+                lines.push(skill.to_summary_line());
+            }
+            static_context = static_context.with_skill_summary(lines.join("\n"));
+        }
+
+        let mut rules_engine = RulesEngine::new();
+        if !rule_indices.is_empty() {
+            let summary = {
+                let mut lines = vec!["# Available Rules".to_string()];
+                for rule in &rule_indices {
+                    let scope = match &rule.paths {
+                        Some(p) => p.join(", "),
+                        None => "all files".to_string(),
+                    };
+                    lines.push(format!("- {}: applies to {}", rule.name, scope));
+                }
+                lines.join("\n")
+            };
+            static_context = static_context.with_rules_summary(summary);
+            rules_engine.add_indices(rule_indices);
+        }
+
+        PromptOrchestrator::new(static_context, &self.config.model.primary)
+            .with_rules_engine(rules_engine)
+            .with_skill_indices(skill_indices)
+    }
+
+    async fn build_tools(&mut self) -> Arc<ToolRegistry> {
+        let skill_registry = self.skill_registry.take().unwrap_or_default();
+        let subagent_registry = self.subagent_registry.take();
+        let skill_executor = SkillExecutor::new(skill_registry);
+
+        let working_dir = self
+            .config
+            .working_dir
+            .clone()
+            .unwrap_or_else(|| std::env::current_dir().unwrap_or_default());
+
+        let sandbox_config = self
+            .sandbox_settings
+            .take()
+            .map(|s| s.to_sandbox_config(working_dir.clone()));
+
+        let (tool_state, session_id) = match self.resumed_session.take() {
+            Some(session) => {
+                let id = session.id;
+                (crate::session::ToolState::from_session(session), id)
+            }
+            None => {
+                let id = crate::session::SessionId::new();
+                (crate::session::ToolState::new(id), id)
+            }
+        };
+
+        let mut builder = crate::tools::ToolRegistryBuilder::new()
+            .access(&self.config.security.tool_access)
+            .working_dir(working_dir)
+            .skill_executor(skill_executor)
+            .policy(self.config.security.permission_policy.clone())
+            .tool_state(tool_state)
+            .session_id(session_id);
+
+        if let Some(sr) = subagent_registry {
+            builder = builder.subagent_registry(sr);
+        }
+        if let Some(sc) = sandbox_config {
+            builder = builder.sandbox_config(sc);
+        }
+
+        let mut tools = builder.build();
+
+        for tool in std::mem::take(&mut self.custom_tools) {
+            tools.register(tool);
+        }
+
+        if let Some(ref mcp_manager) = self.mcp_manager {
+            let mcp_tools = crate::tools::create_mcp_tools(Arc::clone(mcp_manager)).await;
+            for tool in mcp_tools {
+                tools.register(tool);
+            }
+        }
+
+        Arc::new(tools)
+    }
+
+    async fn build_client(&mut self) -> crate::Result<crate::Client> {
+        let provider = self.cloud_provider.unwrap_or_else(CloudProvider::from_env);
+        let models = self
+            .model_config
+            .take()
+            .unwrap_or_else(|| provider.default_models());
+        let mut config = self
+            .provider_config
+            .take()
+            .unwrap_or_else(|| ProviderConfig::new(models));
+
+        if self.supports_server_tools() {
+            config.beta.add(crate::client::BetaFeature::WebSearch);
+            config.beta.add(crate::client::BetaFeature::WebFetch);
+            tracing::debug!("Enabled server-side web tools");
+        }
+
+        let mut builder = crate::Client::builder().config(config);
+
+        match provider {
+            CloudProvider::Anthropic => {
+                builder = builder.anthropic();
+                if let Some(cred) = self.credential.take() {
+                    builder = builder.auth(cred).await?;
+                }
+                if let Some(oauth_config) = self.oauth_config.take() {
+                    builder = builder.oauth_config(oauth_config);
+                }
+            }
+            #[cfg(feature = "aws")]
+            CloudProvider::Bedrock => {
+                let region = self.aws_region.take().unwrap_or_else(|| "us-east-1".into());
+                builder = builder.with_aws_region(region);
+            }
+            #[cfg(feature = "gcp")]
+            CloudProvider::Vertex => {
+                let project = self
+                    .gcp_project
+                    .take()
+                    .ok_or_else(|| crate::Error::Config("Vertex requires gcp_project".into()))?;
+                let region = self
+                    .gcp_region
+                    .take()
+                    .unwrap_or_else(|| "us-central1".into());
+                builder = builder.with_gcp(project, region);
+            }
+            #[cfg(feature = "azure")]
+            CloudProvider::Foundry => {
+                let resource = self.azure_resource.take().ok_or_else(|| {
+                    crate::Error::Config("Foundry requires azure_resource".into())
+                })?;
+                builder = builder.with_azure_resource(resource);
+            }
+        }
+
+        if let Some(fallback) = self.fallback_config.take() {
+            builder = builder.fallback(fallback);
+        } else if let Some(ref model) = self.config.budget.fallback_model {
+            builder = builder.fallback_model(model);
+        }
+
+        builder.build().await
+    }
+}

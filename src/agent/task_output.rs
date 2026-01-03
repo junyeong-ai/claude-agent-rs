@@ -1,39 +1,45 @@
 //! TaskOutputTool - retrieves results from running or completed tasks.
-//!
-//! This tool allows agents to check on the status and retrieve results
-//! from background tasks, shell commands, and remote sessions.
+
+use std::time::Duration;
 
 use async_trait::async_trait;
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-use crate::tools::{Tool, ToolResult};
+use super::task_registry::TaskRegistry;
+use crate::session::SessionState;
+use crate::tools::{ExecutionContext, SchemaTool};
+use crate::types::ToolResult;
 
-/// Tool for retrieving output from running or completed tasks
-pub struct TaskOutputTool;
+pub struct TaskOutputTool {
+    registry: TaskRegistry,
+}
 
 impl TaskOutputTool {
-    /// Create a new TaskOutputTool
-    pub fn new() -> Self {
-        Self
+    pub fn new(registry: TaskRegistry) -> Self {
+        Self { registry }
     }
 }
 
-impl Default for TaskOutputTool {
-    fn default() -> Self {
-        Self::new()
+impl Clone for TaskOutputTool {
+    fn clone(&self) -> Self {
+        Self {
+            registry: self.registry.clone(),
+        }
     }
 }
 
-/// Input parameters for the TaskOutput tool
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[schemars(deny_unknown_fields)]
 pub struct TaskOutputInput {
     /// The task ID to get output from
     pub task_id: String,
-    /// Whether to wait for task completion (default: true)
+    /// Whether to wait for completion
     #[serde(default = "default_block")]
     pub block: bool,
-    /// Maximum wait time in milliseconds (default: 30000, max: 600000)
+    /// Max wait time in ms
     #[serde(default = "default_timeout")]
+    #[schemars(range(min = 0, max = 600000))]
     pub timeout: u64,
 }
 
@@ -45,105 +51,85 @@ fn default_timeout() -> u64 {
     30000
 }
 
-/// Status of a task
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum TaskStatus {
-    /// Task is still running
     Running,
-    /// Task completed successfully
     Completed,
-    /// Task failed with an error
     Failed,
-    /// Task was cancelled
     Cancelled,
-    /// Task not found
     NotFound,
 }
 
-/// Output from TaskOutput tool
+impl From<SessionState> for TaskStatus {
+    fn from(state: SessionState) -> Self {
+        match state {
+            SessionState::Active | SessionState::WaitingForTools | SessionState::WaitingForUser => {
+                TaskStatus::Running
+            }
+            SessionState::Completed => TaskStatus::Completed,
+            SessionState::Failed => TaskStatus::Failed,
+            SessionState::Cancelled => TaskStatus::Cancelled,
+            SessionState::Created | SessionState::Paused => TaskStatus::Running,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TaskOutputResult {
-    /// The task ID
     pub task_id: String,
-    /// Current status of the task
     pub status: TaskStatus,
-    /// Output content (if available)
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub output: Option<String>,
-    /// Error message (if failed)
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
-    /// Exit code (for shell tasks)
-    pub exit_code: Option<i32>,
 }
 
 #[async_trait]
-impl Tool for TaskOutputTool {
-    fn name(&self) -> &str {
-        "TaskOutput"
-    }
+impl SchemaTool for TaskOutputTool {
+    type Input = TaskOutputInput;
 
-    fn description(&self) -> &str {
-        "Retrieves output from a running or completed task (background shell, agent, or remote session). \
-         Use block=true (default) to wait for completion. Use block=false for non-blocking check. \
-         Task IDs can be found using the /tasks command."
-    }
+    const NAME: &'static str = "TaskOutput";
+    const DESCRIPTION: &'static str = r#"
+- Retrieves output from a running or completed task (background shell, agent, or remote session)
+- Takes a task_id parameter identifying the task
+- Returns the task output along with status information
+- Use block=true (default) to wait for task completion
+- Use block=false for non-blocking check of current status
+- Task IDs can be found using the Task tool response
+- Works with all task types: background shells, async agents, and remote sessions
+- Output is limited to prevent excessive memory usage; for larger outputs, consider streaming
+- Important: task_id is the Task tool's returned ID, NOT a process PID"#;
 
-    fn input_schema(&self) -> serde_json::Value {
-        serde_json::json!({
-            "type": "object",
-            "properties": {
-                "task_id": {
-                    "type": "string",
-                    "description": "The task ID to get output from"
-                },
-                "block": {
-                    "type": "boolean",
-                    "description": "Whether to wait for completion (default: true)",
-                    "default": true
-                },
-                "timeout": {
-                    "type": "number",
-                    "description": "Max wait time in ms (default: 30000, max: 600000)",
-                    "default": 30000,
-                    "minimum": 0,
-                    "maximum": 600000
-                }
-            },
-            "required": ["task_id"]
-        })
-    }
+    async fn handle(&self, input: TaskOutputInput, _context: &ExecutionContext) -> ToolResult {
+        let timeout = Duration::from_millis(input.timeout.min(600000));
 
-    async fn execute(&self, input: serde_json::Value) -> ToolResult {
-        let input: TaskOutputInput = match serde_json::from_value(input) {
-            Ok(i) => i,
-            Err(e) => return ToolResult::error(format!("Invalid input: {}", e)),
+        let result = if input.block {
+            self.registry
+                .wait_for_completion(&input.task_id, timeout)
+                .await
+        } else {
+            self.registry.get_result(&input.task_id).await
         };
 
-        // Validate timeout
-        let timeout = input.timeout.min(600000);
-
-        // In a full implementation, this would:
-        // 1. Look up the task by ID in a task registry
-        // 2. If block=true and task is running, wait up to timeout
-        // 3. Return the task status and any available output
-
-        // For now, return a placeholder response indicating task not found
-        // A TaskRegistry would be needed to track running tasks
-        let result = TaskOutputResult {
-            task_id: input.task_id.clone(),
-            status: TaskStatus::NotFound,
-            output: None,
-            error: Some(format!(
-                "Task '{}' not found. Task tracking is not yet fully implemented. \
-                 Timeout was set to {}ms, blocking={}",
-                input.task_id, timeout, input.block
-            )),
-            exit_code: None,
+        let output = match result {
+            Some((status, output, error)) => TaskOutputResult {
+                task_id: input.task_id,
+                status: status.into(),
+                output,
+                error,
+            },
+            None => TaskOutputResult {
+                task_id: input.task_id,
+                status: TaskStatus::NotFound,
+                output: None,
+                error: Some("Task not found".to_string()),
+            },
         };
 
         ToolResult::success(
-            serde_json::to_string_pretty(&result)
-                .unwrap_or_else(|_| format!("Task '{}' not found", input.task_id)),
+            serde_json::to_string_pretty(&output)
+                .unwrap_or_else(|_| format!("Task status: {:?}", output.status)),
         )
     }
 }
@@ -151,45 +137,130 @@ impl Tool for TaskOutputTool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::agent::{AgentMetrics, AgentResult, AgentState};
+    use crate::session::MemoryPersistence;
+    use crate::tools::Tool;
+    use crate::types::{StopReason, ToolOutput, Usage};
+    use std::sync::Arc;
 
-    #[test]
-    fn test_task_output_input_defaults() {
-        let input: TaskOutputInput = serde_json::from_value(serde_json::json!({
-            "task_id": "test_123"
-        }))
-        .unwrap();
+    // Use valid UUIDs for tests to ensure consistent session IDs
+    const TASK_1_UUID: &str = "00000000-0000-0000-0000-000000000011";
+    const TASK_2_UUID: &str = "00000000-0000-0000-0000-000000000012";
+    const TASK_3_UUID: &str = "00000000-0000-0000-0000-000000000013";
 
-        assert_eq!(input.task_id, "test_123");
-        assert!(input.block);
-        assert_eq!(input.timeout, 30000);
+    fn test_registry() -> TaskRegistry {
+        TaskRegistry::new(Arc::new(MemoryPersistence::new()))
     }
 
-    #[test]
-    fn test_task_output_input_custom() {
-        let input: TaskOutputInput = serde_json::from_value(serde_json::json!({
-            "task_id": "test_456",
-            "block": false,
-            "timeout": 5000
-        }))
-        .unwrap();
+    fn mock_result() -> AgentResult {
+        AgentResult {
+            text: "Completed successfully".to_string(),
+            usage: Usage::default(),
+            tool_calls: 0,
+            iterations: 1,
+            stop_reason: StopReason::EndTurn,
+            state: AgentState::Completed,
+            metrics: AgentMetrics::default(),
+            session_id: "test-session".to_string(),
+            structured_output: None,
+            messages: Vec::new(),
+            uuid: "test-uuid".to_string(),
+        }
+    }
 
-        assert!(!input.block);
-        assert_eq!(input.timeout, 5000);
+    #[tokio::test]
+    async fn test_task_output_completed() {
+        let registry = test_registry();
+        registry
+            .register(TASK_1_UUID.into(), "explore".into(), "Test".into())
+            .await;
+        registry.complete(TASK_1_UUID, mock_result()).await;
+
+        let tool = TaskOutputTool::new(registry);
+        let context = crate::tools::ExecutionContext::default();
+        let result = tool
+            .execute(
+                serde_json::json!({
+                    "task_id": TASK_1_UUID
+                }),
+                &context,
+            )
+            .await;
+
+        assert!(!result.is_error());
+        if let ToolOutput::Success(content) = &result.output {
+            assert!(content.contains("completed"));
+        }
     }
 
     #[tokio::test]
     async fn test_task_output_not_found() {
-        let tool = TaskOutputTool::new();
+        let registry = test_registry();
+        let tool = TaskOutputTool::new(registry);
+        let context = crate::tools::ExecutionContext::default();
+
         let result = tool
-            .execute(serde_json::json!({
-                "task_id": "nonexistent_task"
-            }))
+            .execute(
+                serde_json::json!({
+                    "task_id": "nonexistent"
+                }),
+                &context,
+            )
             .await;
 
-        // Should return success with NotFound status
-        assert!(!result.is_error());
-        if let ToolResult::Success(content) = result {
-            assert!(content.contains("not_found") || content.contains("NotFound"));
+        if let ToolOutput::Success(content) = &result.output {
+            assert!(content.contains("not_found"));
+        }
+    }
+
+    #[tokio::test]
+    async fn test_task_output_non_blocking() {
+        let registry = test_registry();
+        registry
+            .register(TASK_2_UUID.into(), "explore".into(), "Running".into())
+            .await;
+
+        let tool = TaskOutputTool::new(registry);
+        let context = crate::tools::ExecutionContext::default();
+        let result = tool
+            .execute(
+                serde_json::json!({
+                    "task_id": TASK_2_UUID,
+                    "block": false
+                }),
+                &context,
+            )
+            .await;
+
+        if let ToolOutput::Success(content) = &result.output {
+            assert!(content.contains("running"));
+        }
+    }
+
+    #[tokio::test]
+    async fn test_task_output_failed() {
+        let registry = test_registry();
+        registry
+            .register(TASK_3_UUID.into(), "explore".into(), "Failing".into())
+            .await;
+        registry
+            .fail(TASK_3_UUID, "Something went wrong".into())
+            .await;
+
+        let tool = TaskOutputTool::new(registry);
+        let context = crate::tools::ExecutionContext::default();
+        let result = tool
+            .execute(
+                serde_json::json!({
+                    "task_id": TASK_3_UUID
+                }),
+                &context,
+            )
+            .await;
+
+        if let ToolOutput::Success(content) = &result.output {
+            assert!(content.contains("failed"));
+            assert!(content.contains("Something went wrong"));
         }
     }
 }

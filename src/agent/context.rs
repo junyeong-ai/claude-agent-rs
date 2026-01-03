@@ -4,10 +4,7 @@ use crate::types::{CompactResult, ContentBlock, Message, Role, Usage};
 
 const CHARS_PER_TOKEN: usize = 4;
 const NON_TEXT_BLOCK_TOKENS: usize = 25;
-const KEEP_RECENT_MESSAGES: usize = 4;
-const SUMMARY_MODEL: &str = "claude-haiku-4-5-20251001";
 
-/// Manages conversation history and context window.
 #[derive(Debug, Default)]
 pub struct ConversationContext {
     messages: Vec<Message>,
@@ -18,18 +15,15 @@ pub struct ConversationContext {
 }
 
 impl ConversationContext {
-    /// Create a new empty context.
     pub fn new() -> Self {
         Self::default()
     }
 
-    /// Add a message to the context.
     pub fn push(&mut self, message: Message) {
         self.estimated_tokens += Self::estimate_message_tokens(&message);
         self.messages.push(message);
     }
 
-    /// Update usage statistics.
     pub fn update_usage(&mut self, usage: Usage) {
         self.total_usage.input_tokens += usage.input_tokens;
         self.total_usage.output_tokens += usage.output_tokens;
@@ -37,51 +31,65 @@ impl ConversationContext {
             self.total_usage.cache_read_input_tokens =
                 Some(self.total_usage.cache_read_input_tokens.unwrap_or(0) + cache_read);
         }
+        if let Some(cache_creation) = usage.cache_creation_input_tokens {
+            self.total_usage.cache_creation_input_tokens =
+                Some(self.total_usage.cache_creation_input_tokens.unwrap_or(0) + cache_creation);
+        }
+        if let Some(ref server_usage) = usage.server_tool_use {
+            let current = self
+                .total_usage
+                .server_tool_use
+                .get_or_insert_with(Default::default);
+            current.web_search_requests += server_usage.web_search_requests;
+            current.web_fetch_requests += server_usage.web_fetch_requests;
+        }
     }
 
-    /// Get all messages.
     pub fn messages(&self) -> &[Message] {
         &self.messages
     }
 
-    /// Get messages as mutable.
     pub fn messages_mut(&mut self) -> &mut Vec<Message> {
         &mut self.messages
     }
 
-    /// Get total usage.
     pub fn total_usage(&self) -> &Usage {
         &self.total_usage
     }
 
-    /// Get estimated token count.
     pub fn estimated_tokens(&self) -> usize {
         self.estimated_tokens
     }
 
-    /// Get the conversation summary if available.
     pub fn summary(&self) -> Option<&str> {
         self.summary.as_deref()
     }
 
-    /// Get the number of compactions performed.
     pub fn compactions(&self) -> usize {
         self.compactions
     }
 
-    /// Check if context should be compacted.
-    pub fn should_compact(&self, max_tokens: usize, threshold: f32) -> bool {
-        self.messages.len() > KEEP_RECENT_MESSAGES
+    /// Set estimated tokens (for testing only).
+    #[cfg(test)]
+    pub fn set_estimated_tokens(&mut self, tokens: usize) {
+        self.estimated_tokens = tokens;
+    }
+
+    pub fn should_compact(&self, max_tokens: usize, threshold: f32, keep_messages: usize) -> bool {
+        self.messages.len() > keep_messages
             && self.estimated_tokens as f32 > max_tokens as f32 * threshold
     }
 
-    /// Compact the context by summarizing older messages.
-    pub async fn compact(&mut self, client: &crate::Client) -> crate::Result<CompactResult> {
-        if self.messages.len() <= KEEP_RECENT_MESSAGES {
+    pub async fn compact(
+        &mut self,
+        client: &crate::Client,
+        keep_messages: usize,
+    ) -> crate::Result<CompactResult> {
+        if self.messages.len() <= keep_messages {
             return Ok(CompactResult::NotNeeded);
         }
 
-        let split_point = self.messages.len() - KEEP_RECENT_MESSAGES;
+        let split_point = self.messages.len() - keep_messages;
         let to_summarize = &self.messages[..split_point];
         let to_keep = self.messages[split_point..].to_vec();
 
@@ -115,19 +123,16 @@ impl ConversationContext {
         })
     }
 
-    /// Clear all messages.
     pub fn clear(&mut self) {
         self.messages.clear();
         self.estimated_tokens = 0;
         self.summary = None;
     }
 
-    /// Get message count.
     pub fn len(&self) -> usize {
         self.messages.len()
     }
 
-    /// Check if empty.
     pub fn is_empty(&self) -> bool {
         self.messages.is_empty()
     }
@@ -137,7 +142,7 @@ impl ConversationContext {
             .content
             .iter()
             .map(|block| match block {
-                ContentBlock::Text { text } => text.len() / CHARS_PER_TOKEN,
+                ContentBlock::Text { text, .. } => text.len() / CHARS_PER_TOKEN,
                 _ => NON_TEXT_BLOCK_TOKENS,
             })
             .sum()
@@ -187,12 +192,14 @@ impl ConversationContext {
         client: &crate::Client,
         prompt: &str,
     ) -> crate::Result<String> {
-        use crate::client::messages::{CreateMessageRequest, MessagesClient};
+        use crate::client::ModelType;
+        use crate::client::messages::CreateMessageRequest;
 
-        let request = CreateMessageRequest::new(SUMMARY_MODEL, vec![Message::user(prompt)])
-            .with_max_tokens(2000);
+        let model = client.adapter().model(ModelType::Small).to_string();
+        let request =
+            CreateMessageRequest::new(&model, vec![Message::user(prompt)]).with_max_tokens(2000);
 
-        let response = MessagesClient::new(client).create(request).await?;
+        let response = client.send(request).await?;
         Ok(response.text())
     }
 }
@@ -203,29 +210,29 @@ mod tests {
 
     #[test]
     fn test_context_push() {
-        let mut ctx = ConversationContext::new();
-        ctx.push(Message::user("Hello"));
-        assert_eq!(ctx.len(), 1);
-        assert!(ctx.estimated_tokens() > 0);
+        let mut history = ConversationContext::new();
+        history.push(Message::user("Hello"));
+        assert_eq!(history.len(), 1);
+        assert!(history.estimated_tokens() > 0);
     }
 
     #[test]
     fn test_should_compact() {
-        let mut ctx = ConversationContext::new();
+        let mut history = ConversationContext::new();
         for i in 0..10 {
-            ctx.push(Message::user(format!("Message {}", i)));
+            history.push(Message::user(format!("Message {}", i)));
         }
-        ctx.estimated_tokens = 8000;
-        assert!(ctx.should_compact(10000, 0.75));
-        assert!(!ctx.should_compact(10000, 0.85));
+        history.estimated_tokens = 8000;
+        assert!(history.should_compact(10000, 0.75, 4));
+        assert!(!history.should_compact(10000, 0.85, 4));
     }
 
     #[test]
     fn test_should_compact_few_messages() {
-        let mut ctx = ConversationContext::new();
-        ctx.push(Message::user("Hello"));
-        ctx.estimated_tokens = 8000;
-        assert!(!ctx.should_compact(10000, 0.75));
+        let mut history = ConversationContext::new();
+        history.push(Message::user("Hello"));
+        history.estimated_tokens = 8000;
+        assert!(!history.should_compact(10000, 0.75, 4));
     }
 
     #[test]
@@ -245,7 +252,7 @@ mod tests {
 
     #[test]
     fn test_compactions_counter() {
-        let ctx = ConversationContext::new();
-        assert_eq!(ctx.compactions(), 0);
+        let history = ConversationContext::new();
+        assert_eq!(history.compactions(), 0);
     }
 }

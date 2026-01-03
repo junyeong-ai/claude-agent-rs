@@ -99,6 +99,9 @@ impl Agent {
             None => BudgetTracker::unlimited(),
         };
 
+        // Resolve model aliases using client's model config
+        let config = Self::resolve_model_aliases(config, &client);
+
         Self {
             client,
             config,
@@ -111,6 +114,36 @@ impl Agent {
             tenant_budget: None,
             mcp_manager: None,
         }
+    }
+
+    fn resolve_model_aliases(mut config: AgentConfig, client: &Client) -> AgentConfig {
+        let model_config = &client.config().models;
+
+        // Resolve primary model alias
+        let primary = &config.model.primary;
+        let resolved_primary = model_config.resolve_alias(primary);
+        if resolved_primary != primary {
+            tracing::debug!(
+                alias = %primary,
+                resolved = %resolved_primary,
+                "Resolved primary model alias"
+            );
+            config.model.primary = resolved_primary.to_string();
+        }
+
+        // Resolve small model alias
+        let small = &config.model.small;
+        let resolved_small = model_config.resolve_alias(small);
+        if resolved_small != small {
+            tracing::debug!(
+                alias = %small,
+                resolved = %resolved_small,
+                "Resolved small model alias"
+            );
+            config.model.small = resolved_small.to_string();
+        }
+
+        config
     }
 
     pub fn with_tenant_budget(mut self, budget: Arc<TenantBudget>) -> Self {

@@ -1,6 +1,6 @@
 [package]
 name = "claude-agent"
-version = "0.1.7"
+version = "0.2.0"
 edition = "2024"
 rust-version = "1.92"
 license = "MIT OR Apache-2.0"
@@ -13,27 +13,28 @@ categories = ["api-bindings", "asynchronous"]
 
 [dependencies]
 # Async runtime
-tokio = { version = "1", features = ["full", "process"] }
+tokio = { version = "^1.40", features = ["rt-multi-thread", "macros", "sync", "time", "io-util", "process", "signal"] }
 
-# HTTP client (0.13 uses 'rustls' instead of 'rustls-tls')
+# HTTP client
 reqwest = { version = "0.13", default-features = false, features = [
     "json",
     "stream",
     "rustls",
     "http2",
+    "multipart",
 ] }
+mime_guess = "2"
 
 # Serialization
-serde = { version = "1", features = ["derive"] }
-serde_json = "1"
-serde_yaml = "0.9"
+serde = { version = "^1.0", features = ["derive"] }
+serde_json = "^1.0"
+serde_yaml_ng = "0.10"
 schemars = "1.2"
 
 # Async utilities
 futures = "0.3"
 async-trait = "0.1"
 pin-project-lite = "0.2"
-tokio-stream = "0.1"
 
 # Error handling
 thiserror = "2"
@@ -44,24 +45,63 @@ glob = "0.3"
 # Regex
 regex = "1"
 
+# URL encoding
+url = "2"
+urlencoding = "2"
+
+# Security sandbox - TOCTOU-safe file operations, process limits
+rustix = { version = "1.1", features = ["fs", "process"] }
+
+# Bash command analysis - AST parsing
+tree-sitter = "0.26"
+tree-sitter-bash = "0.25"
+
 # Time
 chrono = { version = "0.4", features = ["serde"] }
 tokio-util = { version = "0.7", features = ["time"] }
 
 # Utilities
-tracing = "0.1"
-bytes = "1"
-uuid = { version = "1", features = ["v4"] }
+tracing = "^0.1"
+bytes = "^1.7"
+uuid = { version = "^1.10", features = ["v4", "serde"] }
+base64 = "0.22"
+rand = "0.9"
 
 # Authentication & directories
 directories = "6"
-dirs = "6"
 
-# MCP (Model Context Protocol) support - optional
+# MCP support - optional
 rmcp = { version = "0.12", optional = true, features = ["client", "transport-child-process", "client-side-sse", "reqwest"] }
 
-# Optional: proc-macro for custom tools
-# claude-agent-macros = { version = "0.1", path = "./macros", optional = true }
+# AWS Bedrock - optional
+aws-config = { version = "^1.8", optional = true }
+aws-credential-types = { version = "^1.2", optional = true }
+aws-sigv4 = { version = "^1.3", optional = true }
+aws-smithy-runtime-api = { version = "^1.9", optional = true }
+
+# Google Cloud Vertex AI - optional
+gcp_auth = { version = "0.12", optional = true }
+
+# Azure AI Foundry - optional
+azure_identity = { version = "0.30", optional = true }
+azure_core = { version = "0.30", optional = true }
+
+# Persistence backends - optional
+sqlx = { version = "0.8", features = ["runtime-tokio", "postgres", "json", "chrono"], optional = true }
+redis = { version = "1", features = ["tokio-comp", "connection-manager"], optional = true }
+
+# OpenTelemetry - optional
+opentelemetry = { version = "0.31", optional = true }
+opentelemetry_sdk = { version = "0.31", features = ["rt-tokio", "metrics"], optional = true }
+opentelemetry-otlp = { version = "0.31", features = ["http-proto", "metrics"], optional = true }
+opentelemetry-semantic-conventions = { version = "0.31", optional = true }
+tracing-opentelemetry = { version = "0.32", optional = true }
+tracing-subscriber = { version = "0.3", features = ["env-filter"], optional = true }
+
+# Multimedia support - optional
+pdf-extract = { version = "0.10", optional = true }
+
+dashmap = "^6.1"
 
 [dev-dependencies]
 tokio-test = "0.4"
@@ -70,30 +110,55 @@ tempfile = "3"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
 [features]
-default = []
-# macros = ["claude-agent-macros"]
+default = ["cli-integration"]
+
+# CLI Integration (Claude Code environment support)
+cli-integration = []    # ClaudeCliProvider, file-based loaders
+
 mcp = ["rmcp"]
 
-[[example]]
-name = "simple_query"
-path = "examples/simple_query.rs"
+# Multimedia support for Read tool (PDF, images)
+multimedia = ["pdf-extract"]
+
+# Cloud provider integrations
+aws = ["aws-config", "aws-credential-types", "aws-sigv4", "aws-smithy-runtime-api"]
+gcp = ["gcp_auth"]
+azure = ["azure_identity", "azure_core"]
+
+# All cloud providers
+cloud-all = ["aws", "gcp", "azure"]
+
+# Persistence backends
+postgres = ["sqlx"]
+redis-backend = ["redis"]
+persistence-all = ["postgres", "redis-backend"]
+
+# OpenTelemetry observability
+otel = ["opentelemetry", "opentelemetry_sdk", "opentelemetry-otlp", "opentelemetry-semantic-conventions", "tracing-opentelemetry", "tracing-subscriber"]
+
+# Full feature set
+full = ["mcp", "cloud-all", "persistence-all", "otel"]
 
 [[example]]
-name = "streaming"
-path = "examples/streaming.rs"
+name = "sdk_core_test"
+path = "examples/sdk_core_test.rs"
 
 [[example]]
-name = "agent_loop"
-path = "examples/agent_loop.rs"
+name = "advanced_test"
+path = "examples/advanced_test.rs"
 
 [[example]]
-name = "integration_test"
-path = "examples/integration_test.rs"
+name = "all_tools_test"
+path = "examples/all_tools_test.rs"
 
 [[example]]
-name = "comprehensive_test"
-path = "examples/comprehensive_test.rs"
+name = "server_tools"
+path = "examples/server_tools.rs"
 
 [package.metadata.docs.rs]
 all-features = true
 rustdoc-args = ["--cfg", "docsrs"]
+
+# Linux-specific dependencies
+[target.'cfg(target_os = "linux")'.dependencies]
+landlock = "0.4"

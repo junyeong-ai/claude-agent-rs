@@ -1,84 +1,139 @@
 # claude-agent-rs
 
-Rust SDK for Claude API. 516 tests.
+Rust SDK for Claude API. ~1,000 tests, ~42k lines.
 
 ## Architecture
 
 ```
 src/
-├── agent/          # Agent, AgentBuilder, executor, state
-├── auth/           # AuthStrategy: ApiKey, OAuth, Bedrock, Vertex, Foundry
-├── client/         # Client, streaming, messages
-├── tools/          # Tool trait, 13 built-in, ProcessManager
-├── skills/         # SkillDefinition, triggers, CommandLoader
-├── context/        # MemoryLoader, ContextOrchestrator, StaticContext
-├── session/        # SessionCacheManager, CacheStats, compaction
-├── extension/      # Extension trait (Bevy-style lifecycle)
+├── agent/          # Agent, executor, TaskRegistry
+├── auth/           # CredentialProvider: OAuth, ApiKey, Bedrock, Vertex, Foundry
+├── client/         # Client, streaming, adapter/ (multi-cloud)
+├── tools/          # 12 built-in, Tool trait, ToolRegistry
+├── skills/         # SkillDefinition, CommandLoader, triggers
+├── subagents/      # SubagentDefinition, 3 builtins (explore, plan, general)
+├── context/        # MemoryLoader, RuleIndex, @import
+├── session/        # ToolState, persistence, compaction
+├── security/       # TOCTOU-safe fs, BashAnalyzer, ResourceLimits, Sandbox
+├── permissions/    # PermissionMode, rules, ToolLimits
+├── output_style/   # OutputStyle, SystemPromptGenerator
+├── mcp/            # McpClient, McpManager (stdio, http, sse)
 ├── hooks/          # Pre/post execution hooks
-├── mcp/            # MCP server (stdio, http, sse)
-└── permissions/    # PermissionMode, rules
+├── budget/         # BudgetTracker, TenantBudgetManager
+└── types/          # ServerTool (WebFetch, WebSearch), ContentBlock
 ```
 
 ## Key Types
 
-| Type | File:Line | Purpose |
-|------|-----------|---------|
-| `Agent` | agent/mod.rs:50 | Builder pattern entry |
-| `Tool` | tools/registry.rs:52 | `name()`, `description()`, `input_schema()`, `execute()` |
-| `TypedTool` | tools/registry.rs:87 | Internal: auto schema from `schemars` |
-| `AuthStrategy` | auth/strategy/traits.rs:15 | `auth_header()`, `prepare_request()` |
-| `SkillDefinition` | skills/mod.rs:45 | `with_trigger()`, `$ARGUMENTS` |
-| `ProcessManager` | tools/process.rs:20 | Shared bash/kill state |
-| `CacheStats` | session/cache.rs:32 | `hit_rate()`, `tokens_saved()` |
+| Type | Location | Purpose |
+|------|----------|---------|
+| `Agent` | agent/executor.rs | `execute()` / `execute_stream()` |
+| `Tool` | tools/traits.rs:12 | `name()`, `description()`, `input_schema()`, `execute()` |
+| `SchemaTool` | tools/traits.rs:29 | Auto schema via schemars (blanket impl) |
+| `ToolRegistry` | tools/registry.rs:20 | 12 built-in, dynamic registration |
+| `ToolState` | session/session_state.rs:72 | In-memory state (todos, plans) |
+| `CredentialProvider` | auth/provider.rs | `resolve()`, `refresh()` |
+| `ProviderAdapter` | client/adapter/traits.rs | Multi-cloud abstraction |
+| `SkillDefinition` | skills/mod.rs:34 | `with_trigger()`, `with_allowed_tools()` |
+| `SubagentDefinition` | subagents/mod.rs:32 | Independent context agents |
+| `SecurityContext` | security/mod.rs:35 | fs + bash + limits + network |
+| `HookManager` | hooks/manager.rs:40 | Priority-based execution |
+| `McpManager` | mcp/manager.rs:22 | Multi-server, `mcp__server__tool` naming |
+| `SessionCacheManager` | session/cache.rs:58 | Prompt caching, cache_control |
+| `CompactExecutor` | session/compact.rs:55 | Context compaction (80% threshold) |
+| `BudgetTracker` | budget/tracker.rs | Token/cost limits per tenant |
 
-## 13 Built-in Tools
+## 12 Built-in Tools
 
-`ToolRegistry::default_tools()` in `tools/registry.rs:145`:
 ```
-Read, Write, Edit, Glob, Grep, NotebookEdit,
-Bash, KillShell (shared ProcessManager),
-WebFetch, Task, TaskOutput, TodoWrite, Skill
+Read, Write, Edit, Glob, Grep, Bash, KillShell,
+Task, TaskOutput, TodoWrite, Plan, Skill
 ```
+
+Registered in `tools/builder.rs:132-145`.
+
+**Server tools** (Anthropic API): `WebFetch`, `WebSearch` in `types/tool/server.rs`.
 
 ## Modification Points
 
 | Task | Files |
 |------|-------|
-| Add tool | `tools/*.rs` + `tools/registry.rs:152` (register) |
-| Add auth provider | `auth/strategy/` + `auth/providers/` |
-| Modify executor | `agent/executor.rs` |
-| Add skill feature | `skills/mod.rs`, `skills/loader.rs` |
-| Add extension | impl `Extension` trait |
+| Add tool | impl `SchemaTool` + register in `tools/builder.rs:132` |
+| Add auth | impl `CredentialProvider` in `auth/providers/` |
+| Add cloud adapter | impl `ProviderAdapter` in `client/adapter/` |
+| Add skill | `.claude/commands/*.md` or `SkillDefinition::new()` |
+| Add subagent | `.claude/agents/*.md` or `SubagentDefinition::new()` |
+| Add hook | impl `Hook` trait, `HookManager::register()` |
+| Add MCP server | `McpManager::add_server()` with `McpServerConfig` |
+| Modify security | `security/` (fs, bash, limits, sandbox) |
+| Modify caching | `session/cache.rs` |
 
-## Key Patterns
+## Hook Events (10 types)
+
+| Event | Blockable | Location |
+|-------|-----------|----------|
+| SessionStart | No | executor.rs |
+| UserPromptSubmit | Yes | executor.rs |
+| PreToolUse | Yes | executor.rs |
+| PostToolUse | No | executor.rs |
+| PostToolUseFailure | No | executor.rs |
+| PreCompact | No | executor.rs |
+| Stop | No | executor.rs |
+| SessionEnd | No | executor.rs |
+| SubagentStart | No | task.rs |
+| SubagentStop | No | task.rs |
+
+## Patterns
 
 ```rust
-// Tool: TypedTool auto-implements Tool via blanket impl
-#[async_trait]
-impl TypedTool for MyTool {
-    type Input = MyInput;  // derives JsonSchema
+// Tool with auto-schema
+impl SchemaTool for MyTool {
+    type Input = MyInput;  // JsonSchema + DeserializeOwned
     const NAME: &'static str = "MyTool";
-    async fn handle(&self, input: Self::Input) -> ToolResult;
+    const DESCRIPTION: &'static str = "...";
+    async fn handle(&self, input: Self::Input, ctx: &ExecutionContext) -> ToolResult;
 }
 
-// Auth: prepare_request modifies request before send
-fn prepare_request(&self, req: CreateMessageRequest) -> CreateMessageRequest;
+// Agent builder
+Agent::builder()
+    .from_claude_code()           // OAuth from CLI
+    .tools(ToolAccess::all())     // 12 tools
+    .with_web_search()            // Server tool
+    .skill(skill)
+    .build()
+    .await?;
 
-// Builder: async for Agent, sync for Client
-Agent::builder().from_claude_cli().build().await?;
-Client::builder().from_claude_cli().build()?;
+// ToolRegistry with state
+ToolRegistry::builder()
+    .tool_state(tool_state)
+    .session_id(session_id)
+    .build();
 ```
 
-## CLI Auth Flow
+## Security
 
-`from_claude_cli()` → `ClaudeCliProvider` → `~/.claude/credentials.json` → `OAuthStrategy`
+- **TOCTOU-safe**: `openat()` + `O_NOFOLLOW`, symlink depth limit
+- **Bash AST**: tree-sitter parsing, env sanitization
+- **Limits**: `setrlimit()` for CPU, memory, files
+- **Sandbox**: Landlock (Linux 5.13+), Seatbelt (macOS)
 
-OAuth adds: `Authorization: Bearer`, `anthropic-beta`, `cache_control: ephemeral`
+## Features (Cargo.toml)
+
+```toml
+default = ["cli-integration"]
+mcp = ["rmcp"]
+aws = [...]           # Bedrock
+gcp = [...]           # Vertex AI
+azure = [...]         # Foundry
+postgres = ["sqlx"]
+otel = [...]          # OpenTelemetry
+full = ["mcp", "cloud-all", "persistence-all", "otel"]
+```
 
 ## Commands
 
 ```bash
-cargo test                    # unit tests
+cargo test                    # ~1,000 tests
 cargo test -- --ignored       # + live API tests
 cargo clippy --all-features
 ```

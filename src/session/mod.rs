@@ -8,6 +8,7 @@ pub mod persistence;
 pub mod persistence_postgres;
 #[cfg(feature = "redis-backend")]
 pub mod persistence_redis;
+pub mod queue;
 pub mod session_state;
 pub mod state;
 pub mod types;
@@ -16,19 +17,21 @@ pub use crate::types::TokenUsage;
 pub use cache::{CacheConfigBuilder, CacheStats, SessionCacheManager};
 pub use compact::{CompactExecutor, CompactStrategy};
 pub use manager::SessionManager;
-pub use persistence::{MemoryPersistence, Persistence};
+pub use persistence::{MemoryPersistence, Persistence, PersistenceFactory};
 #[cfg(feature = "postgres")]
-pub use persistence_postgres::PostgresPersistence;
+pub use persistence_postgres::{PostgresConfig, PostgresPersistence};
 #[cfg(feature = "redis-backend")]
 pub use persistence_redis::RedisPersistence;
+pub use queue::{InputQueue, MergedInput, QueuedInput, SharedInputQueue};
 pub use session_state::ToolState;
 pub use state::{
     MessageId, MessageMetadata, PermissionPolicy, Session, SessionConfig, SessionId,
     SessionMessage, SessionMode, SessionState, SessionType,
 };
 pub use types::{
-    CompactRecord, Plan, PlanStatus, SessionStats, SessionTree, TodoItem, TodoStatus,
-    ToolExecution, ToolExecutionFilter,
+    CompactRecord, CompactTrigger, EnvironmentContext, Plan, PlanStatus, QueueItem, QueueOperation,
+    QueueStatus, SessionStats, SessionTree, SummarySnapshot, TodoItem, TodoStatus, ToolExecution,
+    ToolExecutionFilter,
 };
 
 use thiserror::Error;
@@ -46,6 +49,9 @@ pub enum SessionError {
 
     #[error("Storage error: {message}")]
     Storage { message: String },
+
+    #[error("Persistence error: {0}")]
+    PersistenceError(String),
 
     #[error("Serialization error: {0}")]
     Serialization(#[from] serde_json::Error),

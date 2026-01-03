@@ -1,59 +1,81 @@
 //! Session Persistence Backends
-//!
-//! Provides different storage backends for session persistence.
 
 use std::collections::HashMap;
 use std::sync::Arc;
 
 use tokio::sync::RwLock;
+use uuid::Uuid;
 
 use super::state::{Session, SessionId, SessionMessage};
+use super::types::{QueueItem, SummarySnapshot};
 use super::{SessionError, SessionResult};
 
-/// Trait for session persistence backends
 #[async_trait::async_trait]
 pub trait Persistence: Send + Sync {
     fn name(&self) -> &str;
 
+    // Core CRUD
     async fn save(&self, session: &Session) -> SessionResult<()>;
-
     async fn load(&self, id: &SessionId) -> SessionResult<Option<Session>>;
-
     async fn delete(&self, id: &SessionId) -> SessionResult<bool>;
-
     async fn list(&self, tenant_id: Option<&str>) -> SessionResult<Vec<SessionId>>;
-
     async fn list_children(&self, parent_id: &SessionId) -> SessionResult<Vec<SessionId>>;
 
+    // Summaries
+    async fn add_summary(&self, snapshot: SummarySnapshot) -> SessionResult<()>;
+    async fn get_summaries(&self, session_id: &SessionId) -> SessionResult<Vec<SummarySnapshot>>;
+
+    // Queue
+    async fn enqueue(
+        &self,
+        session_id: &SessionId,
+        content: String,
+        priority: i32,
+    ) -> SessionResult<QueueItem>;
+    async fn dequeue(&self, session_id: &SessionId) -> SessionResult<Option<QueueItem>>;
+    async fn cancel_queued(&self, item_id: Uuid) -> SessionResult<bool>;
+    async fn pending_queue(&self, session_id: &SessionId) -> SessionResult<Vec<QueueItem>>;
+
+    // Cleanup
+    async fn cleanup_expired(&self) -> SessionResult<usize>;
+
+    // Default implementations (convenience methods)
     async fn add_message(
         &self,
         session_id: &SessionId,
         message: SessionMessage,
-    ) -> SessionResult<()>;
-
-    async fn cleanup_expired(&self) -> SessionResult<usize>;
+    ) -> SessionResult<()> {
+        let mut session = self
+            .load(session_id)
+            .await?
+            .ok_or_else(|| SessionError::NotFound {
+                id: session_id.to_string(),
+            })?;
+        session.add_message(message);
+        self.save(&session).await
+    }
 }
 
-/// In-memory persistence (for testing and single-instance deployments)
 #[derive(Debug, Default)]
 pub struct MemoryPersistence {
     sessions: Arc<RwLock<HashMap<String, Session>>>,
+    summaries: Arc<RwLock<HashMap<String, Vec<SummarySnapshot>>>>,
+    queue: Arc<RwLock<HashMap<String, Vec<QueueItem>>>>,
 }
 
 impl MemoryPersistence {
-    /// Create a new memory persistence backend
     pub fn new() -> Self {
         Self::default()
     }
 
-    /// Get the number of stored sessions
     pub async fn count(&self) -> usize {
         self.sessions.read().await.len()
     }
 
-    /// Clear all sessions
     pub async fn clear(&self) {
         self.sessions.write().await.clear();
+        self.summaries.write().await.clear();
+        self.queue.write().await.clear();
     }
 }
 
@@ -64,24 +86,29 @@ impl Persistence for MemoryPersistence {
     }
 
     async fn save(&self, session: &Session) -> SessionResult<()> {
-        let mut sessions = self.sessions.write().await;
-        sessions.insert(session.id.to_string(), session.clone());
+        self.sessions
+            .write()
+            .await
+            .insert(session.id.to_string(), session.clone());
         Ok(())
     }
 
     async fn load(&self, id: &SessionId) -> SessionResult<Option<Session>> {
-        let sessions = self.sessions.read().await;
-        Ok(sessions.get(&id.to_string()).cloned())
+        Ok(self.sessions.read().await.get(&id.to_string()).cloned())
     }
 
     async fn delete(&self, id: &SessionId) -> SessionResult<bool> {
-        let mut sessions = self.sessions.write().await;
-        Ok(sessions.remove(&id.to_string()).is_some())
+        let key = id.to_string();
+        self.summaries.write().await.remove(&key);
+        self.queue.write().await.remove(&key);
+        Ok(self.sessions.write().await.remove(&key).is_some())
     }
 
     async fn list(&self, tenant_id: Option<&str>) -> SessionResult<Vec<SessionId>> {
-        let sessions = self.sessions.read().await;
-        let ids: Vec<SessionId> = sessions
+        Ok(self
+            .sessions
+            .read()
+            .await
             .values()
             .filter(|s| {
                 tenant_id
@@ -89,51 +116,108 @@ impl Persistence for MemoryPersistence {
                     .unwrap_or(true)
             })
             .map(|s| s.id)
-            .collect();
-        Ok(ids)
+            .collect())
     }
 
     async fn list_children(&self, parent_id: &SessionId) -> SessionResult<Vec<SessionId>> {
-        let sessions = self.sessions.read().await;
-        let ids: Vec<SessionId> = sessions
+        Ok(self
+            .sessions
+            .read()
+            .await
             .values()
             .filter(|s| s.parent_id.as_ref() == Some(parent_id))
             .map(|s| s.id)
-            .collect();
-        Ok(ids)
+            .collect())
     }
 
-    async fn add_message(
+    async fn add_summary(&self, snapshot: SummarySnapshot) -> SessionResult<()> {
+        self.summaries
+            .write()
+            .await
+            .entry(snapshot.session_id.to_string())
+            .or_default()
+            .push(snapshot);
+        Ok(())
+    }
+
+    async fn get_summaries(&self, session_id: &SessionId) -> SessionResult<Vec<SummarySnapshot>> {
+        Ok(self
+            .summaries
+            .read()
+            .await
+            .get(&session_id.to_string())
+            .cloned()
+            .unwrap_or_default())
+    }
+
+    async fn enqueue(
         &self,
         session_id: &SessionId,
-        message: SessionMessage,
-    ) -> SessionResult<()> {
-        let mut sessions = self.sessions.write().await;
-        if let Some(session) = sessions.get_mut(&session_id.to_string()) {
-            session.add_message(message);
-            Ok(())
-        } else {
-            Err(SessionError::NotFound {
-                id: session_id.to_string(),
-            })
+        content: String,
+        priority: i32,
+    ) -> SessionResult<QueueItem> {
+        let item = QueueItem::enqueue(*session_id, content).with_priority(priority);
+        self.queue
+            .write()
+            .await
+            .entry(session_id.to_string())
+            .or_default()
+            .push(item.clone());
+        Ok(item)
+    }
+
+    async fn dequeue(&self, session_id: &SessionId) -> SessionResult<Option<QueueItem>> {
+        let mut queue = self.queue.write().await;
+        if let Some(items) = queue.get_mut(&session_id.to_string()) {
+            items.sort_by(|a, b| b.priority.cmp(&a.priority));
+            if let Some(pos) = items
+                .iter()
+                .position(|i| i.status == super::types::QueueStatus::Pending)
+            {
+                items[pos].start_processing();
+                return Ok(Some(items[pos].clone()));
+            }
         }
+        Ok(None)
+    }
+
+    async fn cancel_queued(&self, item_id: Uuid) -> SessionResult<bool> {
+        for items in self.queue.write().await.values_mut() {
+            if let Some(item) = items.iter_mut().find(|i| i.id == item_id) {
+                item.cancel();
+                return Ok(true);
+            }
+        }
+        Ok(false)
+    }
+
+    async fn pending_queue(&self, session_id: &SessionId) -> SessionResult<Vec<QueueItem>> {
+        Ok(self
+            .queue
+            .read()
+            .await
+            .get(&session_id.to_string())
+            .map(|items| {
+                items
+                    .iter()
+                    .filter(|i| i.status == super::types::QueueStatus::Pending)
+                    .cloned()
+                    .collect()
+            })
+            .unwrap_or_default())
     }
 
     async fn cleanup_expired(&self) -> SessionResult<usize> {
         let mut sessions = self.sessions.write().await;
         let before = sessions.len();
-
         sessions.retain(|_, s| !s.is_expired());
-
         Ok(before - sessions.len())
     }
 }
 
-/// Persistence factory for creating backends
 pub struct PersistenceFactory;
 
 impl PersistenceFactory {
-    /// Create a memory persistence backend
     pub fn memory() -> Arc<dyn Persistence> {
         Arc::new(MemoryPersistence::new())
     }
@@ -146,86 +230,115 @@ mod tests {
     use crate::types::ContentBlock;
 
     #[tokio::test]
-    async fn test_memory_persistence_save_load() {
+    async fn test_save_load() {
         let persistence = MemoryPersistence::new();
-
         let session = Session::new(SessionConfig::default());
-        let session_id = session.id;
+        let id = session.id;
 
         persistence.save(&session).await.unwrap();
+        let loaded = persistence.load(&id).await.unwrap();
 
-        let loaded = persistence.load(&session_id).await.unwrap();
         assert!(loaded.is_some());
-        assert_eq!(loaded.unwrap().id, session_id);
+        assert_eq!(loaded.unwrap().id, id);
     }
 
     #[tokio::test]
-    async fn test_memory_persistence_delete() {
+    async fn test_delete() {
         let persistence = MemoryPersistence::new();
-
         let session = Session::new(SessionConfig::default());
-        let session_id = session.id;
+        let id = session.id;
 
         persistence.save(&session).await.unwrap();
-        assert!(persistence.delete(&session_id).await.unwrap());
-        assert!(persistence.load(&session_id).await.unwrap().is_none());
+        assert!(persistence.delete(&id).await.unwrap());
+        assert!(persistence.load(&id).await.unwrap().is_none());
     }
 
     #[tokio::test]
-    async fn test_memory_persistence_list() {
+    async fn test_list_by_tenant() {
         let persistence = MemoryPersistence::new();
 
-        let mut session1 = Session::new(SessionConfig::default());
-        session1.tenant_id = Some("tenant-a".to_string());
+        let mut s1 = Session::new(SessionConfig::default());
+        s1.tenant_id = Some("tenant-a".to_string());
 
-        let mut session2 = Session::new(SessionConfig::default());
-        session2.tenant_id = Some("tenant-b".to_string());
+        let mut s2 = Session::new(SessionConfig::default());
+        s2.tenant_id = Some("tenant-b".to_string());
 
-        persistence.save(&session1).await.unwrap();
-        persistence.save(&session2).await.unwrap();
+        persistence.save(&s1).await.unwrap();
+        persistence.save(&s2).await.unwrap();
 
-        // List all
-        let all = persistence.list(None).await.unwrap();
-        assert_eq!(all.len(), 2);
-
-        // List by tenant
-        let tenant_a = persistence.list(Some("tenant-a")).await.unwrap();
-        assert_eq!(tenant_a.len(), 1);
+        assert_eq!(persistence.list(None).await.unwrap().len(), 2);
+        assert_eq!(persistence.list(Some("tenant-a")).await.unwrap().len(), 1);
     }
 
     #[tokio::test]
-    async fn test_memory_persistence_add_message() {
+    async fn test_add_message() {
         let persistence = MemoryPersistence::new();
-
         let session = Session::new(SessionConfig::default());
-        let session_id = session.id;
+        let id = session.id;
+
         persistence.save(&session).await.unwrap();
+        persistence
+            .add_message(&id, SessionMessage::user(vec![ContentBlock::text("Hello")]))
+            .await
+            .unwrap();
 
-        let message =
-            crate::session::state::SessionMessage::user(vec![ContentBlock::text("Hello")]);
-        persistence.add_message(&session_id, message).await.unwrap();
-
-        let loaded = persistence.load(&session_id).await.unwrap().unwrap();
+        let loaded = persistence.load(&id).await.unwrap().unwrap();
         assert_eq!(loaded.messages.len(), 1);
     }
 
     #[tokio::test]
-    async fn test_memory_persistence_cleanup_expired() {
+    async fn test_summaries() {
         let persistence = MemoryPersistence::new();
+        let session = Session::new(SessionConfig::default());
+        let id = session.id;
 
-        // Create expired session
+        persistence.save(&session).await.unwrap();
+        persistence
+            .add_summary(SummarySnapshot::new(id, "First"))
+            .await
+            .unwrap();
+        persistence
+            .add_summary(SummarySnapshot::new(id, "Second"))
+            .await
+            .unwrap();
+
+        let summaries = persistence.get_summaries(&id).await.unwrap();
+        assert_eq!(summaries.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn test_queue_priority() {
+        let persistence = MemoryPersistence::new();
+        let session = Session::new(SessionConfig::default());
+        let id = session.id;
+
+        persistence.save(&session).await.unwrap();
+        persistence
+            .enqueue(&id, "Low".to_string(), 1)
+            .await
+            .unwrap();
+        persistence
+            .enqueue(&id, "High".to_string(), 10)
+            .await
+            .unwrap();
+
+        let next = persistence.dequeue(&id).await.unwrap().unwrap();
+        assert_eq!(next.content, "High");
+    }
+
+    #[tokio::test]
+    async fn test_cleanup_expired() {
+        let persistence = MemoryPersistence::new();
         let config = SessionConfig {
-            ttl_secs: Some(0), // Expire immediately
+            ttl_secs: Some(0),
             ..Default::default()
         };
         let session = Session::new(config);
-        persistence.save(&session).await.unwrap();
 
-        // Wait a bit for expiry
+        persistence.save(&session).await.unwrap();
         tokio::time::sleep(std::time::Duration::from_millis(10)).await;
 
-        let cleaned = persistence.cleanup_expired().await.unwrap();
-        assert_eq!(cleaned, 1);
+        assert_eq!(persistence.cleanup_expired().await.unwrap(), 1);
         assert_eq!(persistence.count().await, 0);
     }
 }

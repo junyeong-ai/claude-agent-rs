@@ -1,6 +1,7 @@
 //! Context management with progressive disclosure for optimal token usage.
 
 pub mod builder;
+pub mod level;
 pub mod memory_loader;
 pub mod orchestrator;
 pub mod provider;
@@ -9,68 +10,41 @@ pub mod rule_index;
 pub mod skill_index;
 pub mod static_context;
 
-// Re-exports
 pub use crate::types::TokenUsage;
 pub use builder::ContextBuilder;
-pub use memory_loader::{MemoryContent, MemoryLoader, RuleFile};
-pub use orchestrator::{ContextOrchestrator, ContextWindowState, OrchestratorState};
-pub use provider::{
-    ChainMemoryProvider, FileMemoryProvider, HttpMemoryProvider, InMemoryProvider,
-    MAX_IMPORT_DEPTH, MemoryProvider,
-};
+pub use level::{LeveledMemoryProvider, MemoryLevel};
+pub use memory_loader::MemoryContent;
+pub use memory_loader::MemoryLoader;
+pub use orchestrator::PromptOrchestrator;
+pub use provider::{FileMemoryProvider, InMemoryProvider, MAX_IMPORT_DEPTH, MemoryProvider};
 pub use routing::RoutingStrategy;
-pub use rule_index::{LoadedRule, RuleIndex, RuleSource};
+pub use rule_index::{LoadedRule, RuleIndex, RuleSource, RulesEngine};
 pub use skill_index::{SkillIndex, SkillScope, SkillSource};
-pub use static_context::{McpToolMeta, StaticContext, StaticContextPart};
+pub use static_context::{McpToolMeta, StaticContext};
 
 use thiserror::Error;
 
-/// Errors that can occur in context management
 #[derive(Error, Debug)]
 pub enum ContextError {
-    /// Failed to load context from source
     #[error("Source error: {message}")]
-    Source {
-        /// Error message describing the failure
-        message: String,
-    },
+    Source { message: String },
 
-    /// Token budget exceeded
     #[error("Token budget exceeded: {current} > {limit}")]
-    TokenBudgetExceeded {
-        /// Current token count
-        current: u64,
-        /// Maximum allowed tokens
-        limit: u64,
-    },
+    TokenBudgetExceeded { current: u64, limit: u64 },
 
-    /// Skill not found in registry
     #[error("Skill not found: {name}")]
-    SkillNotFound {
-        /// Name of the missing skill
-        name: String,
-    },
+    SkillNotFound { name: String },
 
-    /// Rule not found in registry
     #[error("Rule not found: {name}")]
-    RuleNotFound {
-        /// Name of the missing rule
-        name: String,
-    },
+    RuleNotFound { name: String },
 
-    /// Parse error in skill or rule file
     #[error("Parse error: {message}")]
-    Parse {
-        /// Error message describing the parse failure
-        message: String,
-    },
+    Parse { message: String },
 
-    /// IO error reading files
     #[error("IO error: {0}")]
     Io(#[from] std::io::Error),
 }
 
-/// Result type for context operations
 pub type ContextResult<T> = std::result::Result<T, ContextError>;
 
 #[cfg(test)]

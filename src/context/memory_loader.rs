@@ -1,42 +1,32 @@
-//! CLAUDE.md memory file loader with recursive loading and import support.
+//! CLAUDE.md Memory Loader
 //!
 //! Implements Claude Code CLI compatible memory loading:
 //! - Recursive loading from current directory to root
-//! - CLAUDE.local.md support (auto-gitignored)
-//! - @import syntax for file inclusion (max 5 hops)
-//! - .claude/rules/ directory loading
+//! - CLAUDE.local.md support
+//! - @import syntax (max 5 hops)
+//! - .claude/rules/ index-only loading for progressive disclosure
 
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
 use super::provider::MAX_IMPORT_DEPTH;
+use super::rule_index::RuleIndex;
 use super::{ContextError, ContextResult};
 
-/// Memory loader for CLAUDE.md files.
 #[derive(Debug, Default)]
 pub struct MemoryLoader {
-    /// Loaded file paths (to prevent circular imports)
     loaded_paths: HashSet<PathBuf>,
-    /// Current import depth
     current_depth: usize,
 }
 
 impl MemoryLoader {
-    /// Create a new memory loader.
     pub fn new() -> Self {
         Self::default()
     }
 
-    /// Load all memory content starting from a directory.
-    ///
-    /// Loads in order:
-    /// 1. CLAUDE.md files recursively from current to root
-    /// 2. CLAUDE.local.md files (not committed to git)
-    /// 3. .claude/rules/*.md files
     pub async fn load_all(&mut self, start_dir: &Path) -> ContextResult<MemoryContent> {
         let mut content = MemoryContent::default();
 
-        // 1. Load CLAUDE.md files recursively (from root to current for proper ordering)
         let claude_files = self.find_claude_files(start_dir);
         for path in claude_files {
             if let Ok(text) = self.load_file_with_imports(&path).await {
@@ -44,7 +34,6 @@ impl MemoryLoader {
             }
         }
 
-        // 2. Load CLAUDE.local.md files
         let local_files = self.find_local_files(start_dir);
         for path in local_files {
             if let Ok(text) = self.load_file_with_imports(&path).await {
@@ -52,51 +41,54 @@ impl MemoryLoader {
             }
         }
 
-        // 3. Load .claude/rules/ directory
         let rules_dir = start_dir.join(".claude").join("rules");
         if rules_dir.exists() {
-            let rules = self.load_rules_directory(&rules_dir).await?;
-            content.rules = rules;
+            content.rule_indices = self.scan_rules_directory(&rules_dir).await?;
         }
 
         Ok(content)
     }
 
-    /// Find all CLAUDE.md files from start_dir to root.
+    pub async fn load_local_only(&mut self, start_dir: &Path) -> ContextResult<MemoryContent> {
+        let mut content = MemoryContent::default();
+
+        let local_files = self.find_local_files(start_dir);
+        for path in local_files {
+            if let Ok(text) = self.load_file_with_imports(&path).await {
+                content.local_md.push(text);
+            }
+        }
+
+        Ok(content)
+    }
+
     fn find_claude_files(&self, start_dir: &Path) -> Vec<PathBuf> {
         let mut files = Vec::new();
         let mut current = start_dir.to_path_buf();
 
         loop {
-            // Check ./CLAUDE.md
             let claude_md = current.join("CLAUDE.md");
             if claude_md.exists() {
                 files.push(claude_md);
             }
 
-            // Check ./.claude/CLAUDE.md
             let claude_dir_md = current.join(".claude").join("CLAUDE.md");
             if claude_dir_md.exists() {
                 files.push(claude_dir_md);
             }
 
-            // Move to parent
-            if let Some(parent) = current.parent() {
-                if parent == current || parent.as_os_str().is_empty() {
-                    break;
+            match current.parent() {
+                Some(parent) if parent != current && !parent.as_os_str().is_empty() => {
+                    current = parent.to_path_buf();
                 }
-                current = parent.to_path_buf();
-            } else {
-                break;
+                _ => break,
             }
         }
 
-        // Reverse to load from root to current (more general to more specific)
         files.reverse();
         files
     }
 
-    /// Find all CLAUDE.local.md files from start_dir to root.
     fn find_local_files(&self, start_dir: &Path) -> Vec<PathBuf> {
         let mut files = Vec::new();
         let mut current = start_dir.to_path_buf();
@@ -112,13 +104,11 @@ impl MemoryLoader {
                 files.push(local_dir_md);
             }
 
-            if let Some(parent) = current.parent() {
-                if parent == current || parent.as_os_str().is_empty() {
-                    break;
+            match current.parent() {
+                Some(parent) if parent != current && !parent.as_os_str().is_empty() => {
+                    current = parent.to_path_buf();
                 }
-                current = parent.to_path_buf();
-            } else {
-                break;
+                _ => break,
             }
         }
 
@@ -126,14 +116,40 @@ impl MemoryLoader {
         files
     }
 
-    /// Load a file and process @import directives.
+    async fn scan_rules_directory(&self, dir: &Path) -> ContextResult<Vec<RuleIndex>> {
+        let mut indices = Vec::new();
+
+        let mut entries = tokio::fs::read_dir(dir)
+            .await
+            .map_err(|e| ContextError::Source {
+                message: format!("Failed to read rules directory: {}", e),
+            })?;
+
+        while let Some(entry) = entries
+            .next_entry()
+            .await
+            .map_err(|e| ContextError::Source {
+                message: format!("Failed to read directory entry: {}", e),
+            })?
+        {
+            let path = entry.path();
+            if path.extension().is_some_and(|e| e == "md")
+                && let Some(index) = RuleIndex::from_file(&path)
+            {
+                indices.push(index);
+            }
+        }
+
+        indices.sort_by(|a, b| b.priority.cmp(&a.priority));
+        Ok(indices)
+    }
+
     fn load_file_with_imports<'a>(
         &'a mut self,
         path: &'a Path,
     ) -> std::pin::Pin<Box<dyn std::future::Future<Output = ContextResult<String>> + Send + 'a>>
     {
         Box::pin(async move {
-            // Check depth limit
             if self.current_depth >= MAX_IMPORT_DEPTH {
                 tracing::warn!(
                     "Import depth limit ({}) reached, skipping: {}",
@@ -144,8 +160,6 @@ impl MemoryLoader {
             }
 
             let canonical = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
-
-            // Prevent circular imports
             if self.loaded_paths.contains(&canonical) {
                 return Ok(String::new());
             }
@@ -158,7 +172,6 @@ impl MemoryLoader {
                         message: format!("Failed to read {}: {}", path.display(), e),
                     })?;
 
-            // Increment depth before processing imports
             self.current_depth += 1;
             let result = self
                 .process_imports(&content, path.parent().unwrap_or(Path::new(".")))
@@ -169,17 +182,15 @@ impl MemoryLoader {
         })
     }
 
-    /// Expand home directory (~) in path.
     fn expand_home(path: &str) -> PathBuf {
         if let Some(rest) = path.strip_prefix("~/")
-            && let Some(home) = dirs::home_dir()
+            && let Some(home) = crate::common::home_dir()
         {
             return home.join(rest);
         }
         PathBuf::from(path)
     }
 
-    /// Process @import directives in content.
     fn process_imports<'a>(
         &'a mut self,
         content: &'a str,
@@ -232,104 +243,37 @@ impl MemoryLoader {
             Ok(result)
         })
     }
-
-    /// Load all .md files from a rules directory.
-    async fn load_rules_directory(&mut self, dir: &Path) -> ContextResult<Vec<RuleFile>> {
-        let mut rules = Vec::new();
-
-        let mut entries = tokio::fs::read_dir(dir)
-            .await
-            .map_err(|e| ContextError::Source {
-                message: format!("Failed to read rules directory: {}", e),
-            })?;
-
-        while let Some(entry) = entries
-            .next_entry()
-            .await
-            .map_err(|e| ContextError::Source {
-                message: format!("Failed to read directory entry: {}", e),
-            })?
-        {
-            let path = entry.path();
-            if path.extension().map(|e| e == "md").unwrap_or(false) {
-                let name = path
-                    .file_stem()
-                    .and_then(|s| s.to_str())
-                    .unwrap_or("unknown")
-                    .to_string();
-
-                let content = self.load_file_with_imports(&path).await?;
-
-                rules.push(RuleFile {
-                    name,
-                    content,
-                    path,
-                });
-            }
-        }
-
-        // Sort by name for consistent ordering
-        rules.sort_by(|a, b| a.name.cmp(&b.name));
-
-        Ok(rules)
-    }
 }
 
-/// Loaded memory content.
 #[derive(Debug, Default)]
 pub struct MemoryContent {
-    /// Content from CLAUDE.md files (in order from root to current)
     pub claude_md: Vec<String>,
-    /// Content from CLAUDE.local.md files
     pub local_md: Vec<String>,
-    /// Rule files from .claude/rules/
-    pub rules: Vec<RuleFile>,
+    pub rule_indices: Vec<RuleIndex>,
 }
 
 impl MemoryContent {
-    /// Combine all content into a single string.
-    pub fn combined(&self) -> String {
+    pub fn combined_claude_md(&self) -> String {
         let mut parts = Vec::new();
 
-        // CLAUDE.md content
         for content in &self.claude_md {
             if !content.trim().is_empty() {
                 parts.push(content.clone());
             }
         }
 
-        // Local content
         for content in &self.local_md {
             if !content.trim().is_empty() {
                 parts.push(content.clone());
             }
         }
 
-        // Rules content
-        for rule in &self.rules {
-            if !rule.content.trim().is_empty() {
-                parts.push(format!("# Rule: {}\n\n{}", rule.name, rule.content));
-            }
-        }
-
         parts.join("\n\n")
     }
 
-    /// Check if any content was loaded.
     pub fn is_empty(&self) -> bool {
-        self.claude_md.is_empty() && self.local_md.is_empty() && self.rules.is_empty()
+        self.claude_md.is_empty() && self.local_md.is_empty() && self.rule_indices.is_empty()
     }
-}
-
-/// A loaded rule file.
-#[derive(Debug, Clone)]
-pub struct RuleFile {
-    /// Rule name (filename without extension)
-    pub name: String,
-    /// Rule content
-    pub content: String,
-    /// Original file path
-    pub path: PathBuf,
 }
 
 #[cfg(test)]
@@ -367,13 +311,24 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_load_rules_directory() {
+    async fn test_scan_rules_indices_only() {
         let dir = tempdir().unwrap();
         let rules_dir = dir.path().join(".claude").join("rules");
         fs::create_dir_all(&rules_dir).await.unwrap();
-        fs::write(rules_dir.join("rust.md"), "# Rust Rules\nUse snake_case")
-            .await
-            .unwrap();
+
+        fs::write(
+            rules_dir.join("rust.md"),
+            r#"---
+paths: **/*.rs
+priority: 10
+---
+
+# Rust Rules
+Use snake_case"#,
+        )
+        .await
+        .unwrap();
+
         fs::write(rules_dir.join("security.md"), "# Security\nNo secrets")
             .await
             .unwrap();
@@ -381,14 +336,18 @@ mod tests {
         let mut loader = MemoryLoader::new();
         let content = loader.load_all(dir.path()).await.unwrap();
 
-        assert_eq!(content.rules.len(), 2);
+        assert_eq!(content.rule_indices.len(), 2);
+
+        let rust_rule = content.rule_indices.iter().find(|r| r.name == "rust");
+        assert!(rust_rule.is_some());
+        assert_eq!(rust_rule.unwrap().priority, 10);
+        assert!(rust_rule.unwrap().paths.is_some());
     }
 
     #[tokio::test]
     async fn test_import_syntax() {
         let dir = tempdir().unwrap();
 
-        // Create main file with import
         fs::write(
             dir.path().join("CLAUDE.md"),
             "# Main\n@docs/guidelines.md\nEnd",
@@ -396,7 +355,6 @@ mod tests {
         .await
         .unwrap();
 
-        // Create imported file
         let docs_dir = dir.path().join("docs");
         fs::create_dir_all(&docs_dir).await.unwrap();
         fs::write(docs_dir.join("guidelines.md"), "Imported content")
@@ -406,7 +364,7 @@ mod tests {
         let mut loader = MemoryLoader::new();
         let content = loader.load_all(dir.path()).await.unwrap();
 
-        assert!(content.combined().contains("Imported content"));
+        assert!(content.combined_claude_md().contains("Imported content"));
     }
 
     #[tokio::test]
@@ -422,7 +380,7 @@ mod tests {
         let mut loader = MemoryLoader::new();
         let content = loader.load_all(dir.path()).await.unwrap();
 
-        let combined = content.combined();
+        let combined = content.combined_claude_md();
         assert!(combined.contains("Main content"));
         assert!(combined.contains("Local content"));
     }

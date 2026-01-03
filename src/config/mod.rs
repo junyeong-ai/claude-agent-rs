@@ -13,19 +13,26 @@
 //! # }
 //! ```
 
+pub mod cloud;
 pub mod composite;
 pub mod env;
 pub mod file;
 pub mod memory;
 pub mod provider;
 pub mod settings;
+pub mod validator;
 
+pub use cloud::{BedrockConfig, CloudConfig, FoundryConfig, TokenLimits, VertexConfig};
 pub use composite::CompositeConfigProvider;
 pub use env::EnvConfigProvider;
 pub use file::FileConfigProvider;
 pub use memory::MemoryConfigProvider;
 pub use provider::{ConfigProvider, ConfigProviderExt};
-pub use settings::{PermissionSettings, Settings, SettingsLoader};
+pub use settings::{
+    HookConfig, HooksSettings, NetworkSandboxSettings, PermissionSettings, SandboxSettings,
+    Settings, SettingsLoader, SettingsSource,
+};
+pub use validator::{ConfigValidator, ValueType};
 
 use thiserror::Error;
 
@@ -66,6 +73,21 @@ pub enum ConfigError {
         /// Error message
         message: String,
     },
+
+    /// Multiple validation errors
+    #[error("{0}")]
+    ValidationErrors(ValidationErrors),
+}
+
+#[derive(Debug)]
+pub struct ValidationErrors(pub Vec<ConfigError>);
+
+impl std::fmt::Display for ValidationErrors {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "Validation failed: ")?;
+        let msgs: Vec<String> = self.0.iter().map(|e| e.to_string()).collect();
+        write!(f, "{}", msgs.join("; "))
+    }
 }
 
 /// Result type for configuration operations

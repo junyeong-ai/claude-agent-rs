@@ -1,0 +1,20 @@
+# Cargo audit configuration
+# See: https://rustsec.org/
+
+[advisories]
+# Advisory ignore list with justifications
+ignore = [
+    # RUSTSEC-2023-0071: RSA Marvin Attack timing sidechannel vulnerability
+    #
+    # This advisory affects the `rsa` crate used by `sqlx-mysql` for MySQL authentication.
+    #
+    # Why we ignore this:
+    # 1. We only use PostgreSQL - MySQL driver is never used
+    # 2. The vulnerable code path (RSA-based MySQL auth) is never executed
+    # 3. sqlx-macros-core unconditionally includes all DB drivers for compile-time query checking
+    # 4. No upstream fix available yet (rsa crate migration to constant-time impl in progress)
+    #
+    # This is a transitive dependency pulled in by sqlx's macro system, not our actual usage.
+    # See: https://rustsec.org/advisories/RUSTSEC-2023-0071
+    "RUSTSEC-2023-0071",
+]

@@ -46,7 +46,7 @@ pub enum PermissionMode {
     /// Auto-approve file operations
     ///
     /// This mode automatically approves file-related tools:
-    /// - Read, Write, Edit, Glob, Grep, NotebookEdit
+    /// - Read, Write, Edit, Glob, Grep
     ///
     /// Other tools still require explicit allow rules.
     AcceptEdits,
@@ -67,27 +67,22 @@ pub enum PermissionMode {
 }
 
 impl PermissionMode {
-    /// Returns true if this mode allows all operations without checks
     pub fn allows_all(&self) -> bool {
         matches!(self, PermissionMode::BypassPermissions)
     }
 
-    /// Returns true if this mode is read-only
     pub fn is_read_only(&self) -> bool {
         matches!(self, PermissionMode::Plan)
     }
 
-    /// Returns true if this mode auto-approves file operations
     pub fn auto_approves_files(&self) -> bool {
         matches!(self, PermissionMode::AcceptEdits)
     }
 
-    /// Returns true if this is the default mode
     pub fn is_default(&self) -> bool {
         matches!(self, PermissionMode::Default)
     }
 
-    /// Get a human-readable description of this mode
     pub fn description(&self) -> &'static str {
         match self {
             PermissionMode::Default => "Standard permission flow with allow/deny rules",

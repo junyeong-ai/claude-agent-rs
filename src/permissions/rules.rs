@@ -1,105 +1,92 @@
 //! Permission rules and policy evaluation.
 
-use super::{PermissionMode, is_file_tool, is_read_only_tool};
+use std::collections::HashMap;
+
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use std::collections::HashMap;
 
-/// Decision for a permission check
+use super::{PermissionMode, is_file_tool, is_read_only_tool};
+
+/// Permission decision for SDK.
+///
+/// SDK only supports Allow/Deny. For interactive approval workflows,
+/// implement your own pre-check hook using the HookManager.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum PermissionDecision {
-    /// Allow the tool execution
     Allow,
-    /// Deny the tool execution
     #[default]
     Deny,
-    /// Ask the user for approval (only valid in interactive mode)
-    Ask,
 }
 
-/// Result of a permission check
+impl PermissionDecision {
+    pub fn is_allowed(&self) -> bool {
+        matches!(self, Self::Allow)
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PermissionStatus {
+    Allowed,
+    Denied,
+}
+
 #[derive(Clone, Debug)]
 pub struct PermissionResult {
-    /// Whether the tool execution is allowed
-    pub allowed: bool,
-    /// Reason for the decision
+    pub status: PermissionStatus,
     pub reason: String,
-    /// Whether to ask the user (only valid in interactive mode)
-    pub ask_user: bool,
+    pub tool_name: Option<String>,
+    pub input: Option<Value>,
 }
 
 impl PermissionResult {
-    /// Create an allowed result
     pub fn allowed(reason: impl Into<String>) -> Self {
         Self {
-            allowed: true,
+            status: PermissionStatus::Allowed,
             reason: reason.into(),
-            ask_user: false,
+            tool_name: None,
+            input: None,
         }
     }
 
-    /// Create a denied result
     pub fn denied(reason: impl Into<String>) -> Self {
         Self {
-            allowed: false,
+            status: PermissionStatus::Denied,
             reason: reason.into(),
-            ask_user: false,
+            tool_name: None,
+            input: None,
         }
     }
 
-    /// Create an "ask user" result
-    pub fn ask(reason: impl Into<String>) -> Self {
-        Self {
-            allowed: false,
-            reason: reason.into(),
-            ask_user: true,
-        }
-    }
-
-    /// Check if the permission was granted
     pub fn is_allowed(&self) -> bool {
-        self.allowed
+        matches!(self.status, PermissionStatus::Allowed)
     }
 
-    /// Check if the permission was denied
     pub fn is_denied(&self) -> bool {
-        !self.allowed && !self.ask_user
-    }
-
-    /// Check if user approval is needed
-    pub fn needs_user_approval(&self) -> bool {
-        self.ask_user
+        matches!(self.status, PermissionStatus::Denied)
     }
 }
 
-/// Tool-specific execution limits
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct ToolLimits {
-    /// Timeout in milliseconds (overrides default)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub timeout_ms: Option<u64>,
 
-    /// Maximum output size in bytes
     #[serde(skip_serializing_if = "Option::is_none")]
     pub max_output_size: Option<usize>,
 
-    /// Maximum number of concurrent executions
     #[serde(skip_serializing_if = "Option::is_none")]
     pub max_concurrent: Option<usize>,
 
-    /// Allowed paths (glob patterns) for file operations
     #[serde(skip_serializing_if = "Option::is_none")]
     pub allowed_paths: Option<Vec<String>>,
 
-    /// Denied paths (glob patterns) for file operations
     #[serde(skip_serializing_if = "Option::is_none")]
     pub denied_paths: Option<Vec<String>>,
 }
 
 impl ToolLimits {
-    /// Create new tool limits with a timeout
     pub fn with_timeout(timeout_ms: u64) -> Self {
         Self {
             timeout_ms: Some(timeout_ms),
@@ -107,7 +94,6 @@ impl ToolLimits {
         }
     }
 
-    /// Create new tool limits with max output size
     pub fn with_max_output(max_bytes: usize) -> Self {
         Self {
             max_output_size: Some(max_bytes),
@@ -115,137 +101,178 @@ impl ToolLimits {
         }
     }
 
-    /// Add allowed paths
     pub fn with_allowed_paths(mut self, paths: Vec<String>) -> Self {
         self.allowed_paths = Some(paths);
         self
     }
 
-    /// Add denied paths
     pub fn with_denied_paths(mut self, paths: Vec<String>) -> Self {
         self.denied_paths = Some(paths);
         self
     }
 }
 
-/// A permission rule that matches tools by pattern
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct PermissionRule {
-    /// Tool name pattern (regex)
     pub pattern: String,
 
-    /// Decision to apply when the rule matches
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub input_pattern: Option<String>,
+
     pub decision: PermissionDecision,
 
-    /// Optional reason for the rule
     #[serde(skip_serializing_if = "Option::is_none")]
     pub reason: Option<String>,
 
-    /// Priority (higher = evaluated first)
-    #[serde(default)]
-    pub priority: i32,
-
-    /// Compiled regex (not serialized)
     #[serde(skip)]
     compiled: Option<Regex>,
 }
 
 impl PermissionRule {
-    /// Create a new allow rule
     pub fn allow(pattern: impl Into<String>) -> Self {
-        Self {
-            pattern: pattern.into(),
-            decision: PermissionDecision::Allow,
-            reason: None,
-            priority: 0,
-            compiled: None,
-        }
+        Self::new(pattern, PermissionDecision::Allow)
     }
 
-    /// Create a new deny rule
     pub fn deny(pattern: impl Into<String>) -> Self {
+        Self::new(pattern, PermissionDecision::Deny)
+    }
+
+    fn new(pattern: impl Into<String>, decision: PermissionDecision) -> Self {
         Self {
             pattern: pattern.into(),
-            decision: PermissionDecision::Deny,
+            input_pattern: None,
+            decision,
             reason: None,
-            priority: 0,
             compiled: None,
         }
     }
 
-    /// Create a new ask rule
-    pub fn ask(pattern: impl Into<String>) -> Self {
-        Self {
-            pattern: pattern.into(),
-            decision: PermissionDecision::Ask,
-            reason: None,
-            priority: 0,
-            compiled: None,
+    pub fn from_scoped(scoped: &str, decision: PermissionDecision) -> Self {
+        if let Some((tool, scope)) = Self::parse_scope(scoped) {
+            Self {
+                pattern: tool,
+                input_pattern: Some(scope),
+                decision,
+                reason: None,
+                compiled: None,
+            }
+        } else {
+            Self::new(scoped, decision)
         }
     }
 
-    /// Set the reason for this rule
+    pub fn allow_scoped(scoped: &str) -> Self {
+        Self::from_scoped(scoped, PermissionDecision::Allow)
+    }
+
+    pub fn deny_scoped(scoped: &str) -> Self {
+        Self::from_scoped(scoped, PermissionDecision::Deny)
+    }
+
+    fn parse_scope(s: &str) -> Option<(String, String)> {
+        let start = s.find('(')?;
+        let end = s.rfind(')')?;
+        if start < end {
+            Some((s[..start].to_string(), s[start + 1..end].to_string()))
+        } else {
+            None
+        }
+    }
+
+    pub fn with_input_pattern(mut self, pattern: impl Into<String>) -> Self {
+        self.input_pattern = Some(pattern.into());
+        self
+    }
+
     pub fn with_reason(mut self, reason: impl Into<String>) -> Self {
         self.reason = Some(reason.into());
         self
     }
 
-    /// Set the priority for this rule
-    pub fn with_priority(mut self, priority: i32) -> Self {
-        self.priority = priority;
-        self
-    }
-
-    /// Compile the regex pattern
     pub fn compile(&mut self) -> Result<(), regex::Error> {
         self.compiled = Some(Regex::new(&self.pattern)?);
         Ok(())
     }
 
-    /// Check if this rule matches a tool name
     pub fn matches(&self, tool_name: &str) -> bool {
         if let Some(ref regex) = self.compiled {
             regex.is_match(tool_name)
         } else if let Ok(regex) = Regex::new(&self.pattern) {
             regex.is_match(tool_name)
         } else {
-            // Fallback to exact match if regex is invalid
             self.pattern == tool_name
+        }
+    }
+
+    pub fn matches_with_input(&self, tool_name: &str, input: &Value) -> bool {
+        if !self.matches(tool_name) {
+            return false;
+        }
+
+        match &self.input_pattern {
+            Some(pattern) => self.match_input_pattern(pattern, tool_name, input),
+            None => true,
+        }
+    }
+
+    fn match_input_pattern(&self, pattern: &str, tool_name: &str, input: &Value) -> bool {
+        let input_str = match tool_name {
+            "Bash" => input.get("command").and_then(|v| v.as_str()),
+            "Read" | "Write" | "Edit" => input.get("file_path").and_then(|v| v.as_str()),
+            "Glob" | "Grep" => input.get("path").and_then(|v| v.as_str()),
+            "WebFetch" => {
+                if let Some(domain) = pattern.strip_prefix("domain:") {
+                    return input
+                        .get("url")
+                        .and_then(|v| v.as_str())
+                        .map(|url| url.contains(domain))
+                        .unwrap_or(false);
+                }
+                input.get("url").and_then(|v| v.as_str())
+            }
+            _ => None,
+        };
+
+        let Some(input_str) = input_str else {
+            return false;
+        };
+
+        self.match_pattern(pattern, input_str)
+    }
+
+    fn match_pattern(&self, pattern: &str, input: &str) -> bool {
+        if pattern.ends_with(":*") || pattern.ends_with("**") {
+            let prefix = &pattern[..pattern.len() - 2];
+            input.starts_with(prefix)
+        } else if pattern.contains('*') {
+            let parts: Vec<&str> = pattern.split('*').collect();
+            if parts.len() == 2 {
+                input.starts_with(parts[0]) && input.ends_with(parts[1])
+            } else {
+                input == pattern
+            }
+        } else {
+            input == pattern || input.starts_with(&format!("{}/", pattern))
         }
     }
 }
 
-/// Permission policy for controlling tool execution
 #[derive(Clone, Debug, Default)]
 pub struct PermissionPolicy {
-    /// Permission mode
     pub mode: PermissionMode,
-
-    /// Allow rules (evaluated before deny rules)
-    pub allow_rules: Vec<PermissionRule>,
-
-    /// Deny rules
-    pub deny_rules: Vec<PermissionRule>,
-
-    /// Ask rules (for interactive mode)
-    pub ask_rules: Vec<PermissionRule>,
-
-    /// Tool-specific limits
+    pub rules: Vec<PermissionRule>,
     pub tool_limits: HashMap<String, ToolLimits>,
 }
 
 impl PermissionPolicy {
-    /// Create a new permission policy with default mode
     pub fn new() -> Self {
         Self::default()
     }
 
-    /// Create a builder for permission policy
     pub fn builder() -> PermissionPolicyBuilder {
         PermissionPolicyBuilder::new()
     }
 
-    /// Create a permissive policy that allows all tools
     pub fn permissive() -> Self {
         Self {
             mode: PermissionMode::BypassPermissions,
@@ -253,7 +280,6 @@ impl PermissionPolicy {
         }
     }
 
-    /// Create a read-only policy
     pub fn read_only() -> Self {
         Self {
             mode: PermissionMode::Plan,
@@ -261,7 +287,6 @@ impl PermissionPolicy {
         }
     }
 
-    /// Create a policy that allows file operations
     pub fn accept_edits() -> Self {
         Self {
             mode: PermissionMode::AcceptEdits,
@@ -269,18 +294,18 @@ impl PermissionPolicy {
         }
     }
 
-    /// Check if a tool can be used with the given input
-    pub fn check(&self, tool_name: &str, _input: &Value) -> PermissionResult {
-        // 1. Check bypass mode first
+    pub fn check(&self, tool_name: &str, input: &Value) -> PermissionResult {
         if self.mode.allows_all() {
             return PermissionResult::allowed("Bypass mode: all tools allowed");
         }
 
-        // 2. Check deny rules first (highest priority)
-        let mut deny_rules: Vec<_> = self.deny_rules.iter().collect();
-        deny_rules.sort_by(|a, b| b.priority.cmp(&a.priority));
-        for rule in deny_rules {
-            if rule.matches(tool_name) {
+        // Deny rules first (highest priority)
+        for rule in self
+            .rules
+            .iter()
+            .filter(|r| r.decision == PermissionDecision::Deny)
+        {
+            if rule.matches_with_input(tool_name, input) {
                 return PermissionResult::denied(
                     rule.reason
                         .clone()
@@ -289,11 +314,13 @@ impl PermissionPolicy {
             }
         }
 
-        // 3. Check allow rules
-        let mut allow_rules: Vec<_> = self.allow_rules.iter().collect();
-        allow_rules.sort_by(|a, b| b.priority.cmp(&a.priority));
-        for rule in allow_rules {
-            if rule.matches(tool_name) {
+        // Allow rules
+        for rule in self
+            .rules
+            .iter()
+            .filter(|r| r.decision == PermissionDecision::Allow)
+        {
+            if rule.matches_with_input(tool_name, input) {
                 return PermissionResult::allowed(
                     rule.reason
                         .clone()
@@ -302,20 +329,7 @@ impl PermissionPolicy {
             }
         }
 
-        // 4. Check ask rules (for interactive mode)
-        let mut ask_rules: Vec<_> = self.ask_rules.iter().collect();
-        ask_rules.sort_by(|a, b| b.priority.cmp(&a.priority));
-        for rule in ask_rules {
-            if rule.matches(tool_name) {
-                return PermissionResult::ask(
-                    rule.reason
-                        .clone()
-                        .unwrap_or_else(|| format!("Ask user: {}", rule.pattern)),
-                );
-            }
-        }
-
-        // 5. Apply mode-based defaults
+        // Mode-based defaults
         match self.mode {
             PermissionMode::BypassPermissions => {
                 PermissionResult::allowed("Bypass mode: all tools allowed")
@@ -340,87 +354,64 @@ impl PermissionPolicy {
         }
     }
 
-    /// Get limits for a specific tool
     pub fn get_limits(&self, tool_name: &str) -> Option<&ToolLimits> {
         self.tool_limits.get(tool_name)
     }
 
-    /// Add a tool limit
     pub fn set_limits(&mut self, tool_name: impl Into<String>, limits: ToolLimits) {
         self.tool_limits.insert(tool_name.into(), limits);
     }
 }
 
-/// Builder for PermissionPolicy
 #[derive(Clone, Debug, Default)]
 pub struct PermissionPolicyBuilder {
     policy: PermissionPolicy,
 }
 
 impl PermissionPolicyBuilder {
-    /// Create a new builder
     pub fn new() -> Self {
         Self::default()
     }
 
-    /// Set the permission mode
     pub fn mode(mut self, mode: PermissionMode) -> Self {
         self.policy.mode = mode;
         self
     }
 
-    /// Add an allow pattern
-    pub fn allow_pattern(mut self, pattern: impl Into<String>) -> Self {
-        self.policy.allow_rules.push(PermissionRule::allow(pattern));
+    pub fn allow(mut self, pattern: impl Into<String>) -> Self {
+        let pattern_str = pattern.into();
+        let rule = if pattern_str.contains('(') {
+            PermissionRule::allow_scoped(&pattern_str)
+        } else {
+            PermissionRule::allow(pattern_str)
+        };
+        self.policy.rules.push(rule);
         self
     }
 
-    /// Add an allow rule
-    pub fn allow_rule(mut self, rule: PermissionRule) -> Self {
-        self.policy.allow_rules.push(rule);
+    pub fn deny(mut self, pattern: impl Into<String>) -> Self {
+        let pattern_str = pattern.into();
+        let rule = if pattern_str.contains('(') {
+            PermissionRule::deny_scoped(&pattern_str)
+        } else {
+            PermissionRule::deny(pattern_str)
+        };
+        self.policy.rules.push(rule);
         self
     }
 
-    /// Add a deny pattern
-    pub fn deny_pattern(mut self, pattern: impl Into<String>) -> Self {
-        self.policy.deny_rules.push(PermissionRule::deny(pattern));
+    pub fn rule(mut self, rule: PermissionRule) -> Self {
+        self.policy.rules.push(rule);
         self
     }
 
-    /// Add a deny rule
-    pub fn deny_rule(mut self, rule: PermissionRule) -> Self {
-        self.policy.deny_rules.push(rule);
-        self
-    }
-
-    /// Add an ask pattern (for interactive mode)
-    pub fn ask_pattern(mut self, pattern: impl Into<String>) -> Self {
-        self.policy.ask_rules.push(PermissionRule::ask(pattern));
-        self
-    }
-
-    /// Add an ask rule
-    pub fn ask_rule(mut self, rule: PermissionRule) -> Self {
-        self.policy.ask_rules.push(rule);
-        self
-    }
-
-    /// Add tool limits
     pub fn tool_limits(mut self, tool_name: impl Into<String>, limits: ToolLimits) -> Self {
         self.policy.tool_limits.insert(tool_name.into(), limits);
         self
     }
 
-    /// Build the permission policy
     pub fn build(mut self) -> PermissionPolicy {
-        // Compile all regex patterns
-        for rule in &mut self.policy.allow_rules {
-            let _ = rule.compile();
-        }
-        for rule in &mut self.policy.deny_rules {
-            let _ = rule.compile();
-        }
-        for rule in &mut self.policy.ask_rules {
+        for rule in &mut self.policy.rules {
             let _ = rule.compile();
         }
         self.policy
@@ -436,17 +427,10 @@ mod tests {
         let allowed = PermissionResult::allowed("test");
         assert!(allowed.is_allowed());
         assert!(!allowed.is_denied());
-        assert!(!allowed.needs_user_approval());
 
         let denied = PermissionResult::denied("test");
         assert!(!denied.is_allowed());
         assert!(denied.is_denied());
-        assert!(!denied.needs_user_approval());
-
-        let ask = PermissionResult::ask("test");
-        assert!(!ask.is_allowed());
-        assert!(!ask.is_denied());
-        assert!(ask.needs_user_approval());
     }
 
     #[test]
@@ -467,6 +451,13 @@ mod tests {
     }
 
     #[test]
+    fn test_scoped_rule() {
+        let rule = PermissionRule::allow_scoped("Bash(git:*)");
+        assert_eq!(rule.pattern, "Bash");
+        assert_eq!(rule.input_pattern, Some("git:*".to_string()));
+    }
+
+    #[test]
     fn test_policy_bypass_mode() {
         let policy = PermissionPolicy::permissive();
         let result = policy.check("AnyTool", &Value::Null);
@@ -477,12 +468,10 @@ mod tests {
     fn test_policy_plan_mode() {
         let policy = PermissionPolicy::read_only();
 
-        // Read-only tools should be allowed
         assert!(policy.check("Read", &Value::Null).is_allowed());
         assert!(policy.check("Glob", &Value::Null).is_allowed());
         assert!(policy.check("Grep", &Value::Null).is_allowed());
 
-        // Write tools should be denied
         assert!(policy.check("Write", &Value::Null).is_denied());
         assert!(policy.check("Bash", &Value::Null).is_denied());
     }
@@ -491,21 +480,19 @@ mod tests {
     fn test_policy_accept_edits_mode() {
         let policy = PermissionPolicy::accept_edits();
 
-        // File tools should be allowed
         assert!(policy.check("Read", &Value::Null).is_allowed());
         assert!(policy.check("Write", &Value::Null).is_allowed());
         assert!(policy.check("Edit", &Value::Null).is_allowed());
 
-        // Non-file tools should be denied
         assert!(policy.check("Bash", &Value::Null).is_denied());
         assert!(policy.check("WebSearch", &Value::Null).is_denied());
     }
 
     #[test]
-    fn test_policy_deny_rules_take_precedence() {
+    fn test_policy_deny_takes_precedence() {
         let policy = PermissionPolicy::builder()
             .mode(PermissionMode::AcceptEdits)
-            .deny_pattern("Write") // Explicitly deny Write even in AcceptEdits mode
+            .deny("Write")
             .build();
 
         assert!(policy.check("Read", &Value::Null).is_allowed());
@@ -516,13 +503,27 @@ mod tests {
     fn test_policy_allow_rules() {
         let policy = PermissionPolicy::builder()
             .mode(PermissionMode::Default)
-            .allow_pattern("Bash")
-            .allow_pattern("Read")
+            .allow("Bash")
+            .allow("Read")
             .build();
 
         assert!(policy.check("Bash", &Value::Null).is_allowed());
         assert!(policy.check("Read", &Value::Null).is_allowed());
         assert!(policy.check("Write", &Value::Null).is_denied());
+    }
+
+    #[test]
+    fn test_scoped_allow() {
+        let policy = PermissionPolicy::builder()
+            .mode(PermissionMode::Default)
+            .allow("Bash(git:*)")
+            .build();
+
+        let git_input = serde_json::json!({"command": "git status"});
+        let rm_input = serde_json::json!({"command": "rm -rf /"});
+
+        assert!(policy.check("Bash", &git_input).is_allowed());
+        assert!(policy.check("Bash", &rm_input).is_denied());
     }
 
     #[test]
@@ -534,5 +535,19 @@ mod tests {
         let limits = policy.get_limits("Bash").unwrap();
         assert_eq!(limits.timeout_ms, Some(30000));
         assert!(policy.get_limits("Read").is_none());
+    }
+
+    #[test]
+    fn test_domain_filter() {
+        let policy = PermissionPolicy::builder()
+            .mode(PermissionMode::Default)
+            .allow("WebFetch(domain:github.com)")
+            .build();
+
+        let github_input = serde_json::json!({"url": "https://github.com/user/repo"});
+        let other_input = serde_json::json!({"url": "https://example.com/page"});
+
+        assert!(policy.check("WebFetch", &github_input).is_allowed());
+        assert!(policy.check("WebFetch", &other_input).is_denied());
     }
 }

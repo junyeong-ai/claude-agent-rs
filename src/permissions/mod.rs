@@ -13,7 +13,7 @@ pub use rules::{
 pub const READ_ONLY_TOOLS: &[&str] = &["Read", "Glob", "Grep", "WebSearch", "WebFetch"];
 
 /// Common patterns for file modification tools
-pub const FILE_TOOLS: &[&str] = &["Read", "Write", "Edit", "Glob", "Grep", "NotebookEdit"];
+pub const FILE_TOOLS: &[&str] = &["Read", "Write", "Edit", "Glob", "Grep"];
 
 /// Common patterns for shell/execution tools
 pub const SHELL_TOOLS: &[&str] = &["Bash", "KillShell"];

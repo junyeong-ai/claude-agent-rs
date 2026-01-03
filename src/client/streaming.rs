@@ -6,33 +6,24 @@ use pin_project_lite::pin_project;
 use std::pin::Pin;
 use std::task::{Context, Poll};
 
+use super::recovery::StreamRecoveryState;
 use crate::Result;
-use crate::types::StreamEvent;
+use crate::types::{Citation, ContentDelta, StreamEvent};
 
-/// Item emitted by the stream parser.
 #[derive(Debug, Clone)]
 pub enum StreamItem {
-    /// A parsed event.
     Event(StreamEvent),
-    /// Raw text delta (convenience extraction).
     Text(String),
+    Thinking(String),
+    Citation(Citation),
 }
 
 pin_project! {
-    /// Parser for SSE streams from the Anthropic API.
-    ///
-    /// Handles the SSE format:
-    /// ```text
-    /// event: message_start
-    /// data: {"type":"message_start",...}
-    ///
-    /// event: content_block_delta
-    /// data: {"type":"content_block_delta",...}
-    /// ```
     pub struct StreamParser<S> {
         #[pin]
         inner: S,
-        buffer: String,
+        buffer: Vec<u8>,
+        pos: usize,
     }
 }
 
@@ -40,25 +31,24 @@ impl<S> StreamParser<S>
 where
     S: Stream<Item = std::result::Result<Bytes, reqwest::Error>>,
 {
-    /// Create a new stream parser.
     pub fn new(inner: S) -> Self {
         Self {
             inner,
-            buffer: String::new(),
+            buffer: Vec::with_capacity(4096),
+            pos: 0,
         }
     }
 
-    /// Extract JSON data from an SSE event block.
-    ///
-    /// SSE format can be:
-    /// - `data: {json}` (simple)
-    /// - `event: type\ndata: {json}` (with event type)
+    #[inline]
+    fn find_delimiter(buf: &[u8]) -> Option<usize> {
+        buf.windows(2).position(|w| w == b"\n\n")
+    }
+
     fn extract_json_data(event_block: &str) -> Option<&str> {
         for line in event_block.lines() {
             let line = line.trim();
             if let Some(json_str) = line.strip_prefix("data: ") {
                 let json_str = json_str.trim();
-                // Skip [DONE] marker and ping events
                 if json_str == "[DONE]"
                     || json_str.contains("\"type\": \"ping\"")
                     || json_str.contains("\"type\":\"ping\"")
@@ -73,25 +63,17 @@ where
         None
     }
 
-    /// Parse a single SSE event from the event block.
     fn parse_event(event_block: &str) -> Option<StreamEvent> {
-        // Skip empty blocks and comments
         let trimmed = event_block.trim();
         if trimmed.is_empty() || trimmed.starts_with(':') {
             return None;
         }
-
-        // Extract JSON data
         let json_str = Self::extract_json_data(event_block)?;
-
-        // Parse JSON
-        match serde_json::from_str::<StreamEvent>(json_str) {
-            Ok(event) => Some(event),
-            Err(e) => {
-                tracing::warn!("Failed to parse stream event: {} - data: {}", e, json_str);
-                None
-            }
-        }
+        serde_json::from_str::<StreamEvent>(json_str)
+            .inspect_err(|e| {
+                tracing::warn!("Failed to parse stream event: {} - data: {}", e, json_str)
+            })
+            .ok()
     }
 }
 
@@ -105,45 +87,67 @@ where
         let mut this = self.project();
 
         loop {
-            // Try to parse complete events from buffer (events are separated by \n\n)
-            if let Some(pos) = this.buffer.find("\n\n") {
-                let event_block = this.buffer[..pos].to_string();
-                *this.buffer = this.buffer[pos + 2..].to_string();
+            let search_slice = &this.buffer[*this.pos..];
+            if let Some(rel_pos) = Self::find_delimiter(search_slice) {
+                let start_pos = *this.pos;
+                let end_pos = start_pos + rel_pos;
+                let event_block = match std::str::from_utf8(&this.buffer[start_pos..end_pos]) {
+                    Ok(s) => s,
+                    Err(e) => {
+                        return Poll::Ready(Some(Err(crate::Error::Config(format!(
+                            "Invalid UTF-8 in event: {}",
+                            e
+                        )))));
+                    }
+                };
 
-                if let Some(event) = Self::parse_event(&event_block) {
-                    // Extract text delta for convenience
+                let event = Self::parse_event(event_block);
+                *this.pos = end_pos + 2;
+
+                if this.buffer.len() > 8192 && *this.pos > this.buffer.len() / 2 {
+                    this.buffer.drain(..*this.pos);
+                    *this.pos = 0;
+                }
+
+                if let Some(event) = event {
                     let item = match &event {
                         StreamEvent::ContentBlockDelta {
-                            delta: crate::types::ContentDelta::TextDelta { text },
+                            delta: ContentDelta::TextDelta { text },
                             ..
                         } => StreamItem::Text(text.clone()),
+                        StreamEvent::ContentBlockDelta {
+                            delta: ContentDelta::ThinkingDelta { thinking },
+                            ..
+                        } => StreamItem::Thinking(thinking.clone()),
+                        StreamEvent::ContentBlockDelta {
+                            delta: ContentDelta::CitationsDelta { citation },
+                            ..
+                        } => StreamItem::Citation(citation.clone()),
                         _ => StreamItem::Event(event),
                     };
                     return Poll::Ready(Some(Ok(item)));
                 }
-                // Continue to try parsing more events
                 continue;
             }
 
-            // Need more data from the underlying stream
             match this.inner.as_mut().poll_next(cx) {
-                Poll::Ready(Some(Ok(bytes))) => match std::str::from_utf8(&bytes) {
-                    Ok(s) => this.buffer.push_str(s),
-                    Err(e) => {
-                        return Poll::Ready(Some(Err(crate::Error::Config(format!(
-                            "Invalid UTF-8 in stream: {}",
-                            e
-                        )))));
+                Poll::Ready(Some(Ok(bytes))) => {
+                    if *this.pos > 0 && this.buffer.len() + bytes.len() > 16384 {
+                        this.buffer.drain(..*this.pos);
+                        *this.pos = 0;
                     }
-                },
+                    this.buffer.extend_from_slice(&bytes);
+                }
                 Poll::Ready(Some(Err(e))) => {
                     return Poll::Ready(Some(Err(crate::Error::Network(e))));
                 }
                 Poll::Ready(None) => {
-                    // Stream ended, try to parse any remaining data
-                    if !this.buffer.is_empty() {
-                        let remaining = std::mem::take(this.buffer);
-                        if let Some(event) = Self::parse_event(&remaining) {
+                    if *this.pos < this.buffer.len() {
+                        let remaining = match std::str::from_utf8(&this.buffer[*this.pos..]) {
+                            Ok(s) => s,
+                            Err(_) => return Poll::Ready(None),
+                        };
+                        if let Some(event) = Self::parse_event(remaining) {
                             return Poll::Ready(Some(Ok(StreamItem::Event(event))));
                         }
                     }
@@ -151,6 +155,104 @@ where
                 }
                 Poll::Pending => return Poll::Pending,
             }
+        }
+    }
+}
+
+pin_project! {
+    pub struct RecoverableStream<S> {
+        #[pin]
+        inner: StreamParser<S>,
+        recovery: StreamRecoveryState,
+        current_block_type: Option<BlockType>,
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+enum BlockType {
+    Text,
+    Thinking,
+    ToolUse,
+}
+
+impl<S> RecoverableStream<S>
+where
+    S: Stream<Item = std::result::Result<Bytes, reqwest::Error>>,
+{
+    pub fn new(inner: S) -> Self {
+        Self {
+            inner: StreamParser::new(inner),
+            recovery: StreamRecoveryState::new(),
+            current_block_type: None,
+        }
+    }
+
+    pub fn recovery_state(&self) -> &StreamRecoveryState {
+        &self.recovery
+    }
+
+    pub fn take_recovery_state(self) -> StreamRecoveryState {
+        self.recovery
+    }
+}
+
+impl<S> Stream for RecoverableStream<S>
+where
+    S: Stream<Item = std::result::Result<Bytes, reqwest::Error>>,
+{
+    type Item = Result<StreamItem>;
+
+    fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        let this = self.project();
+
+        match this.inner.poll_next(cx) {
+            Poll::Ready(Some(Ok(item))) => {
+                match &item {
+                    StreamItem::Text(text) => {
+                        *this.current_block_type = Some(BlockType::Text);
+                        this.recovery.append_text(text);
+                    }
+                    StreamItem::Thinking(thinking) => {
+                        *this.current_block_type = Some(BlockType::Thinking);
+                        this.recovery.append_thinking(thinking);
+                    }
+                    StreamItem::Event(event) => match event {
+                        StreamEvent::ContentBlockStart {
+                            content_block: crate::types::ContentBlock::ToolUse(tu),
+                            ..
+                        } => {
+                            *this.current_block_type = Some(BlockType::ToolUse);
+                            this.recovery.start_tool_use(tu.id.clone(), tu.name.clone());
+                        }
+                        StreamEvent::ContentBlockDelta {
+                            delta: ContentDelta::InputJsonDelta { partial_json },
+                            ..
+                        } => {
+                            this.recovery.append_tool_json(partial_json);
+                        }
+                        StreamEvent::ContentBlockDelta {
+                            delta: ContentDelta::SignatureDelta { signature },
+                            ..
+                        } => {
+                            this.recovery.append_signature(signature);
+                        }
+                        StreamEvent::ContentBlockStop { .. } => {
+                            match this.current_block_type.take() {
+                                Some(BlockType::Text) => this.recovery.complete_text_block(),
+                                Some(BlockType::Thinking) => {
+                                    this.recovery.complete_thinking_block()
+                                }
+                                Some(BlockType::ToolUse) => this.recovery.complete_tool_use_block(),
+                                None => {}
+                            }
+                        }
+                        _ => {}
+                    },
+                    StreamItem::Citation(_) => {}
+                }
+                Poll::Ready(Some(Ok(item)))
+            }
+            other => other,
         }
     }
 }
@@ -181,11 +283,7 @@ mod tests {
 data: {"type":"message_start","message":{"model":"claude-sonnet-4-5","id":"msg_123","type":"message","role":"assistant","content":[],"stop_reason":null,"stop_sequence":null,"usage":{"input_tokens":10,"output_tokens":1}}}"#;
         let event = StreamParser::<EmptyStream>::parse_event(data);
         assert!(event.is_some());
-        if let Some(StreamEvent::MessageStart { .. }) = event {
-            // OK
-        } else {
-            panic!("Expected MessageStart event");
-        }
+        assert!(matches!(event, Some(StreamEvent::MessageStart { .. })));
     }
 
     #[test]
@@ -204,11 +302,8 @@ data: {"type":"message_start","message":{"model":"claude-sonnet-4-5","id":"msg_1
 
     #[test]
     fn test_skip_empty_block() {
-        let event = StreamParser::<EmptyStream>::parse_event("");
-        assert!(event.is_none());
-
-        let event = StreamParser::<EmptyStream>::parse_event("   \n  ");
-        assert!(event.is_none());
+        assert!(StreamParser::<EmptyStream>::parse_event("").is_none());
+        assert!(StreamParser::<EmptyStream>::parse_event("   \n  ").is_none());
     }
 
     #[test]
@@ -220,20 +315,16 @@ data: {"type":"message_start","message":{"model":"claude-sonnet-4-5","id":"msg_1
 
     #[test]
     fn test_extract_json_data() {
-        // Simple data line
         let json = StreamParser::<EmptyStream>::extract_json_data("data: {\"foo\":\"bar\"}");
         assert_eq!(json, Some("{\"foo\":\"bar\"}"));
 
-        // With event type
         let json =
             StreamParser::<EmptyStream>::extract_json_data("event: test\ndata: {\"foo\":\"bar\"}");
         assert_eq!(json, Some("{\"foo\":\"bar\"}"));
 
-        // Skip [DONE]
         let json = StreamParser::<EmptyStream>::extract_json_data("data: [DONE]");
         assert!(json.is_none());
 
-        // Skip ping
         let json = StreamParser::<EmptyStream>::extract_json_data(
             "event: ping\ndata: {\"type\": \"ping\"}",
         );

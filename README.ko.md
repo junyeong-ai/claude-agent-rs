@@ -352,4 +352,4 @@ cargo clippy --all-features   # 린트
 
 ## 라이선스
 
-MIT 또는 Apache-2.0
+MIT

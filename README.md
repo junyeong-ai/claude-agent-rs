@@ -352,4 +352,4 @@ cargo clippy --all-features   # Lint
 
 ## License
 
-MIT or Apache-2.0
+MIT

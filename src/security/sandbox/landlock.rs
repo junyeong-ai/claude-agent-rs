@@ -24,15 +24,13 @@ impl LandlockSandbox {
 
 #[cfg(target_os = "linux")]
 fn best_effort_abi() -> Option<ABI> {
-    for abi in [ABI::V4, ABI::V3, ABI::V2, ABI::V1] {
-        if Ruleset::default()
-            .handle_access(AccessFs::from_all(abi))
-            .is_ok()
-        {
-            return Some(abi);
-        }
-    }
-    None
+    [ABI::V4, ABI::V3, ABI::V2, ABI::V1]
+        .into_iter()
+        .find(|&abi| {
+            Ruleset::default()
+                .handle_access(AccessFs::from_all(abi))
+                .is_ok()
+        })
 }
 
 #[cfg(not(target_os = "linux"))]

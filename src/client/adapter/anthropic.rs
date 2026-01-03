@@ -158,6 +158,11 @@ impl AnthropicAdapter {
         r
     }
 
+    /// Prepends CLI identity to the system prompt for OAuth users.
+    ///
+    /// For OAuth authentication (CLI OAuth), the CLI identity must be at the start
+    /// of the system prompt. This method prepends it to any existing system prompt
+    /// rather than replacing it, preserving user-configured prompts.
     fn prepare_request_with_auth(
         &self,
         mut request: CreateMessageRequest,
@@ -166,9 +171,26 @@ impl AnthropicAdapter {
         if let AuthMethod::OAuth { config, .. } = auth
             && !config.system_prompt.is_empty()
         {
-            request.system = Some(crate::types::SystemPrompt::Text(
-                config.system_prompt.clone(),
-            ));
+            let cli_identity = &config.system_prompt;
+
+            request.system = Some(match request.system.take() {
+                Some(crate::types::SystemPrompt::Text(existing)) if !existing.is_empty() => {
+                    // Prepend CLI identity to existing text prompt
+                    crate::types::SystemPrompt::Text(format!("{}\n\n{}", cli_identity, existing))
+                }
+                Some(crate::types::SystemPrompt::Blocks(mut blocks)) if !blocks.is_empty() => {
+                    // Prepend CLI identity as first block
+                    let identity_block = crate::types::SystemBlock {
+                        block_type: "text".to_string(),
+                        text: cli_identity.clone(),
+                        cache_control: None,
+                    };
+                    blocks.insert(0, identity_block);
+                    crate::types::SystemPrompt::Blocks(blocks)
+                }
+                // If no existing system prompt or empty, just use CLI identity
+                _ => crate::types::SystemPrompt::Text(cli_identity.clone()),
+            });
         }
         request
     }
@@ -442,5 +464,60 @@ mod tests {
         let adapter = AnthropicAdapter::new(config);
         let header = adapter.config.beta.header_value().unwrap();
         assert!(header.contains("new-feature-2026-01-01"));
+    }
+
+    #[tokio::test]
+    async fn test_oauth_prepends_cli_identity_to_existing_prompt() {
+        let credential = Credential::oauth("test-token");
+        let adapter = AnthropicAdapter::from_credential(
+            ProviderConfig::new(ModelConfig::anthropic()),
+            credential,
+            None,
+        );
+
+        // Create request with existing system prompt
+        let request = CreateMessageRequest::new("model", vec![Message::user("Hi")])
+            .with_system("Custom user system prompt");
+
+        let body = adapter.transform_request(request).await;
+        let system = body.get("system").and_then(|v| v.as_str()).unwrap_or("");
+
+        // CLI identity should be at the start
+        assert!(
+            system.starts_with("You are Claude Code"),
+            "System prompt should start with CLI identity: {}",
+            system
+        );
+        // User's custom prompt should be preserved after CLI identity
+        assert!(
+            system.contains("Custom user system prompt"),
+            "System prompt should contain user's custom prompt: {}",
+            system
+        );
+    }
+
+    #[tokio::test]
+    async fn test_api_key_does_not_modify_system_prompt() {
+        let adapter = AnthropicAdapter::new(ProviderConfig::new(ModelConfig::anthropic()))
+            .with_api_key("sk-test");
+
+        // Create request with existing system prompt
+        let request = CreateMessageRequest::new("model", vec![Message::user("Hi")])
+            .with_system("Custom user system prompt");
+
+        let body = adapter.transform_request(request).await;
+        let system = body.get("system").and_then(|v| v.as_str()).unwrap_or("");
+
+        // For API key auth, system prompt should be unchanged
+        assert_eq!(
+            system, "Custom user system prompt",
+            "API key auth should not modify system prompt"
+        );
+        // Should NOT contain CLI identity
+        assert!(
+            !system.contains("Claude Code"),
+            "API key auth should not add CLI identity: {}",
+            system
+        );
     }
 }

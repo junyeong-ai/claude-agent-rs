@@ -12,6 +12,7 @@ use super::builder::AgentBuilder;
 impl AgentBuilder {
     pub async fn build(mut self) -> crate::Result<crate::agent::Agent> {
         self.resolve_output_style().await?;
+        self.resolve_model_aliases();
         self.connect_mcp_servers().await?;
 
         let client = self.build_client().await?;
@@ -97,6 +98,38 @@ impl AgentBuilder {
     #[cfg(not(feature = "cli-integration"))]
     async fn resolve_output_style(&mut self) -> crate::Result<()> {
         Ok(())
+    }
+
+    fn resolve_model_aliases(&mut self) {
+        let provider = self.cloud_provider.unwrap_or_else(CloudProvider::from_env);
+        let model_config = self
+            .model_config
+            .clone()
+            .unwrap_or_else(|| provider.default_models());
+
+        // Resolve primary model alias
+        let primary = &self.config.model.primary;
+        let resolved_primary = model_config.resolve_alias(primary);
+        if resolved_primary != primary {
+            tracing::debug!(
+                alias = %primary,
+                resolved = %resolved_primary,
+                "Resolved primary model alias"
+            );
+            self.config.model.primary = resolved_primary.to_string();
+        }
+
+        // Resolve small model alias
+        let small = &self.config.model.small;
+        let resolved_small = model_config.resolve_alias(small);
+        if resolved_small != small {
+            tracing::debug!(
+                alias = %small,
+                resolved = %resolved_small,
+                "Resolved small model alias"
+            );
+            self.config.model.small = resolved_small.to_string();
+        }
     }
 
     async fn connect_mcp_servers(&mut self) -> crate::Result<()> {
@@ -292,5 +325,73 @@ impl AgentBuilder {
         }
 
         builder.build().await
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_resolve_model_aliases() {
+        let mut builder = AgentBuilder::new();
+
+        // Set alias as model
+        builder.config.model.primary = "sonnet".to_string();
+        builder.config.model.small = "haiku".to_string();
+
+        // Resolve aliases
+        builder.resolve_model_aliases();
+
+        // Should be resolved to full model IDs
+        assert!(
+            builder.config.model.primary.contains("sonnet"),
+            "Primary model should contain 'sonnet': {}",
+            builder.config.model.primary
+        );
+        assert!(
+            builder.config.model.primary.starts_with("claude-"),
+            "Primary model should start with 'claude-': {}",
+            builder.config.model.primary
+        );
+        assert!(
+            builder.config.model.small.contains("haiku"),
+            "Small model should contain 'haiku': {}",
+            builder.config.model.small
+        );
+        assert!(
+            builder.config.model.small.starts_with("claude-"),
+            "Small model should start with 'claude-': {}",
+            builder.config.model.small
+        );
+    }
+
+    #[test]
+    fn test_resolve_model_aliases_full_id_unchanged() {
+        let mut builder = AgentBuilder::new();
+
+        // Set full model ID (not an alias)
+        let full_id = "claude-sonnet-4-5-20250929";
+        builder.config.model.primary = full_id.to_string();
+
+        // Resolve aliases
+        builder.resolve_model_aliases();
+
+        // Should remain unchanged
+        assert_eq!(builder.config.model.primary, full_id);
+    }
+
+    #[test]
+    fn test_resolve_model_aliases_opus() {
+        let mut builder = AgentBuilder::new();
+
+        builder.config.model.primary = "opus".to_string();
+        builder.resolve_model_aliases();
+
+        assert!(
+            builder.config.model.primary.contains("opus"),
+            "Primary model should contain 'opus': {}",
+            builder.config.model.primary
+        );
     }
 }

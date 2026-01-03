@@ -95,14 +95,22 @@ impl ResourceManager {
     }
 
     /// Subscribe to resource changes (placeholder for future implementation)
-    pub fn subscribe(&mut self, server_name: &str, uri: &str) -> &ResourceSubscription {
+    ///
+    /// Returns the index of the newly created subscription, which can be used
+    /// with `get_subscription()` to retrieve it.
+    pub fn subscribe(&mut self, server_name: &str, uri: &str) -> usize {
         let subscription = ResourceSubscription {
             server_name: server_name.to_string(),
             uri: uri.to_string(),
             active: true,
         };
         self.subscriptions.push(subscription);
-        self.subscriptions.last().unwrap()
+        self.subscriptions.len() - 1
+    }
+
+    /// Get a subscription by index
+    pub fn get_subscription(&self, index: usize) -> Option<&ResourceSubscription> {
+        self.subscriptions.get(index)
     }
 
     /// Unsubscribe from resource changes

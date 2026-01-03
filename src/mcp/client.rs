@@ -67,9 +67,6 @@ impl McpClient {
                 self.connect_stdio(command.clone(), args.clone(), env.clone())
                     .await
             }
-            McpServerConfig::Http { .. } => Err(McpError::Protocol {
-                message: "HTTP transport not supported. Use SSE instead.".to_string(),
-            }),
             McpServerConfig::Sse { url, headers } => {
                 self.connect_sse(url.clone(), headers.clone()).await
             }
@@ -92,6 +89,8 @@ impl McpClient {
         args: Vec<String>,
         env: HashMap<String, String>,
     ) -> McpResult<()> {
+        use tokio::time::timeout;
+
         let transport = TokioChildProcess::new(Command::new(&command).configure(|cmd| {
             cmd.args(&args);
             for (key, value) in &env {
@@ -102,13 +101,18 @@ impl McpClient {
             message: format!("Failed to create transport: {}", e),
         })?;
 
-        // Create client service using rmcp's serve pattern
-        let service: McpRunningService =
-            ().serve(transport)
-                .await
-                .map_err(|e| McpError::ConnectionFailed {
-                    message: format!("Failed to connect: {}", e),
-                })?;
+        // Create client service using rmcp's serve pattern with timeout
+        let service: McpRunningService = timeout(super::MCP_CONNECT_TIMEOUT, ().serve(transport))
+            .await
+            .map_err(|_| McpError::ConnectionFailed {
+                message: format!(
+                    "Connection timed out after {:?}",
+                    super::MCP_CONNECT_TIMEOUT
+                ),
+            })?
+            .map_err(|e| McpError::ConnectionFailed {
+                message: format!("Failed to connect: {}", e),
+            })?;
 
         // Get server info
         if let Some(info) = service.peer_info() {
@@ -160,15 +164,19 @@ impl McpClient {
     }
 
     /// Connect via SSE transport
+    ///
+    /// Note: SSE client transport requires rmcp's server-side SSE support.
+    /// Currently only stdio transport is fully supported.
     #[cfg(feature = "mcp")]
     async fn connect_sse(
         &mut self,
         _url: String,
         _headers: HashMap<String, String>,
     ) -> McpResult<()> {
-        // SSE client support requires additional setup
+        // SSE client transport is not yet available in rmcp 0.12
+        // When rmcp adds SSE client support, this can be implemented
         Err(McpError::Protocol {
-            message: "SSE transport not yet fully implemented. Use stdio transport.".to_string(),
+            message: "SSE client transport not available. Use stdio transport instead.".into(),
         })
     }
 
@@ -200,6 +208,8 @@ impl McpClient {
     /// Call a tool
     #[cfg(feature = "mcp")]
     pub async fn call_tool(&self, name: &str, arguments: Value) -> McpResult<McpToolResult> {
+        use tokio::time::timeout;
+
         let service = self
             .service
             .as_ref()
@@ -208,15 +218,20 @@ impl McpClient {
             })?;
 
         let service = service.read().await;
-        let result = service
-            .call_tool(CallToolRequestParam {
+        let result = timeout(
+            super::MCP_CALL_TIMEOUT,
+            service.call_tool(CallToolRequestParam {
                 name: name.to_string().into(),
                 arguments: arguments.as_object().cloned(),
-            })
-            .await
-            .map_err(|e| McpError::ToolError {
-                message: format!("Tool call failed: {}", e),
-            })?;
+            }),
+        )
+        .await
+        .map_err(|_| McpError::ToolError {
+            message: format!("Tool call timed out after {:?}", super::MCP_CALL_TIMEOUT),
+        })?
+        .map_err(|e| McpError::ToolError {
+            message: format!("Tool call failed: {}", e),
+        })?;
 
         let content = result
             .content
@@ -296,6 +311,8 @@ impl McpClient {
     /// Read a resource
     #[cfg(feature = "mcp")]
     pub async fn read_resource(&self, uri: &str) -> McpResult<Vec<McpContent>> {
+        use tokio::time::timeout;
+
         let service = self
             .service
             .as_ref()
@@ -304,12 +321,17 @@ impl McpClient {
             })?;
 
         let service = service.read().await;
-        let result = service
-            .read_resource(ReadResourceRequestParam { uri: uri.into() })
-            .await
-            .map_err(|e| McpError::ResourceNotFound {
-                uri: format!("{}: {}", uri, e),
-            })?;
+        let result = timeout(
+            super::MCP_RESOURCE_TIMEOUT,
+            service.read_resource(ReadResourceRequestParam { uri: uri.into() }),
+        )
+        .await
+        .map_err(|_| McpError::ResourceNotFound {
+            uri: format!("{}: timed out after {:?}", uri, super::MCP_RESOURCE_TIMEOUT),
+        })?
+        .map_err(|e| McpError::ResourceNotFound {
+            uri: format!("{}: {}", uri, e),
+        })?;
 
         Ok(result
             .contents
@@ -353,7 +375,6 @@ impl McpClient {
     #[cfg(feature = "mcp")]
     pub async fn close(&mut self) -> McpResult<()> {
         if let Some(service_arc) = self.service.take() {
-            // Try to get exclusive ownership of the service
             match Arc::try_unwrap(service_arc) {
                 Ok(service_rwlock) => {
                     let service = service_rwlock.into_inner();
@@ -361,9 +382,12 @@ impl McpClient {
                         message: format!("Failed to cancel: {}", e),
                     })?;
                 }
-                Err(_) => {
-                    // Could not get exclusive ownership, service will be dropped
-                    // when all references are dropped
+                Err(arc) => {
+                    tracing::debug!(
+                        server = %self.name,
+                        refs = Arc::strong_count(&arc),
+                        "MCP service has active references, deferring cleanup"
+                    );
                 }
             }
         }

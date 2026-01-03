@@ -4,13 +4,22 @@ pub mod client;
 pub mod manager;
 pub mod resources;
 
-// Re-export main types
 pub use client::McpClient;
 pub use manager::McpManager;
 pub use resources::{ResourceManager, ResourceQuery};
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::time::Duration;
+
+const MCP_TOOL_PREFIX: &str = "mcp__";
+
+/// Default timeout for MCP connections
+pub const MCP_CONNECT_TIMEOUT: Duration = Duration::from_secs(30);
+/// Default timeout for MCP tool calls
+pub const MCP_CALL_TIMEOUT: Duration = Duration::from_secs(60);
+/// Default timeout for MCP resource reads
+pub const MCP_RESOURCE_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// MCP server configuration
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -18,31 +27,75 @@ use std::collections::HashMap;
 pub enum McpServerConfig {
     /// stdio transport - communicates with server via stdin/stdout
     Stdio {
-        /// Command to execute
         command: String,
-        /// Command line arguments
         #[serde(default)]
         args: Vec<String>,
-        /// Environment variables to set
         #[serde(default)]
         env: HashMap<String, String>,
     },
-    /// HTTP transport
-    Http {
-        /// Server URL
-        url: String,
-        /// HTTP headers
-        #[serde(default)]
-        headers: HashMap<String, String>,
-    },
-    /// Server-Sent Events transport
+    /// Server-Sent Events transport (requires rmcp SSE support)
     Sse {
-        /// Server URL
         url: String,
-        /// HTTP headers
         #[serde(default)]
         headers: HashMap<String, String>,
     },
+}
+
+/// Reconnection policy with exponential backoff and jitter
+#[derive(Clone, Debug)]
+pub struct ReconnectPolicy {
+    pub max_retries: u32,
+    pub base_delay_ms: u64,
+    pub max_delay_ms: u64,
+    pub jitter_factor: f64,
+}
+
+impl Default for ReconnectPolicy {
+    fn default() -> Self {
+        Self {
+            max_retries: 3,
+            base_delay_ms: 1000,
+            max_delay_ms: 30000,
+            jitter_factor: 0.3,
+        }
+    }
+}
+
+impl ReconnectPolicy {
+    pub fn delay_for_attempt(&self, attempt: u32) -> std::time::Duration {
+        let base = self.base_delay_ms * 2u64.pow(attempt.min(10));
+        let jitter = (base as f64 * self.jitter_factor * rand_factor()) as u64;
+        std::time::Duration::from_millis((base + jitter).min(self.max_delay_ms))
+    }
+}
+
+fn rand_factor() -> f64 {
+    use std::collections::hash_map::DefaultHasher;
+    use std::hash::{Hash, Hasher};
+    use std::time::SystemTime;
+
+    let mut hasher = DefaultHasher::new();
+    SystemTime::now().hash(&mut hasher);
+    std::thread::current().id().hash(&mut hasher);
+    std::process::id().hash(&mut hasher);
+
+    let hash = hasher.finish();
+    (hash % 10000) as f64 / 10000.0
+}
+
+/// Parse MCP qualified name (mcp__server_tool) into (server, tool)
+pub fn parse_mcp_name(name: &str) -> Option<(&str, &str)> {
+    name.strip_prefix(MCP_TOOL_PREFIX)?.split_once('_')
+}
+
+/// Create MCP qualified name from server and tool names
+pub fn make_mcp_name(server: &str, tool: &str) -> String {
+    format!("{}{server}_{tool}", MCP_TOOL_PREFIX)
+}
+
+/// Check if a name matches MCP naming pattern
+pub fn is_mcp_name(name: &str) -> bool {
+    name.starts_with(MCP_TOOL_PREFIX)
 }
 
 /// MCP connection status
@@ -281,6 +334,40 @@ impl McpToolResult {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_parse_mcp_name() {
+        assert_eq!(parse_mcp_name("mcp__server_tool"), Some(("server", "tool")));
+        assert_eq!(
+            parse_mcp_name("mcp__fs_read_file"),
+            Some(("fs", "read_file"))
+        );
+        assert_eq!(parse_mcp_name("Read"), None);
+        assert_eq!(parse_mcp_name("mcp_invalid"), None);
+    }
+
+    #[test]
+    fn test_make_mcp_name() {
+        assert_eq!(make_mcp_name("server", "tool"), "mcp__server_tool");
+        assert_eq!(make_mcp_name("fs", "read_file"), "mcp__fs_read_file");
+    }
+
+    #[test]
+    fn test_is_mcp_name() {
+        assert!(is_mcp_name("mcp__server_tool"));
+        assert!(!is_mcp_name("Read"));
+        assert!(!is_mcp_name("mcp_invalid"));
+    }
+
+    #[test]
+    fn test_reconnect_policy_delay() {
+        let policy = ReconnectPolicy::default();
+        let d0 = policy.delay_for_attempt(0);
+        let d1 = policy.delay_for_attempt(1);
+        assert!(d1 > d0);
+        assert!(d0.as_millis() >= 1000);
+        assert!(d0.as_millis() <= 1300);
+    }
 
     #[test]
     fn test_mcp_server_config_serde() {

@@ -4,7 +4,7 @@
 //! - Linux: Landlock LSM (5.13+)
 //! - macOS: Seatbelt (sandbox-exec)
 //!
-//! Reference: https://code.claude.com/docs/en/sandboxing
+//! Reference: <https://code.claude.com/docs/en/sandboxing>
 
 mod config;
 mod error;

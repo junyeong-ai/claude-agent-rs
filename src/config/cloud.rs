@@ -82,7 +82,7 @@ pub struct VertexConfig {
 #[derive(Clone, Debug, Default)]
 pub struct FoundryConfig {
     pub resource: Option<String>,
-    /// Alternative to resource: full base URL (e.g., https://example-resource.services.ai.azure.com/anthropic/)
+    /// Alternative to resource: full base URL (e.g., `https://example-resource.services.ai.azure.com/anthropic/`)
     pub base_url: Option<String>,
     pub api_key: Option<String>,
 }

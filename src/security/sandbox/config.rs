@@ -1,6 +1,6 @@
 //! Sandbox configuration types matching Claude Code settings.
 //!
-//! Reference: https://code.claude.com/docs/en/sandboxing
+//! Reference: <https://code.claude.com/docs/en/sandboxing>
 
 use std::collections::HashSet;
 use std::path::PathBuf;

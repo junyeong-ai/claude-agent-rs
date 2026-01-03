@@ -2,7 +2,7 @@
 //!
 //! Uses the official Anthropic Messages API format with SigV4 signing.
 //! Supports global and regional endpoints as documented at:
-//! https://platform.claude.com/docs/en/build-with-claude/claude-on-amazon-bedrock
+//! <https://platform.claude.com/docs/en/build-with-claude/claude-on-amazon-bedrock>
 
 use std::sync::Arc;
 use std::time::SystemTime;
@@ -15,7 +15,7 @@ use aws_sigv4::sign::v4::SigningParams;
 use aws_smithy_runtime_api::client::identity::Identity;
 
 use super::base::RequestExecutor;
-use super::config::ProviderConfig;
+use super::config::{BetaFeature, ProviderConfig};
 use super::request::{add_beta_features, build_messages_body};
 use super::token_cache::{AwsCredentialsCache, CachedAwsCredentials, new_aws_credentials_cache};
 use super::traits::ProviderAdapter;
@@ -23,11 +23,7 @@ use crate::client::messages::CreateMessageRequest;
 use crate::types::ApiResponse;
 use crate::{Error, Result};
 
-/// Anthropic version for Bedrock API.
 const ANTHROPIC_VERSION: &str = "bedrock-2023-05-31";
-
-/// Beta header for 1M context window support.
-const BETA_1M_CONTEXT: &str = "context-1m-2025-08-07";
 
 /// Bedrock adapter using InvokeModel API with Messages API format.
 #[derive(Debug)]
@@ -150,9 +146,8 @@ impl BedrockAdapter {
             obj.remove("model");
         }
 
-        // Add beta features
         if self.enable_1m_context {
-            add_beta_features(&mut body, &[BETA_1M_CONTEXT]);
+            add_beta_features(&mut body, &[BetaFeature::Context1M.header_value()]);
         }
 
         body
@@ -391,14 +386,15 @@ mod tests {
 
     #[test]
     fn test_beta_header() {
+        let beta_value = BetaFeature::Context1M.header_value();
         let mut body = json!({
             "anthropic_version": ANTHROPIC_VERSION,
             "max_tokens": 1024,
             "messages": [],
         });
         if let Some(obj) = body.as_object_mut() {
-            obj.insert("anthropic_beta".to_string(), json!([BETA_1M_CONTEXT]));
+            obj.insert("anthropic_beta".to_string(), json!([beta_value]));
         }
-        assert_eq!(body["anthropic_beta"][0], "context-1m-2025-08-07");
+        assert_eq!(body["anthropic_beta"][0], beta_value);
     }
 }

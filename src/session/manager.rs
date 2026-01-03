@@ -71,22 +71,18 @@ impl SessionManager {
         self.persistence.add_message(session_id, message).await
     }
 
-    /// Delete a session
     pub async fn delete(&self, id: &SessionId) -> SessionResult<bool> {
         self.persistence.delete(id).await
     }
 
-    /// List all session IDs
     pub async fn list(&self) -> SessionResult<Vec<SessionId>> {
         self.persistence.list(None).await
     }
 
-    /// List session IDs for a tenant
     pub async fn list_for_tenant(&self, tenant_id: &str) -> SessionResult<Vec<SessionId>> {
         self.persistence.list(Some(tenant_id)).await
     }
 
-    /// Fork a session (create a branch)
     pub async fn fork(&self, id: &SessionId) -> SessionResult<Session> {
         let original = self.get(id).await?;
 
@@ -110,26 +106,22 @@ impl SessionManager {
         Ok(forked)
     }
 
-    /// Mark a session as completed
     pub async fn complete(&self, id: &SessionId) -> SessionResult<()> {
         let mut session = self.get(id).await?;
         session.set_state(SessionState::Completed);
         self.persistence.save(&session).await
     }
 
-    /// Mark a session as errored
     pub async fn set_error(&self, id: &SessionId) -> SessionResult<()> {
         let mut session = self.get(id).await?;
         session.set_state(SessionState::Failed);
         self.persistence.save(&session).await
     }
 
-    /// Clean up expired sessions
     pub async fn cleanup_expired(&self) -> SessionResult<usize> {
         self.persistence.cleanup_expired().await
     }
 
-    /// Check if a session exists
     pub async fn exists(&self, id: &SessionId) -> SessionResult<bool> {
         match self.persistence.load(id).await? {
             Some(session) => Ok(!session.is_expired()),

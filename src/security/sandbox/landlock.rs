@@ -154,10 +154,9 @@ impl LandlockSandbox {
                 AccessFs::from_read(abi)
             };
 
-            ruleset = match ruleset.add_rule(PathBeneath::new(fd, access)) {
-                Ok(r) => r,
-                Err(_) => continue,
-            };
+            ruleset = ruleset
+                .add_rule(PathBeneath::new(fd, access))
+                .map_err(|e| SandboxError::RuleApplication(e.to_string()))?;
         }
 
         Ok(ruleset)

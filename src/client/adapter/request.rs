@@ -100,13 +100,16 @@ mod tests {
 
     #[test]
     fn test_add_beta_features() {
+        use crate::client::adapter::BetaFeature;
+
         let request = sample_request();
         let mut body = build_messages_body(&request, None, None);
+        let beta_value = BetaFeature::Context1M.header_value();
 
-        add_beta_features(&mut body, &["context-1m-2025-08-07"]);
+        add_beta_features(&mut body, &[beta_value]);
 
         let beta = body["anthropic_beta"].as_array().unwrap();
-        assert_eq!(beta[0], "context-1m-2025-08-07");
+        assert_eq!(beta[0], beta_value);
     }
 
     #[test]

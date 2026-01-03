@@ -61,29 +61,22 @@ impl ToolExecutionLog {
 }
 
 #[derive(Debug)]
-struct SessionData {
-    session: Session,
-}
-
-#[derive(Debug)]
 struct ToolStateInner {
-    data: RwLock<SessionData>,
+    session: RwLock<Session>,
     executions: ToolExecutionLog,
 }
 
 impl ToolStateInner {
     fn new(session_id: SessionId) -> Self {
         Self {
-            data: RwLock::new(SessionData {
-                session: Session::with_id(session_id, SessionConfig::default()),
-            }),
+            session: RwLock::new(Session::with_id(session_id, SessionConfig::default())),
             executions: ToolExecutionLog::new(),
         }
     }
 
     fn from_session(session: Session) -> Self {
         Self {
-            data: RwLock::new(SessionData { session }),
+            session: RwLock::new(session),
             executions: ToolExecutionLog::new(),
         }
     }
@@ -104,67 +97,61 @@ impl ToolState {
 
     #[inline]
     pub async fn session_id(&self) -> SessionId {
-        self.0.data.read().await.session.id
+        self.0.session.read().await.id
     }
 
     pub async fn session(&self) -> Session {
-        self.0.data.read().await.session.clone()
+        self.0.session.read().await.clone()
     }
 
     pub async fn update_session(&self, session: Session) {
-        self.0.data.write().await.session = session;
+        *self.0.session.write().await = session;
     }
 
     pub async fn enter_plan_mode(&self, name: Option<String>) -> SessionResult<Plan> {
-        let mut data = self.0.data.write().await;
-        Ok(data.session.enter_plan_mode(name).clone())
+        Ok(self.0.session.write().await.enter_plan_mode(name).clone())
     }
 
     pub async fn current_plan(&self) -> Option<Plan> {
-        self.0.data.read().await.session.current_plan.clone()
+        self.0.session.read().await.current_plan.clone()
     }
 
     pub async fn update_plan_content(&self, content: String) -> SessionResult<()> {
-        self.0
-            .data
-            .write()
-            .await
-            .session
-            .update_plan_content(content);
+        self.0.session.write().await.update_plan_content(content);
         Ok(())
     }
 
     pub async fn exit_plan_mode(&self) -> SessionResult<Option<Plan>> {
-        Ok(self.0.data.write().await.session.exit_plan_mode())
+        Ok(self.0.session.write().await.exit_plan_mode())
     }
 
     pub async fn cancel_plan(&self) -> SessionResult<Option<Plan>> {
-        Ok(self.0.data.write().await.session.cancel_plan())
+        Ok(self.0.session.write().await.cancel_plan())
     }
 
     #[inline]
     pub async fn is_in_plan_mode(&self) -> bool {
-        self.0.data.read().await.session.is_in_plan_mode()
+        self.0.session.read().await.is_in_plan_mode()
     }
 
     pub async fn set_todos(&self, todos: Vec<TodoItem>) -> SessionResult<()> {
-        self.0.data.write().await.session.set_todos(todos);
+        self.0.session.write().await.set_todos(todos);
         Ok(())
     }
 
     pub async fn todos(&self) -> Vec<TodoItem> {
-        self.0.data.read().await.session.todos.clone()
+        self.0.session.read().await.todos.clone()
     }
 
     #[inline]
     pub async fn count_in_progress(&self) -> usize {
-        self.0.data.read().await.session.todos_in_progress_count()
+        self.0.session.read().await.todos_in_progress_count()
     }
 
     pub async fn record_tool_execution(&self, mut exec: ToolExecution) {
         let plan_id = {
-            let data = self.0.data.read().await;
-            if let Some(ref plan) = data.session.current_plan
+            let session = self.0.session.read().await;
+            if let Some(ref plan) = session.current_plan
                 && plan.status == PlanStatus::Executing
             {
                 Some(plan.id)
@@ -193,30 +180,30 @@ impl ToolState {
     }
 
     pub async fn record_compact(&self, record: CompactRecord) {
-        self.0.data.write().await.session.record_compact(record);
+        self.0.session.write().await.record_compact(record);
     }
 
     pub async fn compact_history(&self) -> Vec<CompactRecord> {
-        self.0.data.read().await.session.compact_history.clone()
+        self.0.session.read().await.compact_history.clone()
     }
 
     #[inline]
     pub async fn session_snapshot(&self) -> (SessionId, Vec<TodoItem>, Option<Plan>) {
-        let data = self.0.data.read().await;
+        let session = self.0.session.read().await;
         (
-            data.session.id,
-            data.session.todos.clone(),
-            data.session.current_plan.clone(),
+            session.id,
+            session.todos.clone(),
+            session.current_plan.clone(),
         )
     }
 
     #[inline]
     pub async fn execution_state(&self) -> (SessionId, bool, usize) {
-        let data = self.0.data.read().await;
+        let session = self.0.session.read().await;
         (
-            data.session.id,
-            data.session.is_in_plan_mode(),
-            data.session.todos_in_progress_count(),
+            session.id,
+            session.is_in_plan_mode(),
+            session.todos_in_progress_count(),
         )
     }
 
@@ -226,8 +213,8 @@ impl ToolState {
         todos: Option<Vec<TodoItem>>,
     ) {
         let plan_id = {
-            let mut data = self.0.data.write().await;
-            let plan_id = if let Some(ref plan) = data.session.current_plan
+            let mut session = self.0.session.write().await;
+            let plan_id = if let Some(ref plan) = session.current_plan
                 && plan.status == PlanStatus::Executing
             {
                 Some(plan.id)
@@ -235,7 +222,7 @@ impl ToolState {
                 None
             };
             if let Some(todos) = todos {
-                data.session.set_todos(todos);
+                session.set_todos(todos);
             }
             plan_id
         };

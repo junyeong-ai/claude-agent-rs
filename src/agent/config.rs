@@ -302,6 +302,8 @@ pub struct AgentConfig {
     /// When ToolAccess allows "WebSearch" or "WebFetch", these server-side tools
     /// are injected into API requests. Pricing: $10 per 1,000 searches.
     pub server_tools: ServerToolsConfig,
+    /// Enable coding mode (captures environment context: cwd, git branch, etc.)
+    pub coding_mode: bool,
 }
 
 impl AgentConfig {
@@ -341,6 +343,11 @@ impl AgentConfig {
 
     pub fn with_server_tools(mut self, config: ServerToolsConfig) -> Self {
         self.server_tools = config;
+        self
+    }
+
+    pub fn with_coding_mode(mut self, enabled: bool) -> Self {
+        self.coding_mode = enabled;
         self
     }
 }

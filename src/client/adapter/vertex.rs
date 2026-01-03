@@ -8,7 +8,7 @@ use async_trait::async_trait;
 use gcp_auth::TokenProvider;
 
 use super::base::RequestExecutor;
-use super::config::ProviderConfig;
+use super::config::{BetaFeature, ProviderConfig};
 use super::request::{add_beta_features, build_messages_body};
 use super::token_cache::{CachedToken, TokenCache, new_token_cache};
 use super::traits::ProviderAdapter;
@@ -18,7 +18,6 @@ use crate::types::ApiResponse;
 use crate::{Error, Result};
 
 const ANTHROPIC_VERSION: &str = "vertex-2023-10-16";
-const BETA_1M_CONTEXT: &str = "context-1m-2025-08-07";
 
 pub struct VertexAdapter {
     config: ProviderConfig,
@@ -140,7 +139,7 @@ impl VertexAdapter {
         }
 
         if self.enable_1m_context {
-            add_beta_features(&mut body, &[BETA_1M_CONTEXT]);
+            add_beta_features(&mut body, &[BetaFeature::Context1M.header_value()]);
         }
 
         body

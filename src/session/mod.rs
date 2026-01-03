@@ -4,69 +4,62 @@ pub mod cache;
 pub mod compact;
 pub mod manager;
 pub mod persistence;
+#[cfg(feature = "postgres")]
+pub mod persistence_postgres;
+#[cfg(feature = "redis-backend")]
+pub mod persistence_redis;
+pub mod session_state;
 pub mod state;
+pub mod types;
 
-// Re-exports
 pub use crate::types::TokenUsage;
 pub use cache::{CacheConfigBuilder, CacheStats, SessionCacheManager};
 pub use compact::{CompactExecutor, CompactStrategy};
 pub use manager::SessionManager;
 pub use persistence::{MemoryPersistence, Persistence};
+#[cfg(feature = "postgres")]
+pub use persistence_postgres::PostgresPersistence;
+#[cfg(feature = "redis-backend")]
+pub use persistence_redis::RedisPersistence;
+pub use session_state::ToolState;
 pub use state::{
     MessageId, MessageMetadata, PermissionPolicy, Session, SessionConfig, SessionId,
-    SessionMessage, SessionMode, SessionState,
+    SessionMessage, SessionMode, SessionState, SessionType,
+};
+pub use types::{
+    CompactRecord, Plan, PlanStatus, SessionStats, SessionTree, TodoItem, TodoStatus,
+    ToolExecution, ToolExecutionFilter,
 };
 
 use thiserror::Error;
 
-/// Errors that can occur in session management
 #[derive(Error, Debug)]
 pub enum SessionError {
-    /// Session not found
     #[error("Session not found: {id}")]
-    NotFound {
-        /// Session ID that was not found
-        id: String,
-    },
+    NotFound { id: String },
 
-    /// Session has expired
     #[error("Session expired: {id}")]
-    Expired {
-        /// Expired session ID
-        id: String,
-    },
+    Expired { id: String },
 
-    /// Permission denied for operation
     #[error("Permission denied: {reason}")]
-    PermissionDenied {
-        /// Reason for denial
-        reason: String,
-    },
+    PermissionDenied { reason: String },
 
-    /// Database/storage error
     #[error("Storage error: {message}")]
-    Storage {
-        /// Error message
-        message: String,
-    },
+    Storage { message: String },
 
-    /// Serialization error
     #[error("Serialization error: {0}")]
     Serialization(#[from] serde_json::Error),
 
-    /// Compact failed
     #[error("Compact error: {message}")]
-    Compact {
-        /// Error message
-        message: String,
-    },
+    Compact { message: String },
 
-    /// Context error
     #[error("Context error: {0}")]
     Context(#[from] crate::context::ContextError),
+
+    #[error("Plan error: {message}")]
+    Plan { message: String },
 }
 
-/// Result type for session operations
 pub type SessionResult<T> = std::result::Result<T, SessionError>;
 
 #[cfg(test)]

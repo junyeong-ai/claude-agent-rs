@@ -1,27 +1,18 @@
 //! Compact (Conversation Summarization)
-//!
-//! Implements context window management through conversation summarization.
-//! When the context approaches the model's limit, older messages are replaced
-//! with a summary to free up space.
 
 use serde::{Deserialize, Serialize};
 
 use super::state::{Session, SessionMessage};
 use super::{SessionError, SessionResult};
+use crate::client::DEFAULT_SMALL_MODEL;
 use crate::types::{CompactResult, ContentBlock, DEFAULT_COMPACT_THRESHOLD, Role};
 
-/// Compact strategy configuration
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct CompactStrategy {
-    /// Whether compact is enabled
     pub enabled: bool,
-    /// Threshold as percentage of context window (e.g., 0.8 = 80%)
     pub threshold_percent: f32,
-    /// Model to use for summarization
     pub summary_model: String,
-    /// Number of recent messages to keep (not summarized)
     pub keep_recent_messages: usize,
-    /// Maximum summary length in tokens (approximate)
     pub max_summary_tokens: u32,
 }
 
@@ -30,7 +21,7 @@ impl Default for CompactStrategy {
         Self {
             enabled: true,
             threshold_percent: DEFAULT_COMPACT_THRESHOLD,
-            summary_model: "claude-haiku-4-5".to_string(),
+            summary_model: DEFAULT_SMALL_MODEL.to_string(),
             keep_recent_messages: 4,
             max_summary_tokens: 2000,
         }
@@ -38,7 +29,6 @@ impl Default for CompactStrategy {
 }
 
 impl CompactStrategy {
-    /// Create a disabled compact strategy
     pub fn disabled() -> Self {
         Self {
             enabled: false,
@@ -46,38 +36,31 @@ impl CompactStrategy {
         }
     }
 
-    /// Set the threshold
     pub fn with_threshold(mut self, percent: f32) -> Self {
         self.threshold_percent = percent.clamp(0.1, 0.95);
         self
     }
 
-    /// Set the summary model
     pub fn with_model(mut self, model: impl Into<String>) -> Self {
         self.summary_model = model.into();
         self
     }
 
-    /// Set how many recent messages to keep
     pub fn with_keep_recent(mut self, count: usize) -> Self {
         self.keep_recent_messages = count.max(2);
         self
     }
 }
 
-/// Compact executor for summarizing conversations.
 pub struct CompactExecutor {
-    /// Strategy configuration
     strategy: CompactStrategy,
 }
 
 impl CompactExecutor {
-    /// Create a new compact executor
     pub fn new(strategy: CompactStrategy) -> Self {
         Self { strategy }
     }
 
-    /// Check if compact is needed based on current usage
     pub fn needs_compact(&self, current_tokens: u64, max_tokens: u64) -> bool {
         if !self.strategy.enabled {
             return false;
@@ -87,10 +70,6 @@ impl CompactExecutor {
         current_tokens >= threshold
     }
 
-    /// Execute compact on a session
-    ///
-    /// This method generates a summary of older messages and replaces them.
-    /// The actual API call for summary generation should be done externally.
     pub fn prepare_compact(&self, session: &Session) -> SessionResult<PreparedCompact> {
         if !self.strategy.enabled {
             return Err(SessionError::Compact {
@@ -146,9 +125,10 @@ impl CompactExecutor {
         session.summary = Some(summary.clone());
 
         // Add summary as first message
-        let summary_msg = SessionMessage::user(vec![ContentBlock::Text {
-            text: format!("[Previous conversation summary]\n{}", summary),
-        }]);
+        let summary_msg = SessionMessage::user(vec![ContentBlock::text(format!(
+            "[Previous conversation summary]\n{}",
+            summary
+        ))]);
         session.messages.push(summary_msg);
 
         // Add kept messages
@@ -172,9 +152,8 @@ impl CompactExecutor {
     /// Format messages for the summarization prompt
     fn format_for_summary(&self, messages: &[&SessionMessage]) -> String {
         let mut formatted = String::new();
-        formatted.push_str(
-            "Summarize this conversation concisely, preserving key decisions, code changes, and important context:\n\n",
-        );
+        formatted.push_str(COMPACTION_SUMMARY_PROMPT);
+        formatted.push_str("\n\n---\n\n");
 
         for msg in messages {
             let role = match msg.role {
@@ -186,9 +165,8 @@ impl CompactExecutor {
 
             for block in &msg.content {
                 if let Some(text) = block.as_text() {
-                    // Truncate very long content
-                    let display_text = if text.len() > 1000 {
-                        format!("{}... [truncated]", &text[..1000])
+                    let display_text = if text.len() > 2000 {
+                        format!("{}... [truncated]", &text[..2000])
                     } else {
                         text.to_string()
                     };
@@ -207,6 +185,21 @@ impl CompactExecutor {
         &self.strategy
     }
 }
+
+const COMPACTION_SUMMARY_PROMPT: &str = r#"Create a detailed summary of this conversation that will allow the conversation to continue seamlessly.
+
+Focus on preserving:
+1. **User's Original Request**: The core task or question the user asked
+2. **Key Decisions Made**: Architectural choices, design decisions, approach selections
+3. **Files Read/Modified**: List all files that were read or edited with brief context
+4. **Code Changes**: Specific functions, classes, or modules that were modified
+5. **Current Progress**: What has been completed and what remains
+6. **Errors & Solutions**: Any errors encountered and how they were resolved
+7. **Important Context**: Technical constraints, user preferences, project structure insights
+
+Format the summary as structured sections. Be concise but preserve all information needed to continue the work without re-reading files or re-making decisions.
+
+If there are active tasks (todos), plans, or background operations, note their current state."#;
 
 /// Prepared compact operation
 #[derive(Debug)]
@@ -301,7 +294,8 @@ mod tests {
                 messages_to_remove,
                 messages_to_keep,
             } => {
-                assert!(summary_prompt.contains("Summarize"));
+                assert!(summary_prompt.contains("summary"));
+                assert!(summary_prompt.contains("User's Original Request"));
                 assert_eq!(messages_to_remove, 6);
                 assert_eq!(messages_to_keep.len(), 4);
             }

@@ -1,6 +1,4 @@
-//! Session Manager
-//!
-//! High-level API for session lifecycle management.
+//! Session lifecycle management.
 
 use std::sync::Arc;
 
@@ -8,36 +6,29 @@ use super::persistence::{MemoryPersistence, Persistence};
 use super::state::{Session, SessionConfig, SessionId, SessionMessage, SessionState};
 use super::{SessionError, SessionResult};
 
-/// Session manager for creating, restoring, and managing sessions
 pub struct SessionManager {
-    /// Persistence backend
     persistence: Arc<dyn Persistence>,
 }
 
 impl SessionManager {
-    /// Create a new session manager with the specified persistence backend
     pub fn new(persistence: Arc<dyn Persistence>) -> Self {
         Self { persistence }
     }
 
-    /// Create a session manager with in-memory persistence
-    pub fn new_memory() -> Self {
+    pub fn in_memory() -> Self {
         Self::new(Arc::new(MemoryPersistence::new()))
     }
 
-    /// Get the persistence backend name
     pub fn backend_name(&self) -> &str {
         self.persistence.name()
     }
 
-    /// Create a new session
     pub async fn create(&self, config: SessionConfig) -> SessionResult<Session> {
         let session = Session::new(config);
         self.persistence.save(&session).await?;
         Ok(session)
     }
 
-    /// Create a new session with a tenant ID
     pub async fn create_with_tenant(
         &self,
         config: SessionConfig,
@@ -49,39 +40,29 @@ impl SessionManager {
         Ok(session)
     }
 
-    /// Get a session by ID
     pub async fn get(&self, id: &SessionId) -> SessionResult<Session> {
         let session = self
             .persistence
             .load(id)
             .await?
-            .ok_or_else(|| SessionError::NotFound { id: id.0.clone() })?;
+            .ok_or_else(|| SessionError::NotFound { id: id.to_string() })?;
 
         if session.is_expired() {
-            // Clean up expired session
             self.persistence.delete(id).await?;
-            return Err(SessionError::Expired { id: id.0.clone() });
+            return Err(SessionError::Expired { id: id.to_string() });
         }
 
         Ok(session)
     }
 
-    /// Restore a session by ID (alias for get)
-    pub async fn restore(&self, id: &SessionId) -> SessionResult<Session> {
-        self.get(id).await
+    pub async fn get_by_str(&self, id: &str) -> SessionResult<Session> {
+        self.get(&SessionId::from(id)).await
     }
 
-    /// Restore a session by string ID
-    pub async fn restore_by_str(&self, id: &str) -> SessionResult<Session> {
-        self.get(&SessionId::from_string(id)).await
-    }
-
-    /// Update a session
     pub async fn update(&self, session: &Session) -> SessionResult<()> {
         self.persistence.save(session).await
     }
 
-    /// Add a message to a session
     pub async fn add_message(
         &self,
         session_id: &SessionId,
@@ -139,7 +120,7 @@ impl SessionManager {
     /// Mark a session as errored
     pub async fn set_error(&self, id: &SessionId) -> SessionResult<()> {
         let mut session = self.get(id).await?;
-        session.set_state(SessionState::Error);
+        session.set_state(SessionState::Failed);
         self.persistence.save(&session).await
     }
 
@@ -159,7 +140,7 @@ impl SessionManager {
 
 impl Default for SessionManager {
     fn default() -> Self {
-        Self::new_memory()
+        Self::in_memory()
     }
 }
 
@@ -170,7 +151,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_session_manager_create() {
-        let manager = SessionManager::new_memory();
+        let manager = SessionManager::in_memory();
         let session = manager.create(SessionConfig::default()).await.unwrap();
 
         assert_eq!(session.state, SessionState::Created);
@@ -178,18 +159,18 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_session_manager_restore() {
-        let manager = SessionManager::new_memory();
+    async fn test_session_manager_get() {
+        let manager = SessionManager::in_memory();
         let session = manager.create(SessionConfig::default()).await.unwrap();
-        let session_id = session.id.clone();
+        let session_id = session.id;
 
-        let restored = manager.restore(&session_id).await.unwrap();
+        let restored = manager.get(&session_id).await.unwrap();
         assert_eq!(restored.id, session_id);
     }
 
     #[tokio::test]
     async fn test_session_manager_not_found() {
-        let manager = SessionManager::new_memory();
+        let manager = SessionManager::in_memory();
         let fake_id = SessionId::new();
 
         let result = manager.get(&fake_id).await;
@@ -198,9 +179,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_session_manager_add_message() {
-        let manager = SessionManager::new_memory();
+        let manager = SessionManager::in_memory();
         let session = manager.create(SessionConfig::default()).await.unwrap();
-        let session_id = session.id.clone();
+        let session_id = session.id;
 
         let message = SessionMessage::user(vec![ContentBlock::text("Hello")]);
         manager.add_message(&session_id, message).await.unwrap();
@@ -211,11 +192,11 @@ mod tests {
 
     #[tokio::test]
     async fn test_session_manager_fork() {
-        let manager = SessionManager::new_memory();
+        let manager = SessionManager::in_memory();
 
         // Create original session with messages
         let session = manager.create(SessionConfig::default()).await.unwrap();
-        let session_id = session.id.clone();
+        let session_id = session.id;
 
         let msg1 = SessionMessage::user(vec![ContentBlock::text("Hello")]);
         manager.add_message(&session_id, msg1).await.unwrap();
@@ -236,9 +217,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_session_manager_complete() {
-        let manager = SessionManager::new_memory();
+        let manager = SessionManager::in_memory();
         let session = manager.create(SessionConfig::default()).await.unwrap();
-        let session_id = session.id.clone();
+        let session_id = session.id;
 
         manager.complete(&session_id).await.unwrap();
 
@@ -248,7 +229,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_session_manager_tenant_filtering() {
-        let manager = SessionManager::new_memory();
+        let manager = SessionManager::in_memory();
 
         let _s1 = manager
             .create_with_tenant(SessionConfig::default(), "tenant-a")
@@ -275,14 +256,14 @@ mod tests {
 
     #[tokio::test]
     async fn test_session_manager_expired() {
-        let manager = SessionManager::new_memory();
+        let manager = SessionManager::in_memory();
 
         let config = SessionConfig {
             ttl_secs: Some(0), // Expire immediately
             ..Default::default()
         };
         let session = manager.create(config).await.unwrap();
-        let session_id = session.id.clone();
+        let session_id = session.id;
 
         // Wait for expiry
         tokio::time::sleep(std::time::Duration::from_millis(10)).await;

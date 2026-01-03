@@ -13,29 +13,24 @@ use super::{SessionError, SessionResult};
 /// Trait for session persistence backends
 #[async_trait::async_trait]
 pub trait Persistence: Send + Sync {
-    /// Backend name
     fn name(&self) -> &str;
 
-    /// Save a session
     async fn save(&self, session: &Session) -> SessionResult<()>;
 
-    /// Load a session by ID
     async fn load(&self, id: &SessionId) -> SessionResult<Option<Session>>;
 
-    /// Delete a session
     async fn delete(&self, id: &SessionId) -> SessionResult<bool>;
 
-    /// List session IDs (optionally filtered by tenant)
     async fn list(&self, tenant_id: Option<&str>) -> SessionResult<Vec<SessionId>>;
 
-    /// Add a message to an existing session
+    async fn list_children(&self, parent_id: &SessionId) -> SessionResult<Vec<SessionId>>;
+
     async fn add_message(
         &self,
         session_id: &SessionId,
         message: SessionMessage,
     ) -> SessionResult<()>;
 
-    /// Clean up expired sessions
     async fn cleanup_expired(&self) -> SessionResult<usize>;
 }
 
@@ -70,18 +65,18 @@ impl Persistence for MemoryPersistence {
 
     async fn save(&self, session: &Session) -> SessionResult<()> {
         let mut sessions = self.sessions.write().await;
-        sessions.insert(session.id.0.clone(), session.clone());
+        sessions.insert(session.id.to_string(), session.clone());
         Ok(())
     }
 
     async fn load(&self, id: &SessionId) -> SessionResult<Option<Session>> {
         let sessions = self.sessions.read().await;
-        Ok(sessions.get(&id.0).cloned())
+        Ok(sessions.get(&id.to_string()).cloned())
     }
 
     async fn delete(&self, id: &SessionId) -> SessionResult<bool> {
         let mut sessions = self.sessions.write().await;
-        Ok(sessions.remove(&id.0).is_some())
+        Ok(sessions.remove(&id.to_string()).is_some())
     }
 
     async fn list(&self, tenant_id: Option<&str>) -> SessionResult<Vec<SessionId>> {
@@ -93,7 +88,17 @@ impl Persistence for MemoryPersistence {
                     .map(|t| s.tenant_id.as_deref() == Some(t))
                     .unwrap_or(true)
             })
-            .map(|s| s.id.clone())
+            .map(|s| s.id)
+            .collect();
+        Ok(ids)
+    }
+
+    async fn list_children(&self, parent_id: &SessionId) -> SessionResult<Vec<SessionId>> {
+        let sessions = self.sessions.read().await;
+        let ids: Vec<SessionId> = sessions
+            .values()
+            .filter(|s| s.parent_id.as_ref() == Some(parent_id))
+            .map(|s| s.id)
             .collect();
         Ok(ids)
     }
@@ -104,12 +109,12 @@ impl Persistence for MemoryPersistence {
         message: SessionMessage,
     ) -> SessionResult<()> {
         let mut sessions = self.sessions.write().await;
-        if let Some(session) = sessions.get_mut(&session_id.0) {
+        if let Some(session) = sessions.get_mut(&session_id.to_string()) {
             session.add_message(message);
             Ok(())
         } else {
             Err(SessionError::NotFound {
-                id: session_id.0.clone(),
+                id: session_id.to_string(),
             })
         }
     }
@@ -132,10 +137,6 @@ impl PersistenceFactory {
     pub fn memory() -> Arc<dyn Persistence> {
         Arc::new(MemoryPersistence::new())
     }
-
-    // Future: Add database and Redis backends
-    // pub fn postgres(pool: PgPool) -> Arc<dyn Persistence> { ... }
-    // pub fn redis(client: RedisClient) -> Arc<dyn Persistence> { ... }
 }
 
 #[cfg(test)]
@@ -149,7 +150,7 @@ mod tests {
         let persistence = MemoryPersistence::new();
 
         let session = Session::new(SessionConfig::default());
-        let session_id = session.id.clone();
+        let session_id = session.id;
 
         persistence.save(&session).await.unwrap();
 
@@ -163,7 +164,7 @@ mod tests {
         let persistence = MemoryPersistence::new();
 
         let session = Session::new(SessionConfig::default());
-        let session_id = session.id.clone();
+        let session_id = session.id;
 
         persistence.save(&session).await.unwrap();
         assert!(persistence.delete(&session_id).await.unwrap());
@@ -197,7 +198,7 @@ mod tests {
         let persistence = MemoryPersistence::new();
 
         let session = Session::new(SessionConfig::default());
-        let session_id = session.id.clone();
+        let session_id = session.id;
         persistence.save(&session).await.unwrap();
 
         let message =

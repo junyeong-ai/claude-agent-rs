@@ -12,22 +12,6 @@ use super::state::Session;
 use crate::context::StaticContext;
 use crate::types::SystemBlock;
 
-/// Cache control type for API requests
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct CacheControlType {
-    /// The cache control type (e.g., "ephemeral")
-    #[serde(rename = "type")]
-    pub control_type: String,
-}
-
-impl Default for CacheControlType {
-    fn default() -> Self {
-        Self {
-            control_type: "ephemeral".to_string(),
-        }
-    }
-}
-
 /// Cache statistics for a session
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct CacheStats {
@@ -125,16 +109,16 @@ impl SessionCacheManager {
     }
 
     /// Initialize with static context
-    pub fn initialize(&mut self, static_ctx: &StaticContext) {
-        self.static_context_hash = Some(static_ctx.content_hash());
+    pub fn initialize(&mut self, static_context: &StaticContext) {
+        self.static_context_hash = Some(static_context.content_hash());
     }
 
     /// Build cached system blocks for API request
     ///
     /// Returns system blocks with cache_control set on static parts.
-    pub fn build_cached_system(&self, static_ctx: &StaticContext) -> Vec<SystemBlock> {
+    pub fn build_cached_system(&self, static_context: &StaticContext) -> Vec<SystemBlock> {
         if !self.enabled {
-            return static_ctx
+            return static_context
                 .to_system_blocks()
                 .into_iter()
                 .map(|mut b| {
@@ -144,20 +128,20 @@ impl SessionCacheManager {
                 .collect();
         }
 
-        static_ctx.to_system_blocks()
+        static_context.to_system_blocks()
     }
 
     /// Check if the static context has changed (cache invalidation)
-    pub fn has_context_changed(&self, static_ctx: &StaticContext) -> bool {
+    pub fn has_context_changed(&self, static_context: &StaticContext) -> bool {
         match &self.static_context_hash {
-            Some(hash) => *hash != static_ctx.content_hash(),
+            Some(hash) => *hash != static_context.content_hash(),
             None => true,
         }
     }
 
     /// Update cache after a context change
-    pub fn update_context(&mut self, static_ctx: &StaticContext) {
-        self.static_context_hash = Some(static_ctx.content_hash());
+    pub fn update_context(&mut self, static_context: &StaticContext) {
+        self.static_context_hash = Some(static_context.content_hash());
     }
 
     /// Record cache usage from API response
@@ -170,10 +154,10 @@ impl SessionCacheManager {
     /// Combines static context (cached) with session-specific context.
     pub fn build_system_for_session(
         &self,
-        static_ctx: &StaticContext,
+        static_context: &StaticContext,
         session: &Session,
     ) -> Vec<SystemBlock> {
-        let mut blocks = self.build_cached_system(static_ctx);
+        let mut blocks = self.build_cached_system(static_context);
 
         // Add session-specific context (not cached)
         if let Some(summary) = &session.summary {
@@ -206,57 +190,27 @@ impl Default for SessionCacheManager {
 }
 
 /// Builder for session cache configuration
+#[derive(Default)]
 pub struct CacheConfigBuilder {
     enabled: bool,
-    breakpoints: Vec<CacheBreakpoint>,
-}
-
-/// A cache breakpoint (where to add cache_control)
-#[derive(Clone, Debug)]
-pub struct CacheBreakpoint {
-    /// Name of this breakpoint
-    pub name: String,
-    /// Priority (lower = earlier in request)
-    pub priority: i32,
 }
 
 impl CacheConfigBuilder {
-    /// Create a new builder
     pub fn new() -> Self {
-        Self {
-            enabled: true,
-            breakpoints: Vec::new(),
-        }
+        Self { enabled: true }
     }
 
-    /// Disable caching
     pub fn disabled(mut self) -> Self {
         self.enabled = false;
         self
     }
 
-    /// Add a cache breakpoint
-    pub fn with_breakpoint(mut self, name: impl Into<String>, priority: i32) -> Self {
-        self.breakpoints.push(CacheBreakpoint {
-            name: name.into(),
-            priority,
-        });
-        self
-    }
-
-    /// Build the cache manager
     pub fn build(self) -> SessionCacheManager {
         if self.enabled {
             SessionCacheManager::new()
         } else {
             SessionCacheManager::disabled()
         }
-    }
-}
-
-impl Default for CacheConfigBuilder {
-    fn default() -> Self {
-        Self::new()
     }
 }
 
@@ -324,11 +278,11 @@ mod tests {
     #[test]
     fn test_cache_manager_build_system() {
         let manager = SessionCacheManager::new();
-        let ctx = StaticContext::new()
+        let static_context = StaticContext::new()
             .with_system_prompt("You are helpful")
             .with_claude_md("# Project");
 
-        let blocks = manager.build_cached_system(&ctx);
+        let blocks = manager.build_cached_system(&static_context);
         assert_eq!(blocks.len(), 2);
 
         // All should have cache control when enabled
@@ -338,19 +292,15 @@ mod tests {
     #[test]
     fn test_cache_manager_disabled_no_cache_control() {
         let manager = SessionCacheManager::disabled();
-        let ctx = StaticContext::new().with_system_prompt("Test");
+        let static_context = StaticContext::new().with_system_prompt("Test");
 
-        let blocks = manager.build_cached_system(&ctx);
+        let blocks = manager.build_cached_system(&static_context);
         assert!(blocks.iter().all(|b| b.cache_control.is_none()));
     }
 
     #[test]
     fn test_cache_config_builder() {
-        let manager = CacheConfigBuilder::new()
-            .with_breakpoint("system", 0)
-            .with_breakpoint("context", 10)
-            .build();
-
+        let manager = CacheConfigBuilder::new().build();
         assert!(manager.is_enabled());
     }
 

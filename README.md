@@ -1,6 +1,6 @@
 # claude-agent-rs
 
-**Claude Code CLI Compatible Rust SDK**
+**Production-Ready Rust SDK for Claude API**
 
 [![Crates.io](https://img.shields.io/crates/v/claude-agent.svg)](https://crates.io/crates/claude-agent)
 [![Docs.rs](https://img.shields.io/docsrs/claude-agent)](https://docs.rs/claude-agent)
@@ -13,13 +13,15 @@ English | [한국어](README.ko.md)
 
 ## Why claude-agent-rs?
 
-| | claude-agent-rs | Other SDKs |
-|---|:---:|:---:|
-| **No Node.js dependency** | O | X |
-| **Reuse Claude Code CLI auth** | O | X |
-| **Auto Prompt Caching** | O | Manual |
-| **TOCTOU-Safe file ops** | O | X |
-| **Multi-cloud** | Bedrock, Vertex, Foundry | Limited |
+| Feature | claude-agent-rs | Other SDKs |
+|---------|:---:|:---:|
+| **Pure Rust, No Runtime Dependencies** | Native | Node.js/Python required |
+| **Claude Code CLI Auth Reuse** | OAuth token sharing | Manual API key setup |
+| **Automatic Prompt Caching** | Up to 90% cost savings | Manual implementation |
+| **TOCTOU-Safe File Operations** | `openat()` + `O_NOFOLLOW` | Standard file I/O |
+| **Multi-Cloud Support** | Bedrock, Vertex, Foundry | Limited or none |
+| **OS-Level Sandboxing** | Landlock, Seatbelt | None |
+| **1000+ Tests** | Production-proven | Varies |
 
 ---
 
@@ -33,7 +35,7 @@ claude-agent = "0.2"
 tokio = { version = "1", features = ["full"] }
 ```
 
-### One-shot Query
+### Simple Query
 
 ```rust
 use claude_agent::query;
@@ -65,7 +67,7 @@ async fn main() -> claude_agent::Result<()> {
 }
 ```
 
-### Agent Workflow
+### Full Agent with Tools
 
 ```rust
 use claude_agent::{Agent, AgentEvent, ToolAccess};
@@ -75,10 +77,10 @@ use std::pin::pin;
 #[tokio::main]
 async fn main() -> claude_agent::Result<()> {
     let agent = Agent::builder()
-        .from_claude_code()              // Use Claude Code CLI auth
-        .tools(ToolAccess::all())        // 12 tools + 2 server tools
+        .from_claude_code()              // Reuse Claude Code CLI OAuth
+        .tools(ToolAccess::all())        // 12 built-in tools
+        .with_web_search()               // + Server tools
         .working_dir("./my-project")
-        .max_iterations(10)
         .build()
         .await?;
 
@@ -89,9 +91,10 @@ async fn main() -> claude_agent::Result<()> {
         match event? {
             AgentEvent::Text(text) => print!("{text}"),
             AgentEvent::ToolStart { name, .. } => eprintln!("\n[{name}]"),
-            AgentEvent::ToolEnd { .. } => eprintln!(" done"),
             AgentEvent::Complete(result) => {
-                eprintln!("\nTotal: {} tokens", result.total_tokens());
+                eprintln!("\nTokens: {} | Cost: ${:.4}",
+                    result.total_tokens(),
+                    result.total_cost_usd());
             }
             _ => {}
         }
@@ -107,32 +110,32 @@ async fn main() -> claude_agent::Result<()> {
 ### Claude Code CLI (Recommended)
 
 ```rust
-let agent = Agent::builder()
-    .from_claude_code()  // Automatically use OAuth token
+Agent::builder()
+    .from_claude_code()  // Uses ~/.claude/credentials.json
     .build()
-    .await?;
+    .await?
 ```
 
 ### API Key
 
 ```rust
-let agent = Agent::builder()
+Agent::builder()
     .api_key("sk-ant-...")
     .build()
-    .await?;
+    .await?
 ```
 
 ### Cloud Providers
 
 ```rust
 // AWS Bedrock
-let agent = Agent::builder().bedrock("us-east-1").build().await?;
+Agent::builder().bedrock("us-east-1").build().await?
 
 // Google Vertex AI
-let agent = Agent::builder().vertex("my-project", "us-central1").build().await?;
+Agent::builder().vertex("project-id", "us-central1").build().await?
 
 // Azure AI Foundry
-let agent = Agent::builder().foundry("my-resource", "claude-sonnet").build().await?;
+Agent::builder().foundry("resource-name").build().await?
 ```
 
 See: [Authentication Guide](docs/authentication.md) | [Cloud Providers](docs/cloud-providers.md)
@@ -143,26 +146,32 @@ See: [Authentication Guide](docs/authentication.md) | [Cloud Providers](docs/clo
 
 ### 12 Built-in Tools
 
-| Category | Tools | Description |
-|----------|-------|-------------|
-| **File** | Read, Write, Edit, Glob, Grep | File system operations |
-| **Execution** | Bash, KillShell | Shell command execution |
-| **Agent** | Task, TaskOutput, TodoWrite, Skill | Agent orchestration |
-| **Planning** | Plan | Structured planning workflow |
+| Category | Tools |
+|----------|-------|
+| **File** | Read, Write, Edit, Glob, Grep |
+| **Shell** | Bash, KillShell |
+| **Agent** | Task, TaskOutput, TodoWrite, Skill |
+| **Planning** | Plan |
 
-### 2 Server Tools (Anthropic API)
+### 2 Server Tools (Anthropic API only)
 
-| Tool | Description | Enable |
-|------|-------------|--------|
-| **WebFetch** | Fetch URL content | `.with_web_fetch()` |
-| **WebSearch** | Web search | `.with_web_search()` |
+| Tool | Description |
+|------|-------------|
+| **WebFetch** | Fetch and process URL content |
+| **WebSearch** | Web search with citations |
+
+```rust
+Agent::builder()
+    .with_web_fetch()
+    .with_web_search()
+```
 
 ### Tool Access Control
 
 ```rust
-ToolAccess::all()                           // All tools
-ToolAccess::only(["Read", "Grep", "Glob"])  // Specific tools only
-ToolAccess::except(["Bash", "Write"])       // Exclude specific tools
+ToolAccess::all()                           // All 12 tools
+ToolAccess::only(["Read", "Grep", "Glob"])  // Specific tools
+ToolAccess::except(["Bash", "Write"])       // Exclude tools
 ```
 
 See: [Tools Guide](docs/tools.md)
@@ -171,22 +180,21 @@ See: [Tools Guide](docs/tools.md)
 
 ## Key Features
 
-### Prompt Caching
+### 3 Built-in Subagents
 
-Automatic system prompt caching for up to 90% token cost savings.
+| Type | Model | Purpose |
+|------|-------|---------|
+| `explore` | Haiku | Fast codebase search |
+| `plan` | Primary | Implementation planning |
+| `general` | Primary | Complex multi-step tasks |
 
-```rust
-// Auto-enabled with from_claude_code
-// Or manual configuration
-let agent = Agent::builder()
-    .cache_static_context(true)
-    .build()
-    .await?;
-```
+See: [Subagents Guide](docs/subagents.md)
 
 ### Skills System
 
-`.claude/commands/deploy.md`:
+Define reusable skills via markdown:
+
+`.claude/skills/deploy.md`:
 ```markdown
 ---
 description: Production deployment
@@ -195,54 +203,58 @@ allowed-tools: [Bash, Read]
 Deploy to $ARGUMENTS environment.
 ```
 
-Programmatic registration:
-```rust
-let skill = SkillDefinition::new("deploy", "Production deployment", "Deployment process...")
-    .with_trigger("deploy")
-    .with_allowed_tools(["Bash", "Read"]);
-
-let agent = Agent::builder()
-    .skill(skill)
-    .build()
-    .await?;
-```
-
 See: [Skills Guide](docs/skills.md)
-
-### Subagents
-
-Specialized agents running in isolated contexts:
-
-| Type | Purpose | Model |
-|------|---------|-------|
-| `explore` | Codebase exploration | Haiku |
-| `plan` | Implementation planning | Primary |
-| `general` | General complex tasks | Primary |
-
-```json
-{
-    "subagent_type": "explore",
-    "prompt": "Analyze auth module structure",
-    "run_in_background": true
-}
-```
-
-See: [Subagents Guide](docs/subagents.md)
 
 ### Memory System
 
-Auto-loads `CLAUDE.md` files for project context:
+Auto-loads `CLAUDE.md` for project context:
 
 ```markdown
 # Project Guide
-
 @import ./docs/architecture.md
 
-## Coding Rules
+## Rules
 - Use Rust 2024 Edition
 ```
 
 See: [Memory System Guide](docs/memory-system.md)
+
+### Session Persistence
+
+| Backend | Feature | Use Case |
+|---------|---------|----------|
+| Memory | (default) | Development |
+| PostgreSQL | `postgres` | Production (7 tables) |
+| Redis | `redis-backend` | High-throughput |
+
+See: [Session Guide](docs/session.md)
+
+### Hooks System
+
+10 lifecycle events for execution control:
+
+| Blockable | Non-Blockable |
+|-----------|---------------|
+| PreToolUse | PostToolUse, PostToolUseFailure |
+| UserPromptSubmit | Stop, SubagentStart, SubagentStop |
+| | PreCompact, SessionStart, SessionEnd |
+
+See: [Hooks Guide](docs/hooks.md)
+
+### MCP Integration
+
+```rust
+let mut mcp = McpManager::new();
+mcp.add_server("filesystem", McpServerConfig::Stdio {
+    command: "npx".into(),
+    args: vec!["-y", "@anthropic-ai/mcp-server-filesystem"],
+    env: HashMap::new(),
+}).await?;
+
+Agent::builder().mcp(mcp).build().await?
+```
+
+See: [MCP Guide](docs/mcp.md)
 
 ---
 
@@ -250,10 +262,11 @@ See: [Memory System Guide](docs/memory-system.md)
 
 | Feature | Description |
 |---------|-------------|
-| **OS Sandbox** | Landlock (Linux), Seatbelt (macOS) |
-| **TOCTOU-Safe** | `openat()` + `O_NOFOLLOW` file operations |
-| **Bash AST Analysis** | tree-sitter based dangerous command detection |
-| **Resource Limits** | `setrlimit()` based process isolation |
+| **OS Sandbox** | Landlock (Linux 5.13+), Seatbelt (macOS) |
+| **TOCTOU-Safe** | `openat()` + `O_NOFOLLOW` atomic operations |
+| **Bash AST** | tree-sitter based dangerous command detection |
+| **Resource Limits** | `setrlimit()` process isolation |
+| **Network Filter** | Domain whitelist/blacklist |
 
 See: [Security Guide](docs/security.md) | [Sandbox Guide](docs/sandbox.md)
 
@@ -263,42 +276,54 @@ See: [Security Guide](docs/security.md) | [Sandbox Guide](docs/sandbox.md)
 
 | Document | Description |
 |----------|-------------|
-| [Architecture](docs/architecture.md) | Overall system structure |
+| [Architecture](docs/architecture.md) | System structure and data flow |
 | [Authentication](docs/authentication.md) | OAuth, API Key, cloud integration |
-| [Tools](docs/tools.md) | 12 built-in tools + 2 server tools |
-| [Skills](docs/skills.md) | Skills system and slash commands |
-| [Subagents](docs/subagents.md) | Subagent system |
-| [Memory](docs/memory-system.md) | CLAUDE.md, @import |
-| [Hooks](docs/hooks.md) | 10 event types, Pre/Post hooks |
-| [MCP](docs/mcp.md) | External MCP server integration |
-| [Session](docs/session.md) | Prompt Caching, context compaction |
+| [Tools](docs/tools.md) | 12 built-in + 2 server tools |
+| [Skills](docs/skills.md) | Slash commands and skill definitions |
+| [Subagents](docs/subagents.md) | Subagent spawning and management |
+| [Memory](docs/memory-system.md) | CLAUDE.md and @import |
+| [Hooks](docs/hooks.md) | 10 lifecycle events |
+| [MCP](docs/mcp.md) | External MCP servers |
+| [Session](docs/session.md) | Persistence and compaction |
 | [Permissions](docs/permissions.md) | Permission modes and policies |
-| [Security](docs/security.md) | TOCTOU-safe, Bash AST |
-| [Sandbox](docs/sandbox.md) | Landlock, Seatbelt |
-| [Budget](docs/budget.md) | Cost limits, tenant management |
-| [Observability](docs/observability.md) | OpenTelemetry, metrics |
-| [Output Styles](docs/output-styles.md) | Response format customization |
+| [Security](docs/security.md) | TOCTOU-safe operations |
+| [Sandbox](docs/sandbox.md) | Landlock and Seatbelt |
+| [Budget](docs/budget.md) | Token/cost limits |
+| [Observability](docs/observability.md) | OpenTelemetry integration |
+| [Output Styles](docs/output-styles.md) | Response formatting |
 | [Cloud Providers](docs/cloud-providers.md) | Bedrock, Vertex, Foundry |
+
+---
+
+## Feature Flags
+
+```toml
+[dependencies]
+claude-agent = { version = "0.2", features = ["mcp", "postgres"] }
+```
+
+| Feature | Description |
+|---------|-------------|
+| `cli-integration` | Claude Code CLI support (default) |
+| `mcp` | MCP protocol support |
+| `multimedia` | PDF reading support |
+| `aws` | AWS Bedrock |
+| `gcp` | Google Vertex AI |
+| `azure` | Azure AI Foundry |
+| `postgres` | PostgreSQL persistence |
+| `redis-backend` | Redis persistence |
+| `otel` | OpenTelemetry |
+| `full` | All features |
 
 ---
 
 ## Examples
 
 ```bash
-# Core SDK test
-cargo run --example sdk_core_test
-
-# Advanced features test
-cargo run --example advanced_test
-
-# All tools test
-cargo run --example all_tools_test
-
-# Server tools (WebFetch, WebSearch)
-cargo run --example server_tools
-
-# Files API
-cargo run --example files_api
+cargo run --example sdk_core_test      # Core SDK
+cargo run --example advanced_test      # Skills, subagents, hooks
+cargo run --example all_tools_test     # All 12 tools
+cargo run --example server_tools       # WebFetch, WebSearch
 ```
 
 ---
@@ -309,22 +334,22 @@ cargo run --example files_api
 |----------|-------------|
 | `ANTHROPIC_API_KEY` | API key |
 | `ANTHROPIC_MODEL` | Default model |
-| `CLAUDE_CODE_USE_BEDROCK` | Enable AWS Bedrock |
-| `CLAUDE_CODE_USE_VERTEX` | Enable Google Vertex AI |
-| `CLAUDE_CODE_USE_FOUNDRY` | Enable Azure Foundry |
+| `CLAUDE_CODE_USE_BEDROCK` | Enable Bedrock |
+| `CLAUDE_CODE_USE_VERTEX` | Enable Vertex AI |
+| `CLAUDE_CODE_USE_FOUNDRY` | Enable Foundry |
 
 ---
 
 ## Testing
 
 ```bash
-cargo test                    # Unit tests
-cargo test -- --ignored       # Include CLI auth tests
-cargo clippy --all-features   # Lint check
+cargo test                    # 1061 tests
+cargo test -- --ignored       # + live API tests
+cargo clippy --all-features   # Lint
 ```
 
 ---
 
 ## License
 
-MIT or Apache-2.0 (at your option)
+MIT or Apache-2.0

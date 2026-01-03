@@ -48,7 +48,7 @@ Fast agent for codebase exploration.
 | Property | Value |
 |----------|-------|
 | Tools | Read, Grep, Glob, Bash |
-| Model | claude-3-5-haiku-20241022 |
+| Model | Haiku (Small) |
 | Use case | Quick file/code search |
 
 ### plan
@@ -58,17 +58,17 @@ Software architect for implementation planning.
 | Property | Value |
 |----------|-------|
 | Tools | All |
-| Model | claude-sonnet-4-20250514 |
+| Model | Sonnet (Primary) |
 | Use case | Design and planning |
 
-### general-purpose
+### general
 
 Full capability agent for complex tasks.
 
 | Property | Value |
 |----------|-------|
 | Tools | All |
-| Model | claude-sonnet-4-20250514 |
+| Model | Sonnet (Primary) |
 | Use case | Multi-step autonomous tasks |
 
 ## Subagent Definition

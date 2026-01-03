@@ -149,7 +149,7 @@ Event-driven interception system for agent lifecycle.
 
 | File | Purpose |
 |------|---------|
-| `traits.rs` | Hook trait, HookEvent (12 types), HookInput/Output |
+| `traits.rs` | Hook trait, HookEvent (10 types), HookInput/Output |
 | `manager.rs` | HookManager with priority-based execution |
 | `command.rs` | CommandHook for shell-based hooks |
 

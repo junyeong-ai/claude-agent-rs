@@ -198,6 +198,24 @@ impl ToolResult {
         self.output.is_error()
     }
 
+    pub fn is_permission_denied(&self) -> bool {
+        matches!(
+            self.output,
+            ToolOutput::Error(ToolError::PermissionDenied { .. })
+        )
+    }
+
+    pub fn is_non_retryable(&self) -> bool {
+        matches!(
+            self.output,
+            ToolOutput::Error(
+                ToolError::PermissionDenied { .. }
+                    | ToolError::SecurityViolation { .. }
+                    | ToolError::UnknownTool { .. }
+            )
+        )
+    }
+
     pub fn text(&self) -> String {
         self.output.text()
     }
@@ -208,6 +226,38 @@ impl ToolResult {
 
     pub fn as_error(&self) -> Option<&ToolError> {
         self.output.as_error()
+    }
+
+    pub fn permission_denied(tool: impl Into<String>, reason: impl Into<String>) -> Self {
+        Self {
+            output: ToolOutput::permission_denied(tool, reason),
+            inner_usage: None,
+            inner_model: None,
+        }
+    }
+
+    pub fn unknown_tool(name: impl Into<String>) -> Self {
+        Self {
+            output: ToolOutput::tool_error(ToolError::unknown_tool(name)),
+            inner_usage: None,
+            inner_model: None,
+        }
+    }
+
+    pub fn timeout(timeout_ms: u64) -> Self {
+        Self {
+            output: ToolOutput::timeout(timeout_ms),
+            inner_usage: None,
+            inner_model: None,
+        }
+    }
+
+    pub fn security_error(message: impl Into<String>) -> Self {
+        Self {
+            output: ToolOutput::security_error(message),
+            inner_usage: None,
+            inner_model: None,
+        }
     }
 }
 

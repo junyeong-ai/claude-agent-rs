@@ -127,18 +127,16 @@ impl PlanTool {
             );
         }
 
-        match self.state.enter_plan_mode(name).await {
-            Ok(plan) => ToolResult::success(format!(
-                "Plan mode started.\n\
-                Plan ID: {}\n\
-                Status: {:?}\n\n\
-                Explore the codebase and design your approach.\n\
-                Use action: \"update\" to record your plan.\n\
-                Use action: \"complete\" when ready to proceed.",
-                plan.id, plan.status
-            )),
-            Err(e) => ToolResult::error(format!("Failed to start plan: {}", e)),
-        }
+        let plan = self.state.enter_plan_mode(name).await;
+        ToolResult::success(format!(
+            "Plan mode started.\n\
+            Plan ID: {}\n\
+            Status: {:?}\n\n\
+            Explore the codebase and design your approach.\n\
+            Use action: \"update\" to record your plan.\n\
+            Use action: \"complete\" when ready to proceed.",
+            plan.id, plan.status
+        ))
     }
 
     async fn complete(&self) -> ToolResult {
@@ -147,7 +145,7 @@ impl PlanTool {
         }
 
         match self.state.exit_plan_mode().await {
-            Ok(Some(plan)) => {
+            Some(plan) => {
                 let content = if plan.content.is_empty() {
                     "No plan content recorded.".to_string()
                 } else {
@@ -167,8 +165,7 @@ impl PlanTool {
                     content
                 ))
             }
-            Ok(None) => ToolResult::error("No active plan found."),
-            Err(e) => ToolResult::error(format!("Failed to complete plan: {}", e)),
+            None => ToolResult::error("No active plan found."),
         }
     }
 
@@ -178,14 +175,13 @@ impl PlanTool {
         }
 
         match self.state.cancel_plan().await {
-            Ok(Some(plan)) => ToolResult::success(format!(
+            Some(plan) => ToolResult::success(format!(
                 "Plan cancelled.\n\
                 Plan ID: {}\n\
                 Status: {:?}",
                 plan.id, plan.status
             )),
-            Ok(None) => ToolResult::error("No active plan found."),
-            Err(e) => ToolResult::error(format!("Failed to cancel plan: {}", e)),
+            None => ToolResult::error("No active plan found."),
         }
     }
 
@@ -199,13 +195,11 @@ impl PlanTool {
             _ => return ToolResult::error("Content is required for update action."),
         };
 
-        match self.state.update_plan_content(content.clone()).await {
-            Ok(()) => ToolResult::success(format!(
-                "Plan content updated.\n\n## Content\n\n{}",
-                content
-            )),
-            Err(e) => ToolResult::error(format!("Failed to update plan: {}", e)),
-        }
+        self.state.update_plan_content(content.clone()).await;
+        ToolResult::success(format!(
+            "Plan content updated.\n\n## Content\n\n{}",
+            content
+        ))
     }
 
     async fn status(&self) -> ToolResult {
@@ -214,7 +208,12 @@ impl PlanTool {
                 let content_preview = if plan.content.is_empty() {
                     "No content recorded.".to_string()
                 } else if plan.content.len() > 500 {
-                    format!("{}...", &plan.content[..500])
+                    // Find valid UTF-8 char boundary at or before 500
+                    let mut end = 500;
+                    while !plan.content.is_char_boundary(end) && end > 0 {
+                        end -= 1;
+                    }
+                    format!("{}...", &plan.content[..end])
                 } else {
                     plan.content.clone()
                 };

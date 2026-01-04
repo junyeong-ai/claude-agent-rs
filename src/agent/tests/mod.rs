@@ -5,11 +5,12 @@ mod helpers;
 use super::events::{AgentEvent, AgentResult};
 use super::state::AgentMetrics;
 use super::state_formatter::format_todo_summary;
-use super::{AgentConfig, AgentState, ConversationContext};
+use super::{AgentConfig, AgentState};
 use crate::hooks::{HookContext, HookEvent, HookInput, HookManager, HookOutput};
 use crate::session::types::TodoItem;
+use crate::session::{Session, SessionConfig};
 use crate::tools::{ExecutionContext, ToolOutput, ToolRegistry, ToolResult};
-use crate::types::{Message, StopReason, ToolResultBlock, Usage};
+use crate::types::{StopReason, ToolResultBlock, Usage};
 
 use std::sync::Arc;
 use std::sync::atomic::Ordering;
@@ -154,23 +155,20 @@ fn test_tool_result_block_from_tool_result() {
 }
 
 #[test]
-fn test_conversation_context_basic() {
-    let mut history = ConversationContext::new();
-    assert!(history.is_empty());
-    assert_eq!(history.len(), 0);
+fn test_session_messages_basic() {
+    let mut session = Session::new(SessionConfig::default());
+    assert!(session.messages.is_empty());
 
-    history.push(Message::user("Hello"));
-    assert!(!history.is_empty());
-    assert_eq!(history.len(), 1);
-    assert!(history.estimated_tokens() > 0);
+    session.add_user_message("Hello");
+    assert_eq!(session.messages.len(), 1);
 }
 
 #[test]
-fn test_conversation_context_usage_update() {
-    let mut history = ConversationContext::new();
-    history.push(Message::user("Test"));
+fn test_session_usage_update() {
+    let mut session = Session::new(SessionConfig::default());
+    session.add_user_message("Test");
 
-    history.update_usage(Usage {
+    session.update_usage(&Usage {
         input_tokens: 100,
         output_tokens: 50,
         cache_read_input_tokens: Some(10),
@@ -178,8 +176,9 @@ fn test_conversation_context_usage_update() {
         ..Default::default()
     });
 
-    assert_eq!(history.total_usage().input_tokens, 100);
-    assert_eq!(history.total_usage().output_tokens, 50);
+    assert_eq!(session.current_input_tokens, 100);
+    assert_eq!(session.total_usage.input_tokens, 100);
+    assert_eq!(session.total_usage.output_tokens, 50);
 }
 
 #[test]
@@ -416,5 +415,5 @@ async fn test_tool_registry_execute_unknown() {
     let result = registry.execute("UnknownTool", serde_json::json!({})).await;
 
     assert!(result.is_error());
-    assert!(result.error_message().contains("Unknown tool"));
+    assert!(result.error_message().contains("unknown tool"));
 }

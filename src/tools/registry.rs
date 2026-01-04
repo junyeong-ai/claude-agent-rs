@@ -104,16 +104,16 @@ impl ToolRegistry {
     pub async fn execute(&self, name: &str, input: serde_json::Value) -> ToolResult {
         let tool = match self.tools.get(name) {
             Some(t) => t,
-            None => return ToolResult::error(format!("Unknown tool: {}", name)),
+            None => return ToolResult::unknown_tool(name),
         };
 
         let decision = self.env.context.check_permission(name, &input);
         if !decision.is_allowed() {
-            return ToolResult::error(decision.reason);
+            return ToolResult::permission_denied(name, decision.reason);
         }
 
         if let Err(e) = self.env.context.validate_security(name, &input) {
-            return ToolResult::error(format!("Security: {}", e));
+            return ToolResult::security_error(e);
         }
 
         let limits = self.env.context.limits_for(name);
@@ -127,7 +127,7 @@ impl ToolRegistry {
 
         match result {
             Ok(tool_result) => self.apply_output_limits(tool_result, &limits),
-            Err(_) => ToolResult::error(format!("Tool timed out after {}ms", timeout_ms)),
+            Err(_) => ToolResult::timeout(timeout_ms),
         }
     }
 

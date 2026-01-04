@@ -273,9 +273,7 @@ When in doubt, use this tool. Being proactive with task management demonstrates 
             })
             .collect();
 
-        if let Err(e) = self.state.set_todos(todos.clone()).await {
-            return ToolResult::error(format!("Failed to save todos: {}", e));
-        }
+        self.state.set_todos(todos.clone()).await;
 
         let mut response = String::from("Todo list updated:\n");
         for (i, todo) in todos.iter().enumerate() {

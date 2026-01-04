@@ -1,7 +1,5 @@
 //! Glob tool - file pattern matching with sandbox validation.
 
-use std::path::PathBuf;
-
 use async_trait::async_trait;
 use schemars::JsonSchema;
 use serde::Deserialize;
@@ -45,33 +43,44 @@ impl SchemaTool for GlobTool {
         };
 
         let full_pattern = base_path.join(&input.pattern);
-        let pattern_str = full_pattern.to_string_lossy();
+        let pattern_str = full_pattern.to_string_lossy().to_string();
 
-        let entries: Vec<PathBuf> = match glob::glob(&pattern_str) {
-            Ok(paths) => paths
-                .filter_map(|r| r.ok())
-                .filter(|p| context.is_within(p))
-                .collect(),
-            Err(e) => return ToolResult::error(format!("Invalid pattern: {}", e)),
+        let glob_result = tokio::task::spawn_blocking(move || {
+            glob::glob(&pattern_str).map(|paths| {
+                paths
+                    .filter_map(|r| r.ok())
+                    .filter_map(|p| {
+                        std::fs::canonicalize(&p).ok().and_then(|canonical| {
+                            canonical
+                                .metadata()
+                                .ok()
+                                .and_then(|m| m.modified().ok())
+                                .map(|mtime| (canonical, mtime))
+                        })
+                    })
+                    .collect::<Vec<_>>()
+            })
+        })
+        .await;
+
+        let all_entries = match glob_result {
+            Ok(Ok(entries)) => entries,
+            Ok(Err(e)) => return ToolResult::error(format!("Invalid pattern: {}", e)),
+            Err(e) => return ToolResult::error(format!("Glob task failed: {}", e)),
         };
+
+        let mut entries: Vec<_> = all_entries
+            .into_iter()
+            .filter(|(p, _)| context.is_within(p))
+            .collect();
 
         if entries.is_empty() {
             return ToolResult::success("No files matched the pattern");
         }
 
-        let mut entries_with_time: Vec<(PathBuf, std::time::SystemTime)> = entries
-            .into_iter()
-            .filter_map(|p| {
-                p.metadata()
-                    .ok()
-                    .and_then(|m| m.modified().ok())
-                    .map(|t| (p, t))
-            })
-            .collect();
+        entries.sort_by(|a, b| b.1.cmp(&a.1));
 
-        entries_with_time.sort_by(|a, b| b.1.cmp(&a.1));
-
-        let output: Vec<String> = entries_with_time
+        let output: Vec<String> = entries
             .into_iter()
             .map(|(p, _)| p.display().to_string())
             .collect();
@@ -252,5 +261,44 @@ mod tests {
         .unwrap();
         assert_eq!(input.pattern, "**/*.rs");
         assert_eq!(input.path, Some("src".to_string()));
+    }
+
+    #[tokio::test]
+    async fn test_glob_path_traversal_blocked() {
+        // Create parent and working directories
+        let parent = tempdir().unwrap();
+        let parent_path = std::fs::canonicalize(parent.path()).unwrap();
+
+        let working_dir = parent_path.join("sandbox");
+        std::fs::create_dir_all(&working_dir).unwrap();
+        let sandbox_path = std::fs::canonicalize(&working_dir).unwrap();
+
+        // Create files
+        std::fs::write(parent_path.join("secret.txt"), "SECRET").unwrap();
+        std::fs::write(sandbox_path.join("allowed.txt"), "allowed").unwrap();
+
+        // Context with sandbox_path as root
+        let test_context = ExecutionContext::from_path(&sandbox_path).unwrap();
+        let tool = GlobTool;
+
+        // Try to access parent directory via ../*.txt
+        let result = tool
+            .execute(serde_json::json!({"pattern": "../*.txt"}), &test_context)
+            .await;
+
+        match &result.output {
+            ToolOutput::Success(content) => {
+                // Should NOT find secret.txt (outside sandbox)
+                assert!(
+                    !content.contains("secret.txt"),
+                    "Path traversal should be blocked! Found: {}",
+                    content
+                );
+            }
+            ToolOutput::Error(_) => {
+                // Error is also acceptable
+            }
+            _ => panic!("Unexpected result"),
+        }
     }
 }

@@ -10,6 +10,7 @@ use tokio_util::sync::CancellationToken;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
+#[non_exhaustive]
 pub enum HookEvent {
     PreToolUse,
     PostToolUse,
@@ -24,8 +25,26 @@ pub enum HookEvent {
 }
 
 impl HookEvent {
+    /// Returns true if this hook event can block execution.
+    ///
+    /// Blockable events use fail-closed semantics: if the hook fails or times out,
+    /// the operation is blocked. This ensures security policies are enforced.
+    ///
+    /// Blockable events:
+    /// - `PreToolUse`: Can block tool execution
+    /// - `UserPromptSubmit`: Can block prompt processing
+    /// - `SessionStart`: Can block session initialization
+    /// - `PreCompact`: Can block context compaction
+    /// - `SubagentStart`: Can block subagent spawning
     pub fn can_block(&self) -> bool {
-        matches!(self, Self::PreToolUse | Self::UserPromptSubmit)
+        matches!(
+            self,
+            Self::PreToolUse
+                | Self::UserPromptSubmit
+                | Self::SessionStart
+                | Self::PreCompact
+                | Self::SubagentStart
+        )
     }
 
     pub fn can_modify_input(&self) -> bool {
@@ -67,6 +86,7 @@ impl std::fmt::Display for HookEvent {
 }
 
 #[derive(Clone, Debug)]
+#[non_exhaustive]
 pub enum HookEventData {
     PreToolUse {
         tool_name: String,
@@ -554,12 +574,19 @@ mod tests {
 
     #[test]
     fn test_hook_event_can_block() {
+        // Blockable events (fail-closed semantics)
         assert!(HookEvent::PreToolUse.can_block());
         assert!(HookEvent::UserPromptSubmit.can_block());
+        assert!(HookEvent::SessionStart.can_block());
+        assert!(HookEvent::PreCompact.can_block());
+        assert!(HookEvent::SubagentStart.can_block());
+
+        // Non-blockable events (fail-open semantics)
         assert!(!HookEvent::PostToolUse.can_block());
+        assert!(!HookEvent::PostToolUseFailure.can_block());
         assert!(!HookEvent::SessionEnd.can_block());
-        assert!(!HookEvent::SubagentStart.can_block());
         assert!(!HookEvent::SubagentStop.can_block());
+        assert!(!HookEvent::Stop.can_block());
     }
 
     #[test]

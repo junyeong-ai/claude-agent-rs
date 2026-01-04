@@ -87,52 +87,8 @@ impl HookManager {
         input: HookInput,
         hook_context: &HookContext,
     ) -> Result<HookOutput, crate::Error> {
-        let hooks = self.hooks_for_event(event);
-
-        if hooks.is_empty() {
-            return Ok(HookOutput::allow());
-        }
-
-        let mut merged_output = HookOutput::allow();
-
-        for hook in hooks {
-            if let (Some(matcher), Some(tool_name)) = (hook.tool_matcher(), input.tool_name())
-                && !matcher.is_match(tool_name)
-            {
-                continue;
-            }
-
-            let hook_timeout = hook.timeout_secs().max(self.default_timeout_secs);
-            let result = timeout(
-                Duration::from_secs(hook_timeout),
-                hook.execute(input.clone(), hook_context),
-            )
-            .await;
-
-            let output = match result {
-                Ok(Ok(output)) => output,
-                Ok(Err(e)) => {
-                    tracing::warn!(hook = hook.name(), error = %e, "Hook execution failed");
-                    continue;
-                }
-                Err(_) => {
-                    tracing::warn!(
-                        hook = hook.name(),
-                        timeout_secs = hook_timeout,
-                        "Hook timed out"
-                    );
-                    continue;
-                }
-            };
-
-            merged_output = Self::merge_outputs(merged_output, output);
-
-            if !merged_output.continue_execution {
-                break;
-            }
-        }
-
-        Ok(merged_output)
+        self.execute_hooks::<fn(&str, &HookOutput)>(event, input, hook_context, None)
+            .await
     }
 
     pub async fn execute_with_handler<F>(
@@ -140,7 +96,21 @@ impl HookManager {
         event: HookEvent,
         input: HookInput,
         hook_context: &HookContext,
-        mut handler: F,
+        handler: F,
+    ) -> Result<HookOutput, crate::Error>
+    where
+        F: FnMut(&str, &HookOutput),
+    {
+        self.execute_hooks(event, input, hook_context, Some(handler))
+            .await
+    }
+
+    async fn execute_hooks<F>(
+        &self,
+        event: HookEvent,
+        input: HookInput,
+        hook_context: &HookContext,
+        mut handler: Option<F>,
     ) -> Result<HookOutput, crate::Error>
     where
         F: FnMut(&str, &HookOutput),
@@ -160,7 +130,7 @@ impl HookManager {
                 continue;
             }
 
-            let hook_timeout = hook.timeout_secs().max(self.default_timeout_secs);
+            let hook_timeout = hook.timeout_secs().min(self.default_timeout_secs);
             let result = timeout(
                 Duration::from_secs(hook_timeout),
                 hook.execute(input.clone(), hook_context),
@@ -170,10 +140,26 @@ impl HookManager {
             let output = match result {
                 Ok(Ok(output)) => output,
                 Ok(Err(e)) => {
+                    if event.can_block() {
+                        // Blockable hooks use fail-closed: errors propagate
+                        return Err(crate::Error::HookFailed {
+                            hook: hook.name().to_string(),
+                            reason: e.to_string(),
+                        });
+                    }
+                    // Non-blockable hooks use fail-open: log and continue
                     tracing::warn!(hook = hook.name(), error = %e, "Hook execution failed");
                     continue;
                 }
                 Err(_) => {
+                    if event.can_block() {
+                        // Blockable hooks use fail-closed: timeouts propagate
+                        return Err(crate::Error::HookTimeout {
+                            hook: hook.name().to_string(),
+                            duration_secs: hook_timeout,
+                        });
+                    }
+                    // Non-blockable hooks use fail-open: log and continue
                     tracing::warn!(
                         hook = hook.name(),
                         timeout_secs = hook_timeout,
@@ -183,7 +169,9 @@ impl HookManager {
                 }
             };
 
-            handler(hook.name(), &output);
+            if let Some(ref mut h) = handler {
+                h(hook.name(), &output);
+            }
             merged_output = Self::merge_outputs(merged_output, output);
 
             if !merged_output.continue_execution {
@@ -373,5 +361,150 @@ mod tests {
             .unwrap();
 
         assert!(output.continue_execution);
+    }
+
+    // Hook that always fails
+    struct FailingHook {
+        name: String,
+        events: Vec<HookEvent>,
+    }
+
+    impl FailingHook {
+        fn new(name: impl Into<String>, events: Vec<HookEvent>) -> Self {
+            Self {
+                name: name.into(),
+                events,
+            }
+        }
+    }
+
+    #[async_trait]
+    impl Hook for FailingHook {
+        fn name(&self) -> &str {
+            &self.name
+        }
+
+        fn events(&self) -> &[HookEvent] {
+            &self.events
+        }
+
+        async fn execute(
+            &self,
+            _input: HookInput,
+            _hook_context: &HookContext,
+        ) -> Result<HookOutput, crate::Error> {
+            Err(crate::Error::Config("Hook failed intentionally".into()))
+        }
+    }
+
+    // Hook that times out
+    struct SlowHook {
+        name: String,
+        events: Vec<HookEvent>,
+    }
+
+    impl SlowHook {
+        fn new(name: impl Into<String>, events: Vec<HookEvent>) -> Self {
+            Self {
+                name: name.into(),
+                events,
+            }
+        }
+    }
+
+    #[async_trait]
+    impl Hook for SlowHook {
+        fn name(&self) -> &str {
+            &self.name
+        }
+
+        fn events(&self) -> &[HookEvent] {
+            &self.events
+        }
+
+        fn timeout_secs(&self) -> u64 {
+            1 // Short timeout for testing
+        }
+
+        async fn execute(
+            &self,
+            _input: HookInput,
+            _hook_context: &HookContext,
+        ) -> Result<HookOutput, crate::Error> {
+            // Sleep longer than timeout
+            tokio::time::sleep(Duration::from_secs(5)).await;
+            Ok(HookOutput::allow())
+        }
+    }
+
+    #[tokio::test]
+    async fn test_blockable_hook_failure_returns_error() {
+        let mut manager = HookManager::new();
+        manager.register(FailingHook::new("failing", vec![HookEvent::PreToolUse]));
+
+        let input = HookInput::pre_tool_use("session-1", "Read", serde_json::json!({}));
+        let hook_context = HookContext::new("session-1");
+        let result = manager
+            .execute(HookEvent::PreToolUse, input, &hook_context)
+            .await;
+
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(matches!(err, crate::Error::HookFailed { .. }));
+    }
+
+    #[tokio::test]
+    async fn test_blockable_hook_timeout_returns_error() {
+        let mut manager = HookManager::with_timeout(1);
+        manager.register(SlowHook::new("slow", vec![HookEvent::UserPromptSubmit]));
+
+        let input = HookInput::user_prompt_submit("session-1", "test prompt");
+        let hook_context = HookContext::new("session-1");
+        let result = manager
+            .execute(HookEvent::UserPromptSubmit, input, &hook_context)
+            .await;
+
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(matches!(err, crate::Error::HookTimeout { .. }));
+    }
+
+    #[tokio::test]
+    async fn test_non_blockable_hook_failure_continues() {
+        let mut manager = HookManager::new();
+        // SessionEnd is non-blockable
+        manager.register(FailingHook::new("failing", vec![HookEvent::SessionEnd]));
+        manager.register(TestHook::new("success", vec![HookEvent::SessionEnd], 0));
+
+        let input = HookInput::session_end("session-1");
+        let hook_context = HookContext::new("session-1");
+        let result = manager
+            .execute(HookEvent::SessionEnd, input, &hook_context)
+            .await;
+
+        // Should succeed despite the failing hook
+        assert!(result.is_ok());
+        assert!(result.unwrap().continue_execution);
+    }
+
+    #[tokio::test]
+    async fn test_non_blockable_hook_timeout_continues() {
+        let mut manager = HookManager::with_timeout(1);
+        // PostToolUse is non-blockable
+        manager.register(SlowHook::new("slow", vec![HookEvent::PostToolUse]));
+
+        let input = HookInput::post_tool_use(
+            "session-1",
+            "Read",
+            crate::types::ToolOutput::success("result"),
+        );
+        let hook_context = HookContext::new("session-1");
+        let result = manager
+            .execute(HookEvent::PostToolUse, input, &hook_context)
+            .await;
+
+        // Should succeed despite the timeout
+        assert!(result.is_ok());
+        assert!(result.unwrap().continue_execution);
     }
 }

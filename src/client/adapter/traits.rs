@@ -25,7 +25,7 @@ pub trait ProviderAdapter: Send + Sync + Debug {
         request
     }
 
-    async fn transform_request(&self, request: CreateMessageRequest) -> serde_json::Value;
+    async fn transform_request(&self, request: CreateMessageRequest) -> Result<serde_json::Value>;
 
     fn transform_response(&self, response: serde_json::Value) -> Result<ApiResponse>;
 

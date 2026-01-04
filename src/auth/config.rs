@@ -4,14 +4,12 @@ use std::collections::HashMap;
 
 use crate::client::BetaConfig;
 
-pub const DEFAULT_SYSTEM_PROMPT: &str = "You are Claude Code, Anthropic's official CLI for Claude.";
 pub const DEFAULT_USER_AGENT: &str = "claude-cli/2.0.76 (external, cli)";
 pub const DEFAULT_APP_IDENTIFIER: &str = "cli";
 pub const CLAUDE_CODE_BETA: &str = "claude-code-20250219";
 
 #[derive(Debug, Clone)]
 pub struct OAuthConfig {
-    pub system_prompt: String,
     pub user_agent: String,
     pub app_identifier: String,
     pub url_params: HashMap<String, String>,
@@ -21,7 +19,6 @@ pub struct OAuthConfig {
 impl Default for OAuthConfig {
     fn default() -> Self {
         Self {
-            system_prompt: DEFAULT_SYSTEM_PROMPT.to_string(),
             user_agent: DEFAULT_USER_AGENT.to_string(),
             app_identifier: DEFAULT_APP_IDENTIFIER.to_string(),
             url_params: [("beta".to_string(), "true".to_string())]
@@ -41,9 +38,6 @@ impl OAuthConfig {
     pub fn from_env() -> Self {
         let mut config = Self::default();
 
-        if let Ok(prompt) = std::env::var("CLAUDE_AGENT_SYSTEM_PROMPT") {
-            config.system_prompt = prompt;
-        }
         if let Ok(ua) = std::env::var("CLAUDE_AGENT_USER_AGENT") {
             config.user_agent = ua;
         }
@@ -119,11 +113,6 @@ impl Default for OAuthConfigBuilder {
 }
 
 impl OAuthConfigBuilder {
-    pub fn system_prompt(mut self, prompt: impl Into<String>) -> Self {
-        self.config.system_prompt = prompt.into();
-        self
-    }
-
     pub fn user_agent(mut self, ua: impl Into<String>) -> Self {
         self.config.user_agent = ua.into();
         self
@@ -156,19 +145,14 @@ mod tests {
     #[test]
     fn test_default_config() {
         let config = OAuthConfig::default();
-        assert_eq!(config.system_prompt, DEFAULT_SYSTEM_PROMPT);
         assert_eq!(config.user_agent, DEFAULT_USER_AGENT);
         assert_eq!(config.app_identifier, DEFAULT_APP_IDENTIFIER);
     }
 
     #[test]
     fn test_builder() {
-        let config = OAuthConfig::builder()
-            .system_prompt("Custom prompt")
-            .user_agent("my-app/1.0")
-            .build();
+        let config = OAuthConfig::builder().user_agent("my-app/1.0").build();
 
-        assert_eq!(config.system_prompt, "Custom prompt");
         assert_eq!(config.user_agent, "my-app/1.0");
     }
 

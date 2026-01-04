@@ -28,7 +28,7 @@ pub use messages::{
     CountTokensRequest, CountTokensResponse, CreateMessageRequest, EffortLevel, KeepConfig,
     KeepThinkingConfig, OutputConfig, OutputFormat, ThinkingConfig, ThinkingType, ToolChoice,
 };
-pub use network::{ClientCertConfig, NetworkConfig, ProxyConfig};
+pub use network::{ClientCertConfig, NetworkConfig, PoolConfig, ProxyConfig};
 pub use recovery::StreamRecoveryState;
 pub use resilience::{
     CircuitBreaker, CircuitConfig, CircuitState, ExponentialBackoff, Resilience, ResilienceConfig,
@@ -262,6 +262,42 @@ impl Client {
 
     pub async fn refresh_credentials(&self) -> Result<()> {
         self.adapter.refresh_credentials().await
+    }
+
+    /// Send a request with automatic auth retry on 401 errors.
+    ///
+    /// Attempts to refresh credentials and retry once if authentication fails.
+    pub async fn send_with_auth_retry(
+        &self,
+        request: CreateMessageRequest,
+    ) -> Result<crate::types::ApiResponse> {
+        match self.send(request.clone()).await {
+            Ok(resp) => Ok(resp),
+            Err(e) if e.is_unauthorized() => {
+                tracing::debug!("Received 401, attempting credential refresh");
+                self.refresh_credentials().await?;
+                self.send(request).await
+            }
+            Err(e) => Err(e),
+        }
+    }
+
+    /// Send a streaming request with automatic auth retry on 401 errors.
+    ///
+    /// Attempts to refresh credentials and retry once if authentication fails.
+    pub async fn send_stream_with_auth_retry(
+        &self,
+        request: CreateMessageRequest,
+    ) -> Result<reqwest::Response> {
+        match self.adapter.send_stream(&self.http, request.clone()).await {
+            Ok(resp) => Ok(resp),
+            Err(e) if e.is_unauthorized() => {
+                tracing::debug!("Received 401, attempting credential refresh for stream");
+                self.refresh_credentials().await?;
+                self.adapter.send_stream(&self.http, request).await
+            }
+            Err(e) => Err(e),
+        }
     }
 
     pub async fn count_tokens(

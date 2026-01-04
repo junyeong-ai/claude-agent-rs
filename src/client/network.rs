@@ -1,7 +1,48 @@
-//! Network configuration for proxy, TLS, and certificate settings.
+//! Network configuration for proxy, TLS, certificate, and connection pool settings.
 
 use std::env;
 use std::path::PathBuf;
+use std::time::Duration;
+
+/// Connection pool configuration.
+#[derive(Clone, Debug)]
+pub struct PoolConfig {
+    pub idle_timeout: Duration,
+    pub max_idle_per_host: usize,
+    pub tcp_keepalive: Option<Duration>,
+    pub http2_keep_alive: Option<Duration>,
+}
+
+impl Default for PoolConfig {
+    fn default() -> Self {
+        Self {
+            idle_timeout: Duration::from_secs(90),
+            max_idle_per_host: 32,
+            tcp_keepalive: Some(Duration::from_secs(60)),
+            http2_keep_alive: Some(Duration::from_secs(30)),
+        }
+    }
+}
+
+impl PoolConfig {
+    pub fn minimal() -> Self {
+        Self {
+            idle_timeout: Duration::from_secs(30),
+            max_idle_per_host: 2,
+            tcp_keepalive: None,
+            http2_keep_alive: None,
+        }
+    }
+
+    pub fn high_throughput() -> Self {
+        Self {
+            idle_timeout: Duration::from_secs(120),
+            max_idle_per_host: 64,
+            tcp_keepalive: Some(Duration::from_secs(30)),
+            http2_keep_alive: Some(Duration::from_secs(15)),
+        }
+    }
+}
 
 /// Network configuration for HTTP client.
 #[derive(Clone, Debug, Default)]
@@ -12,6 +53,8 @@ pub struct NetworkConfig {
     pub ca_cert: Option<PathBuf>,
     /// Client certificate for mTLS
     pub client_cert: Option<ClientCertConfig>,
+    /// Connection pool settings
+    pub pool: Option<PoolConfig>,
 }
 
 /// Proxy server configuration.
@@ -46,6 +89,7 @@ impl NetworkConfig {
                 .or_else(|| env::var("REQUESTS_CA_BUNDLE").ok())
                 .map(PathBuf::from),
             client_cert: ClientCertConfig::from_env(),
+            pool: None,
         }
     }
 
@@ -67,9 +111,18 @@ impl NetworkConfig {
         self
     }
 
+    /// Set connection pool configuration.
+    pub fn with_pool(mut self, pool: PoolConfig) -> Self {
+        self.pool = Some(pool);
+        self
+    }
+
     /// Check if any network configuration is set.
     pub fn is_configured(&self) -> bool {
-        self.proxy.is_some() || self.ca_cert.is_some() || self.client_cert.is_some()
+        self.proxy.is_some()
+            || self.ca_cert.is_some()
+            || self.client_cert.is_some()
+            || self.pool.is_some()
     }
 
     /// Apply configuration to reqwest ClientBuilder.
@@ -90,6 +143,22 @@ impl NetworkConfig {
 
         if let Some(ref client_cert) = self.client_cert {
             builder = client_cert.apply_to_builder(builder)?;
+        }
+
+        if let Some(ref pool) = self.pool {
+            builder = builder
+                .pool_idle_timeout(pool.idle_timeout)
+                .pool_max_idle_per_host(pool.max_idle_per_host);
+
+            if let Some(keepalive) = pool.tcp_keepalive {
+                builder = builder.tcp_keepalive(keepalive);
+            }
+
+            if let Some(interval) = pool.http2_keep_alive {
+                builder = builder
+                    .http2_keep_alive_interval(interval)
+                    .http2_keep_alive_while_idle(true);
+            }
         }
 
         Ok(builder)

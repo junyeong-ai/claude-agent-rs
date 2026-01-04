@@ -81,6 +81,7 @@ impl StreamRecoveryState {
             self.completed_blocks.push(ContentBlock::Text {
                 text,
                 citations: None,
+                cache_control: None,
             });
         }
     }
@@ -99,7 +100,19 @@ impl StreamRecoveryState {
 
     pub fn complete_tool_use_block(&mut self) {
         if let Some(buf) = self.pending_tool_use.take() {
-            let input = serde_json::from_str(&buf.partial_json).unwrap_or(serde_json::Value::Null);
+            let input = match serde_json::from_str(&buf.partial_json) {
+                Ok(v) => v,
+                Err(e) => {
+                    tracing::warn!(
+                        tool_name = %buf.name,
+                        tool_id = %buf.id,
+                        partial_json_len = buf.partial_json.len(),
+                        error = %e,
+                        "Stream recovery: failed to parse partial tool JSON, using empty object"
+                    );
+                    serde_json::Value::Object(serde_json::Map::new())
+                }
+            };
             self.completed_blocks
                 .push(ContentBlock::ToolUse(crate::types::ToolUseBlock {
                     id: buf.id,
@@ -119,6 +132,7 @@ impl StreamRecoveryState {
             content.push(ContentBlock::Text {
                 text: text.clone(),
                 citations: None,
+                cache_control: None,
             });
         }
 
@@ -132,7 +146,19 @@ impl StreamRecoveryState {
         }
 
         if let Some(buf) = &self.pending_tool_use {
-            let input = serde_json::from_str(&buf.partial_json).unwrap_or(serde_json::Value::Null);
+            let input = match serde_json::from_str(&buf.partial_json) {
+                Ok(v) => v,
+                Err(e) => {
+                    tracing::warn!(
+                        tool_name = %buf.name,
+                        tool_id = %buf.id,
+                        partial_json_len = buf.partial_json.len(),
+                        error = %e,
+                        "Stream continuation: failed to parse partial tool JSON, using empty object"
+                    );
+                    serde_json::Value::Object(serde_json::Map::new())
+                }
+            };
             content.push(ContentBlock::ToolUse(crate::types::ToolUseBlock {
                 id: buf.id.clone(),
                 name: buf.name.clone(),

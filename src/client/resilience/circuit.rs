@@ -2,7 +2,7 @@
 
 use std::sync::RwLock;
 use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum CircuitState {
@@ -50,18 +50,21 @@ impl CircuitBreaker {
     }
 
     pub fn state(&self) -> CircuitState {
-        *self.state.read().unwrap()
+        *self.state.read().unwrap_or_else(|e| e.into_inner())
     }
 
     pub fn allow_request(&self) -> bool {
-        let state = self.state.read().unwrap();
+        let state = self.state.read().unwrap_or_else(|e| e.into_inner());
 
         match *state {
             CircuitState::Closed => true,
             CircuitState::Open => {
-                let last_failure = self.last_failure_time.load(Ordering::SeqCst);
-                let elapsed = Instant::now()
-                    .duration_since(Instant::now() - Duration::from_millis(last_failure));
+                let last_failure_ms = self.last_failure_time.load(Ordering::SeqCst);
+                let now_ms = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_millis() as u64;
+                let elapsed = Duration::from_millis(now_ms.saturating_sub(last_failure_ms));
 
                 if elapsed >= self.config.recovery_timeout {
                     drop(state);
@@ -79,7 +82,7 @@ impl CircuitBreaker {
     }
 
     pub fn record_success(&self) {
-        let state = *self.state.read().unwrap();
+        let state = *self.state.read().unwrap_or_else(|e| e.into_inner());
 
         match state {
             CircuitState::Closed => {
@@ -96,7 +99,7 @@ impl CircuitBreaker {
     }
 
     pub fn record_failure(&self) {
-        let state = *self.state.read().unwrap();
+        let state = *self.state.read().unwrap_or_else(|e| e.into_inner());
 
         match state {
             CircuitState::Closed => {
@@ -113,7 +116,7 @@ impl CircuitBreaker {
     }
 
     fn transition_to_open(&self) {
-        let mut state = self.state.write().unwrap();
+        let mut state = self.state.write().unwrap_or_else(|e| e.into_inner());
         *state = CircuitState::Open;
         self.last_failure_time.store(
             std::time::SystemTime::now()
@@ -128,7 +131,7 @@ impl CircuitBreaker {
     }
 
     fn transition_to_half_open(&self) {
-        let mut state = self.state.write().unwrap();
+        let mut state = self.state.write().unwrap_or_else(|e| e.into_inner());
         if *state == CircuitState::Open {
             *state = CircuitState::HalfOpen;
             self.half_open_requests.store(0, Ordering::SeqCst);
@@ -138,7 +141,7 @@ impl CircuitBreaker {
     }
 
     fn transition_to_closed(&self) {
-        let mut state = self.state.write().unwrap();
+        let mut state = self.state.write().unwrap_or_else(|e| e.into_inner());
         *state = CircuitState::Closed;
         self.failure_count.store(0, Ordering::SeqCst);
         self.success_count.store(0, Ordering::SeqCst);

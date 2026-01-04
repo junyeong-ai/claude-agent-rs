@@ -152,8 +152,8 @@ impl ProviderAdapter for FoundryAdapter {
         self.build_messages_url()
     }
 
-    async fn transform_request(&self, request: CreateMessageRequest) -> serde_json::Value {
-        self.build_request_body(&request)
+    async fn transform_request(&self, request: CreateMessageRequest) -> Result<serde_json::Value> {
+        Ok(self.build_request_body(&request))
     }
 
     fn transform_response(&self, response: serde_json::Value) -> Result<ApiResponse> {

@@ -158,39 +158,46 @@ impl AnthropicAdapter {
         r
     }
 
-    /// Prepends CLI identity to the system prompt for OAuth users.
+    /// Prepares the system prompt for OAuth users following Claude Code format.
     ///
-    /// For OAuth authentication (CLI OAuth), the CLI identity must be at the start
-    /// of the system prompt. This method prepends it to any existing system prompt
-    /// rather than replacing it, preserving user-configured prompts.
+    /// For OAuth authentication (CLI OAuth), the API requires system prompts as blocks:
+    /// - First block MUST be the CLI identity prompt
+    /// - Additional blocks can contain custom instructions (replace/append)
+    ///
+    /// Based on CLI binary analysis, the API validates that the first block
+    /// is one of the allowed prompts.
     fn prepare_request_with_auth(
         &self,
         mut request: CreateMessageRequest,
         auth: &AuthMethod,
     ) -> CreateMessageRequest {
-        if let AuthMethod::OAuth { config, .. } = auth
-            && !config.system_prompt.is_empty()
-        {
-            let cli_identity = &config.system_prompt;
+        if let AuthMethod::OAuth { .. } = auth {
+            use crate::prompts::CLI_IDENTITY;
 
-            request.system = Some(match request.system.take() {
+            // Build blocks array: CLI identity first, then any existing prompts
+            let mut blocks = vec![crate::types::SystemBlock::uncached(CLI_IDENTITY)];
+
+            match &request.system {
                 Some(crate::types::SystemPrompt::Text(existing)) if !existing.is_empty() => {
-                    // Prepend CLI identity to existing text prompt
-                    crate::types::SystemPrompt::Text(format!("{}\n\n{}", cli_identity, existing))
+                    // Don't duplicate if existing already starts with CLI identity
+                    if !existing.starts_with(CLI_IDENTITY) {
+                        blocks.push(crate::types::SystemBlock::uncached(existing));
+                    }
                 }
-                Some(crate::types::SystemPrompt::Blocks(mut blocks)) if !blocks.is_empty() => {
-                    // Prepend CLI identity as first block
-                    let identity_block = crate::types::SystemBlock {
-                        block_type: "text".to_string(),
-                        text: cli_identity.clone(),
-                        cache_control: None,
-                    };
-                    blocks.insert(0, identity_block);
-                    crate::types::SystemPrompt::Blocks(blocks)
+                Some(crate::types::SystemPrompt::Blocks(existing_blocks))
+                    if !existing_blocks.is_empty() =>
+                {
+                    // Filter out any blocks that match the CLI identity to avoid duplication
+                    for block in existing_blocks {
+                        if block.text != CLI_IDENTITY {
+                            blocks.push(block.clone());
+                        }
+                    }
                 }
-                // If no existing system prompt or empty, just use CLI identity
-                _ => crate::types::SystemPrompt::Text(cli_identity.clone()),
-            });
+                _ => {}
+            }
+
+            request.system = Some(crate::types::SystemPrompt::Blocks(blocks));
         }
         request
     }
@@ -223,10 +230,10 @@ impl ProviderAdapter for AnthropicAdapter {
         self.build_endpoint_url(&auth, "/v1/messages")
     }
 
-    async fn transform_request(&self, request: CreateMessageRequest) -> serde_json::Value {
+    async fn transform_request(&self, request: CreateMessageRequest) -> Result<serde_json::Value> {
         let auth = self.auth.read().await;
         let prepared = self.prepare_request_with_auth(request, &auth);
-        serde_json::to_value(&prepared).expect("CreateMessageRequest is always serializable")
+        serde_json::to_value(&prepared).map_err(|e| Error::InvalidRequest(e.to_string()))
     }
 
     fn transform_response(&self, response: serde_json::Value) -> Result<ApiResponse> {
@@ -250,14 +257,11 @@ impl ProviderAdapter for AnthropicAdapter {
             (
                 url,
                 serde_json::to_value(&prepared)
-                    .expect("CreateMessageRequest is always serializable"),
+                    .map_err(|e| Error::InvalidRequest(e.to_string()))?,
             )
         };
 
-        let req = {
-            let auth = self.auth.read().await;
-            self.build_headers(http.post(&url), &auth).json(&body)
-        };
+        let req = self.apply_auth_headers(http.post(&url)).await.json(&body);
 
         let response = req.send().await?;
 
@@ -271,13 +275,10 @@ impl ProviderAdapter for AnthropicAdapter {
                     (
                         url,
                         serde_json::to_value(&prepared)
-                            .expect("CreateMessageRequest is always serializable"),
+                            .map_err(|e| Error::InvalidRequest(e.to_string()))?,
                     )
                 };
-                let req = {
-                    let auth = self.auth.read().await;
-                    self.build_headers(http.post(&url), &auth).json(&body)
-                };
+                let req = self.apply_auth_headers(http.post(&url)).await.json(&body);
                 let response = req.send().await?;
                 if !response.status().is_success() {
                     let status = response.status().as_u16();
@@ -309,14 +310,11 @@ impl ProviderAdapter for AnthropicAdapter {
             (
                 url,
                 serde_json::to_value(&prepared)
-                    .expect("CreateMessageRequest is always serializable"),
+                    .map_err(|e| Error::InvalidRequest(e.to_string()))?,
             )
         };
 
-        let req = {
-            let auth = self.auth.read().await;
-            self.build_headers(http.post(&url), &auth).json(&body)
-        };
+        let req = self.apply_auth_headers(http.post(&url)).await.json(&body);
 
         let response = req.send().await?;
 
@@ -330,13 +328,10 @@ impl ProviderAdapter for AnthropicAdapter {
                     (
                         url,
                         serde_json::to_value(&prepared)
-                            .expect("CreateMessageRequest is always serializable"),
+                            .map_err(|e| Error::InvalidRequest(e.to_string()))?,
                     )
                 };
-                let req = {
-                    let auth = self.auth.read().await;
-                    self.build_headers(http.post(&url), &auth).json(&body)
-                };
+                let req = self.apply_auth_headers(http.post(&url)).await.json(&body);
                 let response = req.send().await?;
                 if !response.status().is_success() {
                     let status = response.status().as_u16();
@@ -363,13 +358,13 @@ impl ProviderAdapter for AnthropicAdapter {
         request: CountTokensRequest,
     ) -> Result<CountTokensResponse> {
         const ENDPOINT: &str = "/v1/messages/count_tokens";
-        let body = serde_json::to_value(&request)?;
-
-        let req = {
+        let (url, body) = {
             let auth = self.auth.read().await;
             let url = self.build_endpoint_url(&auth, ENDPOINT);
-            self.build_headers(http.post(&url), &auth).json(&body)
+            (url, serde_json::to_value(&request)?)
         };
+
+        let req = self.apply_auth_headers(http.post(&url)).await.json(&body);
 
         let response = req.send().await?;
 
@@ -414,7 +409,7 @@ mod tests {
     async fn test_transform_request() {
         let adapter = AnthropicAdapter::new(ProviderConfig::new(ModelConfig::anthropic()));
         let request = CreateMessageRequest::new("claude-sonnet-4-5", vec![Message::user("Hello")]);
-        let body = adapter.transform_request(request).await;
+        let body = adapter.transform_request(request).await.unwrap();
         assert!(body.get("model").is_some());
         assert!(body.get("messages").is_some());
     }
@@ -440,9 +435,16 @@ mod tests {
             None,
         );
         let request = CreateMessageRequest::new("model", vec![Message::user("Hi")]);
-        let body = adapter.transform_request(request).await;
-        let system = body.get("system").and_then(|v| v.as_str()).unwrap_or("");
-        assert!(system.contains("Claude Code"));
+        let body = adapter.transform_request(request).await.unwrap();
+        let system_blocks = body
+            .get("system")
+            .and_then(|v| v.as_array())
+            .expect("OAuth should produce system blocks");
+        let first_text = system_blocks[0]
+            .get("text")
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+        assert!(first_text.contains("Claude Code"));
     }
 
     #[test]
@@ -467,7 +469,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_oauth_prepends_cli_identity_to_existing_prompt() {
+    async fn test_oauth_prepends_cli_identity_to_system_prompt() {
         let credential = Credential::oauth("test-token");
         let adapter = AnthropicAdapter::from_credential(
             ProviderConfig::new(ModelConfig::anthropic()),
@@ -475,24 +477,34 @@ mod tests {
             None,
         );
 
-        // Create request with existing system prompt
         let request = CreateMessageRequest::new("model", vec![Message::user("Hi")])
             .with_system("Custom user system prompt");
 
-        let body = adapter.transform_request(request).await;
-        let system = body.get("system").and_then(|v| v.as_str()).unwrap_or("");
+        let body = adapter.transform_request(request).await.unwrap();
+        let system_blocks = body
+            .get("system")
+            .and_then(|v| v.as_array())
+            .expect("OAuth should produce system blocks");
 
-        // CLI identity should be at the start
+        assert!(system_blocks.len() >= 2, "Should have at least 2 blocks");
+
+        let first_text = system_blocks[0]
+            .get("text")
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
         assert!(
-            system.starts_with("You are Claude Code"),
-            "System prompt should start with CLI identity: {}",
-            system
+            first_text.starts_with("You are Claude Code"),
+            "First block should be Claude Code identity: {}",
+            first_text
         );
-        // User's custom prompt should be preserved after CLI identity
-        assert!(
-            system.contains("Custom user system prompt"),
-            "System prompt should contain user's custom prompt: {}",
-            system
+
+        let second_text = system_blocks[1]
+            .get("text")
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+        assert_eq!(
+            second_text, "Custom user system prompt",
+            "Second block should preserve original"
         );
     }
 
@@ -505,7 +517,7 @@ mod tests {
         let request = CreateMessageRequest::new("model", vec![Message::user("Hi")])
             .with_system("Custom user system prompt");
 
-        let body = adapter.transform_request(request).await;
+        let body = adapter.transform_request(request).await.unwrap();
         let system = body.get("system").and_then(|v| v.as_str()).unwrap_or("");
 
         // For API key auth, system prompt should be unchanged

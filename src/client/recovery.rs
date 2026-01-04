@@ -98,28 +98,29 @@ impl StreamRecoveryState {
         }
     }
 
-    pub fn complete_tool_use_block(&mut self) {
-        if let Some(buf) = self.pending_tool_use.take() {
-            let input = match serde_json::from_str(&buf.partial_json) {
-                Ok(v) => v,
-                Err(e) => {
-                    tracing::warn!(
-                        tool_name = %buf.name,
-                        tool_id = %buf.id,
-                        partial_json_len = buf.partial_json.len(),
-                        error = %e,
-                        "Stream recovery: failed to parse partial tool JSON, using empty object"
-                    );
-                    serde_json::Value::Object(serde_json::Map::new())
-                }
-            };
-            self.completed_blocks
-                .push(ContentBlock::ToolUse(crate::types::ToolUseBlock {
-                    id: buf.id,
-                    name: buf.name,
-                    input,
-                }));
-        }
+    pub fn complete_tool_use_block(&mut self) -> Option<crate::types::ToolUseBlock> {
+        let buf = self.pending_tool_use.take()?;
+        let input = match serde_json::from_str(&buf.partial_json) {
+            Ok(v) => v,
+            Err(e) => {
+                tracing::warn!(
+                    tool_name = %buf.name,
+                    tool_id = %buf.id,
+                    partial_json_len = buf.partial_json.len(),
+                    error = %e,
+                    "Stream recovery: failed to parse tool JSON, using empty object"
+                );
+                serde_json::Value::Object(serde_json::Map::new())
+            }
+        };
+        let tool_use = crate::types::ToolUseBlock {
+            id: buf.id,
+            name: buf.name,
+            input,
+        };
+        self.completed_blocks
+            .push(ContentBlock::ToolUse(tool_use.clone()));
+        Some(tool_use)
     }
 
     pub fn build_continuation_messages(&self, original: &[Message]) -> Vec<Message> {

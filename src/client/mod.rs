@@ -188,7 +188,11 @@ impl Client {
             match item {
                 Ok(StreamItem::Text(text)) => Some(Ok(text)),
                 Ok(StreamItem::Thinking(text)) => Some(Ok(text)),
-                Ok(StreamItem::Event(_) | StreamItem::Citation(_)) => None,
+                Ok(
+                    StreamItem::Event(_)
+                    | StreamItem::Citation(_)
+                    | StreamItem::ToolUseComplete(_),
+                ) => None,
                 Err(e) => Some(Err(e)),
             }
         }))

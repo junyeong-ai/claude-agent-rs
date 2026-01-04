@@ -16,6 +16,7 @@ pub enum StreamItem {
     Text(String),
     Thinking(String),
     Citation(Citation),
+    ToolUseComplete(crate::types::ToolUseBlock),
 }
 
 pin_project! {
@@ -216,6 +217,7 @@ where
                         *this.current_block_type = Some(BlockType::Thinking);
                         this.recovery.append_thinking(thinking);
                     }
+                    StreamItem::ToolUseComplete(_) => {}
                     StreamItem::Event(event) => match event {
                         StreamEvent::ContentBlockStart {
                             content_block: crate::types::ContentBlock::ToolUse(tu),
@@ -242,7 +244,13 @@ where
                                 Some(BlockType::Thinking) => {
                                     this.recovery.complete_thinking_block()
                                 }
-                                Some(BlockType::ToolUse) => this.recovery.complete_tool_use_block(),
+                                Some(BlockType::ToolUse) => {
+                                    if let Some(tool_use) = this.recovery.complete_tool_use_block() {
+                                        return Poll::Ready(Some(Ok(StreamItem::ToolUseComplete(
+                                            tool_use,
+                                        ))));
+                                    }
+                                }
                                 None => {}
                             }
                         }

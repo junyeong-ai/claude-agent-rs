@@ -11,7 +11,20 @@ use uuid::Uuid;
 use super::super::SecurityError;
 use super::super::path::SafePath;
 
-const MAX_FILE_SIZE: u64 = 100 * 1024 * 1024; // 100MB
+const MAX_FILE_SIZE: u64 = 100 * 1024 * 1024;
+
+fn with_borrowed_file<T>(fd: &OwnedFd, f: impl FnOnce(&mut std::fs::File) -> T) -> T {
+    let mut file = unsafe { std::fs::File::from_raw_fd(fd.as_raw_fd()) };
+    let result = f(&mut file);
+    std::mem::forget(file);
+    result
+}
+
+fn take_rustix_fd(fd: rustix::fd::OwnedFd) -> OwnedFd {
+    let std_fd = unsafe { OwnedFd::from_raw_fd(fd.as_raw_fd()) };
+    std::mem::forget(fd);
+    std_fd
+}
 
 pub struct SecureFileHandle {
     fd: OwnedFd,
@@ -54,24 +67,15 @@ impl SecureFileHandle {
 
     pub fn read_to_string(&self) -> Result<String, SecurityError> {
         self.check_file_size()?;
-
-        // SAFETY: self.fd is a valid OwnedFd. We create a temporary File from the raw fd,
-        // use it for reading, then forget it to prevent double-close since OwnedFd owns the fd.
-        let mut file = unsafe { std::fs::File::from_raw_fd(self.fd.as_raw_fd()) };
         let mut content = String::new();
-        file.read_to_string(&mut content)?;
-        std::mem::forget(file);
+        with_borrowed_file(&self.fd, |file| file.read_to_string(&mut content))?;
         Ok(content)
     }
 
     pub fn read_bytes(&self) -> Result<Vec<u8>, SecurityError> {
         self.check_file_size()?;
-
-        // SAFETY: Same as read_to_string - temporary File wrapper, forgotten to prevent double-close.
-        let mut file = unsafe { std::fs::File::from_raw_fd(self.fd.as_raw_fd()) };
         let mut content = Vec::new();
-        file.read_to_end(&mut content)?;
-        std::mem::forget(file);
+        with_borrowed_file(&self.fd, |file| file.read_to_end(&mut content))?;
         Ok(content)
     }
 
@@ -90,11 +94,10 @@ impl SecureFileHandle {
     }
 
     pub fn write_all(&self, content: &[u8]) -> Result<(), SecurityError> {
-        // SAFETY: Same as read_to_string - temporary File wrapper, forgotten to prevent double-close.
-        let mut file = unsafe { std::fs::File::from_raw_fd(self.fd.as_raw_fd()) };
-        file.write_all(content)?;
-        file.sync_all()?;
-        std::mem::forget(file);
+        with_borrowed_file(&self.fd, |file| -> std::io::Result<()> {
+            file.write_all(content)?;
+            file.sync_all()
+        })?;
         Ok(())
     }
 
@@ -110,31 +113,24 @@ impl SecureFileHandle {
 
         let parent_fd = self.get_parent_fd()?;
 
-        let temp_fd = openat(
-            parent_fd.as_fd(),
-            &temp_cname,
-            OFlags::WRONLY | OFlags::CREATE | OFlags::EXCL | OFlags::CLOEXEC,
-            Mode::from_raw_mode(0o644),
-        )
-        .map_err(|e| SecurityError::Io(std::io::Error::from_raw_os_error(e.raw_os_error())))?;
+        let temp_fd = take_rustix_fd(
+            openat(
+                parent_fd.as_fd(),
+                &temp_cname,
+                OFlags::WRONLY | OFlags::CREATE | OFlags::EXCL | OFlags::CLOEXEC,
+                Mode::from_raw_mode(0o644),
+            )
+            .map_err(|e| SecurityError::Io(std::io::Error::from_raw_os_error(e.raw_os_error())))?,
+        );
 
-        // SAFETY: temp_fd is a valid fd from openat. We transfer ownership to temp_std_fd
-        // and forget temp_fd to prevent double-close.
-        let temp_std_fd = unsafe { OwnedFd::from_raw_fd(temp_fd.as_raw_fd()) };
-        std::mem::forget(temp_fd);
-        // SAFETY: temp_std_fd is valid. We create a temporary File for writing,
-        // then forget it since temp_std_fd manages the fd lifetime.
-        let mut temp_file = unsafe { std::fs::File::from_raw_fd(temp_std_fd.as_raw_fd()) };
-
-        let write_result = temp_file.write_all(content);
-        std::mem::forget(temp_file);
+        let write_result = with_borrowed_file(&temp_fd, |file| file.write_all(content));
 
         if let Err(e) = write_result {
             let _ = unlinkat(parent_fd.as_fd(), &temp_cname, AtFlags::empty());
             return Err(SecurityError::Io(e));
         }
 
-        rustix::fs::fsync(&temp_std_fd)
+        rustix::fs::fsync(&temp_fd)
             .map_err(|e| SecurityError::Io(std::io::Error::from_raw_os_error(e.raw_os_error())))?;
 
         let filename_cstr = CString::new(filename.as_bytes())
@@ -158,17 +154,17 @@ impl SecureFileHandle {
         let parent_components = self.path.parent_components();
 
         if parent_components.is_empty() {
-            let fd = rustix::fs::openat(
-                self.path.root_fd(),
-                c".",
-                OFlags::RDONLY | OFlags::DIRECTORY | OFlags::CLOEXEC,
-                Mode::empty(),
-            )
-            .map_err(|e| SecurityError::Io(std::io::Error::from_raw_os_error(e.raw_os_error())))?;
-            // SAFETY: fd is valid from openat. Transfer ownership to std_fd, forget fd.
-            let std_fd = unsafe { OwnedFd::from_raw_fd(fd.as_raw_fd()) };
-            std::mem::forget(fd);
-            return Ok(std_fd);
+            return Ok(take_rustix_fd(
+                rustix::fs::openat(
+                    self.path.root_fd(),
+                    c".",
+                    OFlags::RDONLY | OFlags::DIRECTORY | OFlags::CLOEXEC,
+                    Mode::empty(),
+                )
+                .map_err(|e| {
+                    SecurityError::Io(std::io::Error::from_raw_os_error(e.raw_os_error()))
+                })?,
+            ));
         }
 
         let mut current_fd = self.path.root_fd();
@@ -178,18 +174,19 @@ impl SecureFileHandle {
             let c_name = CString::new(component.as_bytes())
                 .map_err(|_| SecurityError::InvalidPath("null byte".into()))?;
 
-            let fd = openat(
-                current_fd,
-                &c_name,
-                OFlags::RDONLY | OFlags::DIRECTORY | OFlags::NOFOLLOW | OFlags::CLOEXEC,
-                Mode::empty(),
-            )
-            .map_err(|e| SecurityError::Io(std::io::Error::from_raw_os_error(e.raw_os_error())))?;
+            let fd = take_rustix_fd(
+                openat(
+                    current_fd,
+                    &c_name,
+                    OFlags::RDONLY | OFlags::DIRECTORY | OFlags::NOFOLLOW | OFlags::CLOEXEC,
+                    Mode::empty(),
+                )
+                .map_err(|e| {
+                    SecurityError::Io(std::io::Error::from_raw_os_error(e.raw_os_error()))
+                })?,
+            );
 
-            // SAFETY: fd is valid from openat. Transfer ownership to std_fd, forget fd.
-            let std_fd = unsafe { OwnedFd::from_raw_fd(fd.as_raw_fd()) };
-            std::mem::forget(fd);
-            owned_fds.push(std_fd);
+            owned_fds.push(fd);
             current_fd = owned_fds.last().expect("just pushed").as_fd();
         }
 

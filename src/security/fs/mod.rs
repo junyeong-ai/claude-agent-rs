@@ -10,8 +10,8 @@ use std::sync::Arc;
 
 use glob::Pattern;
 
+use super::path::{normalize_path, SafePath};
 use super::SecurityError;
-use super::path::{SafePath, normalize_path};
 use crate::permissions::ToolLimits;
 
 #[derive(Clone)]
@@ -19,7 +19,7 @@ pub struct SecureFs {
     root_fd: Arc<OwnedFd>,
     root_path: PathBuf,
     allowed_paths: Vec<PathBuf>,
-    denied_patterns: Vec<String>,
+    denied_patterns: Vec<Pattern>,
     max_symlink_depth: u8,
     permissive: bool,
 }
@@ -39,6 +39,11 @@ impl SecureFs {
 
         let root_fd = std::fs::File::open(&root_path)?;
 
+        let compiled_patterns = denied_patterns
+            .iter()
+            .filter_map(|p| Pattern::new(p).ok())
+            .collect();
+
         Ok(Self {
             root_fd: Arc::new(root_fd.into()),
             root_path,
@@ -52,7 +57,7 @@ impl SecureFs {
                     }
                 })
                 .collect(),
-            denied_patterns,
+            denied_patterns: compiled_patterns,
             max_symlink_depth,
             permissive: false,
         })
@@ -87,7 +92,6 @@ impl SecureFs {
             return Err(SecurityError::InvalidPath("empty path".into()));
         }
 
-        // Permissive mode: minimal validation, allow symlinks
         if self.permissive {
             let resolved = if input_path.starts_with('/') {
                 PathBuf::from(input_path)
@@ -108,11 +112,8 @@ impl SecureFs {
             return Ok(SafePath::unchecked(Arc::clone(&self.root_fd), normalized));
         }
 
-        // Secure mode: validate BEFORE filesystem operations (TOCTOU-safe)
-        // 1. Normalize input path to detect traversal attempts
         let relative = if input_path.starts_with('/') {
             let input = PathBuf::from(input_path);
-            // Canonicalize if exists to handle symlinks like /var -> /private/var on macOS
             let normalized_input = if input.exists() {
                 std::fs::canonicalize(&input)?
             } else if let Some(parent) = input.parent() {
@@ -131,7 +132,6 @@ impl SecureFs {
                     .map(|p| p.to_path_buf())
                     .unwrap_or_default()
             } else {
-                // Check allowed_paths
                 let mut found = None;
                 for allowed in &self.allowed_paths {
                     if normalized_input.starts_with(allowed) {
@@ -156,13 +156,11 @@ impl SecureFs {
                 .unwrap_or_else(|_| PathBuf::from(input_path))
         };
 
-        // 2. Check denied patterns on the relative path
         let expected_path = self.root_path.join(&relative);
         if self.is_path_denied(&expected_path) {
             return Err(SecurityError::DeniedPath(expected_path));
         }
 
-        // 3. Use TOCTOU-safe resolution (openat + O_NOFOLLOW)
         let safe_path = SafePath::resolve(
             Arc::clone(&self.root_fd),
             self.root_path.clone(),
@@ -170,9 +168,8 @@ impl SecureFs {
             self.max_symlink_depth,
         )?;
 
-        // 4. Final validation on resolved path
         let resolved = safe_path.as_path();
-        if !self.is_path_allowed(resolved) {
+        if !self.is_within(resolved) {
             return Err(SecurityError::PathEscape(resolved.to_path_buf()));
         }
         if self.is_path_denied(resolved) {
@@ -217,26 +214,48 @@ impl SecureFs {
     }
 
     pub fn is_within(&self, path: &Path) -> bool {
-        if path.starts_with(&self.root_path) {
+        if self.permissive {
             return true;
         }
-        self.allowed_paths.iter().any(|p| path.starts_with(p))
+
+        let canonical = self.resolve_to_canonical(path);
+        canonical.starts_with(&self.root_path)
+            || self.allowed_paths.iter().any(|p| canonical.starts_with(p))
     }
 
-    fn is_path_allowed(&self, path: &Path) -> bool {
-        if path.starts_with(&self.root_path) {
-            return true;
+    fn resolve_to_canonical(&self, path: &Path) -> PathBuf {
+        if let Ok(p) = std::fs::canonicalize(path) {
+            return p;
         }
-        self.allowed_paths.iter().any(|p| path.starts_with(p))
+
+        let mut current = path.to_path_buf();
+        let mut components_to_append = Vec::new();
+
+        while let Some(parent) = current.parent() {
+            if let Ok(canonical_parent) = std::fs::canonicalize(parent) {
+                let mut result = canonical_parent;
+                if let Some(name) = current.file_name() {
+                    result = result.join(name);
+                }
+                for component in components_to_append.into_iter().rev() {
+                    result = result.join(component);
+                }
+                return result;
+            }
+            if let Some(name) = current.file_name() {
+                components_to_append.push(name.to_os_string());
+            }
+            current = parent.to_path_buf();
+        }
+
+        normalize_path(path)
     }
 
     fn is_path_denied(&self, path: &Path) -> bool {
         let path_str = path.to_string_lossy();
-        self.denied_patterns.iter().any(|pattern| {
-            Pattern::new(pattern)
-                .map(|g| g.matches(&path_str))
-                .unwrap_or(false)
-        })
+        self.denied_patterns
+            .iter()
+            .any(|pattern| pattern.matches(&path_str))
     }
 
     fn matches_any_pattern(&self, path: &Path, patterns: &[String]) -> bool {

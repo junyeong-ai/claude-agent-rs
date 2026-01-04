@@ -6,6 +6,7 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
+use glob::Pattern;
 use serde::{Deserialize, Serialize};
 use tokio::sync::RwLock;
 
@@ -14,6 +15,8 @@ pub struct RuleIndex {
     pub name: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub paths: Option<Vec<String>>,
+    #[serde(skip)]
+    compiled_patterns: Vec<Pattern>,
     #[serde(default)]
     pub priority: i32,
     pub source: RuleSource,
@@ -37,6 +40,7 @@ impl RuleIndex {
         Self {
             name: name.into(),
             paths: None,
+            compiled_patterns: Vec::new(),
             priority: 0,
             source: RuleSource::File {
                 path: PathBuf::new(),
@@ -45,6 +49,7 @@ impl RuleIndex {
     }
 
     pub fn with_paths(mut self, paths: Vec<String>) -> Self {
+        self.compiled_patterns = paths.iter().filter_map(|p| Pattern::new(p).ok()).collect();
         self.paths = Some(paths);
         self
     }
@@ -72,10 +77,15 @@ impl RuleIndex {
             .to_string();
 
         let (paths, priority) = Self::extract_frontmatter(content);
+        let compiled_patterns = paths
+            .as_ref()
+            .map(|p| p.iter().filter_map(|s| Pattern::new(s).ok()).collect())
+            .unwrap_or_default();
 
         Some(Self {
             name,
             paths,
+            compiled_patterns,
             priority,
             source: RuleSource::File {
                 path: path.to_path_buf(),
@@ -128,17 +138,11 @@ impl RuleIndex {
     }
 
     pub fn matches_path(&self, file_path: &Path) -> bool {
-        match &self.paths {
-            None => true,
-            Some(patterns) => patterns.iter().any(|p| Self::glob_match(p, file_path)),
+        if self.compiled_patterns.is_empty() {
+            return true;
         }
-    }
-
-    fn glob_match(pattern: &str, path: &Path) -> bool {
-        let path_str = path.to_string_lossy();
-        glob::Pattern::new(pattern)
-            .map(|p| p.matches(&path_str))
-            .unwrap_or_else(|_| path_str.contains(pattern))
+        let path_str = file_path.to_string_lossy();
+        self.compiled_patterns.iter().any(|p| p.matches(&path_str))
     }
 
     pub async fn load_content(&self) -> Option<String> {

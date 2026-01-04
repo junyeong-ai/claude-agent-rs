@@ -186,18 +186,26 @@ impl SecureFs {
     ) -> Result<SafePath, SecurityError> {
         let path = self.resolve(input_path)?;
         let full_path = path.as_path();
+        let path_str = full_path.to_string_lossy();
 
         if let Some(ref allowed) = limits.allowed_paths
             && !allowed.is_empty()
-            && !self.matches_any_pattern(full_path, allowed)
         {
-            return Err(SecurityError::DeniedPath(full_path.to_path_buf()));
+            let allowed_patterns: Vec<Pattern> = allowed
+                .iter()
+                .filter_map(|p| Pattern::new(p).ok())
+                .collect();
+            if !allowed_patterns.iter().any(|p| p.matches(&path_str)) {
+                return Err(SecurityError::DeniedPath(full_path.to_path_buf()));
+            }
         }
 
-        if let Some(ref denied) = limits.denied_paths
-            && self.matches_any_pattern(full_path, denied)
-        {
-            return Err(SecurityError::DeniedPath(full_path.to_path_buf()));
+        if let Some(ref denied) = limits.denied_paths {
+            let denied_patterns: Vec<Pattern> =
+                denied.iter().filter_map(|p| Pattern::new(p).ok()).collect();
+            if denied_patterns.iter().any(|p| p.matches(&path_str)) {
+                return Err(SecurityError::DeniedPath(full_path.to_path_buf()));
+            }
         }
 
         Ok(path)
@@ -256,15 +264,6 @@ impl SecureFs {
         self.denied_patterns
             .iter()
             .any(|pattern| pattern.matches(&path_str))
-    }
-
-    fn matches_any_pattern(&self, path: &Path, patterns: &[String]) -> bool {
-        let path_str = path.to_string_lossy();
-        patterns.iter().any(|pattern| {
-            Pattern::new(pattern)
-                .map(|g| g.matches(&path_str))
-                .unwrap_or_else(|_| pattern == path_str.as_ref())
-        })
     }
 }
 

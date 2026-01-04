@@ -24,7 +24,7 @@ pub use config::{
 pub use events::{AgentEvent, AgentResult};
 pub use executor::Agent;
 pub use options::{AgentBuilder, DEFAULT_COMPACT_KEEP_MESSAGES};
-pub use state::{AgentMetrics, AgentState, ToolStats};
+pub use state::{AgentMetrics, AgentState, ToolCallRecord, ToolStats};
 pub use task::{TaskInput, TaskOutput, TaskTool};
 pub use task_output::{TaskOutputInput, TaskOutputResult, TaskOutputTool, TaskStatus};
 pub use task_registry::TaskRegistry;

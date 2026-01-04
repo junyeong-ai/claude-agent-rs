@@ -191,9 +191,9 @@ fn test_agent_metrics_recording() {
     metrics.record_api_call();
     assert_eq!(metrics.api_calls, 2);
 
-    metrics.record_tool("Read", 50, false);
-    metrics.record_tool("Read", 30, false);
-    metrics.record_tool("Bash", 100, true);
+    metrics.record_tool("tu_1", "Read", 50, false);
+    metrics.record_tool("tu_2", "Read", 30, false);
+    metrics.record_tool("tu_3", "Bash", 100, true);
 
     assert_eq!(metrics.tool_calls, 3);
     assert_eq!(metrics.errors, 1);

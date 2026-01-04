@@ -555,7 +555,7 @@ mod tool_execution_tests {
         assert!(result.is_error());
         match &result.output {
             claude_agent::tools::ToolOutput::Error(e) => {
-                assert!(e.to_string().contains("Unknown tool"));
+                assert!(e.to_string().contains("unknown tool"));
             }
             _ => panic!("Expected error"),
         }

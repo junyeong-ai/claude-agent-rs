@@ -328,7 +328,7 @@ impl Agent {
             for (id, name, input, result, duration_ms) in parallel_results {
                 let is_error = result.is_error();
                 debug!(tool = %name, duration_ms, is_error, "Tool execution completed");
-                metrics.record_tool(&name, duration_ms, is_error);
+                metrics.record_tool(&id, &name, duration_ms, is_error);
 
                 if let Some(ref inner_usage) = result.inner_usage {
                     self.state

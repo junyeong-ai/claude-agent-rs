@@ -524,7 +524,7 @@ impl StreamState {
         };
 
         self.metrics
-            .record_tool(&tool_use.name, duration_ms, is_error);
+            .record_tool(&tool_use.id, &tool_use.name, duration_ms, is_error);
 
         if let Some(ref inner_usage) = result.inner_usage {
             self.cfg

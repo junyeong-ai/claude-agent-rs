@@ -49,6 +49,7 @@ pub struct AgentMetrics {
     pub api_calls: usize,
     pub total_cost_usd: f64,
     pub tool_stats: std::collections::HashMap<String, ToolStats>,
+    pub tool_call_records: Vec<ToolCallRecord>,
     pub model_usage: std::collections::HashMap<String, ModelUsage>,
     pub server_tool_use: ServerToolUse,
     pub permission_denials: Vec<PermissionDenial>,
@@ -60,6 +61,14 @@ pub struct ToolStats {
     pub calls: usize,
     pub total_time_ms: u64,
     pub errors: usize,
+}
+
+#[derive(Debug, Clone)]
+pub struct ToolCallRecord {
+    pub tool_use_id: String,
+    pub tool_name: String,
+    pub duration_ms: u64,
+    pub is_error: bool,
 }
 
 impl AgentMetrics {
@@ -94,7 +103,7 @@ impl AgentMetrics {
         self.total_cost_usd += cost;
     }
 
-    pub fn record_tool(&mut self, name: &str, duration_ms: u64, is_error: bool) {
+    pub fn record_tool(&mut self, tool_use_id: &str, name: &str, duration_ms: u64, is_error: bool) {
         self.tool_calls += 1;
         let stats = self.tool_stats.entry(name.to_string()).or_default();
         stats.calls += 1;
@@ -103,6 +112,12 @@ impl AgentMetrics {
             stats.errors += 1;
             self.errors += 1;
         }
+        self.tool_call_records.push(ToolCallRecord {
+            tool_use_id: tool_use_id.to_string(),
+            tool_name: name.to_string(),
+            duration_ms,
+            is_error,
+        });
     }
 
     pub fn record_api_call(&mut self) {
@@ -194,15 +209,18 @@ mod tests {
     #[test]
     fn test_agent_metrics_tool_recording() {
         let mut metrics = AgentMetrics::default();
-        metrics.record_tool("Read", 50, false);
-        metrics.record_tool("Read", 30, false);
-        metrics.record_tool("Bash", 100, true);
+        metrics.record_tool("tu_1", "Read", 50, false);
+        metrics.record_tool("tu_2", "Read", 30, false);
+        metrics.record_tool("tu_3", "Bash", 100, true);
 
         assert_eq!(metrics.tool_calls, 3);
         assert_eq!(metrics.errors, 1);
         assert_eq!(metrics.tool_stats.get("Read").unwrap().calls, 2);
         assert_eq!(metrics.tool_stats.get("Read").unwrap().total_time_ms, 80);
         assert_eq!(metrics.tool_stats.get("Bash").unwrap().errors, 1);
+        assert_eq!(metrics.tool_call_records.len(), 3);
+        assert_eq!(metrics.tool_call_records[0].tool_use_id, "tu_1");
+        assert_eq!(metrics.tool_call_records[2].is_error, true);
     }
 
     #[test]
@@ -210,8 +228,8 @@ mod tests {
         let mut metrics = AgentMetrics::default();
         assert_eq!(metrics.avg_tool_time_ms(), 0.0);
 
-        metrics.record_tool("Read", 100, false);
-        metrics.record_tool("Write", 200, false);
+        metrics.record_tool("tu_1", "Read", 100, false);
+        metrics.record_tool("tu_2", "Write", 200, false);
         assert!((metrics.avg_tool_time_ms() - 150.0).abs() < 0.1);
     }
 }

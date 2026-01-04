@@ -127,16 +127,19 @@ impl PromptOrchestrator {
     }
 
     pub async fn build_dynamic_context(&self, file_path: Option<&Path>) -> String {
-        let mut parts = Vec::new();
+        let Some(path) = file_path else {
+            return String::new();
+        };
 
-        if let Some(path) = file_path {
-            let rules = self.rules_engine.load_matching(path).await;
-            if !rules.is_empty() {
-                parts.push(format!("# Active Rules for {}\n", path.display()));
-                for rule in rules {
-                    parts.push(format!("## {}\n{}", rule.index.name, rule.content));
-                }
-            }
+        let rules = self.rules_engine.load_matching(path).await;
+        if rules.is_empty() {
+            return String::new();
+        }
+
+        let mut parts = Vec::with_capacity(rules.len() + 1);
+        parts.push(format!("# Active Rules for {}\n", path.display()));
+        for rule in rules {
+            parts.push(format!("## {}\n{}", rule.index.name, rule.content));
         }
 
         parts.join("\n\n")

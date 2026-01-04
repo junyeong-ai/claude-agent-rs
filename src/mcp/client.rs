@@ -381,6 +381,7 @@ impl McpClient {
                     service.cancel().await.map_err(|e| McpError::Protocol {
                         message: format!("Failed to cancel: {}", e),
                     })?;
+                    self.state.status = McpConnectionStatus::Disconnected;
                 }
                 Err(arc) => {
                     tracing::debug!(
@@ -388,10 +389,15 @@ impl McpClient {
                         refs = Arc::strong_count(&arc),
                         "MCP service has active references, deferring cleanup"
                     );
+                    self.service = Some(arc);
+                    return Err(McpError::Protocol {
+                        message: "Cannot close: service has active references".to_string(),
+                    });
                 }
             }
+        } else {
+            self.state.status = McpConnectionStatus::Disconnected;
         }
-        self.state.status = McpConnectionStatus::Disconnected;
         Ok(())
     }
 

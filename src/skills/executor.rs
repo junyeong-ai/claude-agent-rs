@@ -1,8 +1,11 @@
 //! Skill executor - runs skills and manages execution context.
 
 use std::sync::Arc;
+use std::time::Duration;
 
 use super::{SkillDefinition, SkillRegistry, SkillResult};
+
+const DEFAULT_CALLBACK_TIMEOUT: Duration = Duration::from_secs(300);
 
 pub type SkillExecutionCallback = Arc<
     dyn Fn(
@@ -16,6 +19,7 @@ pub type SkillExecutionCallback = Arc<
 pub struct SkillExecutor {
     registry: SkillRegistry,
     execution_callback: Option<SkillExecutionCallback>,
+    callback_timeout: Duration,
     mode: ExecutionMode,
 }
 
@@ -32,6 +36,7 @@ impl SkillExecutor {
         Self {
             registry,
             execution_callback: None,
+            callback_timeout: DEFAULT_CALLBACK_TIMEOUT,
             mode: ExecutionMode::InlinePrompt,
         }
     }
@@ -43,6 +48,11 @@ impl SkillExecutor {
     pub fn with_callback(mut self, callback: SkillExecutionCallback) -> Self {
         self.execution_callback = Some(callback);
         self.mode = ExecutionMode::Callback;
+        self
+    }
+
+    pub fn with_callback_timeout(mut self, timeout: Duration) -> Self {
+        self.callback_timeout = timeout;
         self
     }
 
@@ -87,9 +97,13 @@ impl SkillExecutor {
             )),
             ExecutionMode::Callback => {
                 if let Some(ref callback) = self.execution_callback {
-                    match callback(prompt).await {
-                        Ok(result) => SkillResult::success(result),
-                        Err(e) => SkillResult::error(e),
+                    match tokio::time::timeout(self.callback_timeout, callback(prompt)).await {
+                        Ok(Ok(result)) => SkillResult::success(result),
+                        Ok(Err(e)) => SkillResult::error(e),
+                        Err(_) => SkillResult::error(format!(
+                            "Skill callback timed out after {:?}",
+                            self.callback_timeout
+                        )),
                     }
                 } else {
                     SkillResult::error("No execution callback configured")

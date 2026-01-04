@@ -43,11 +43,20 @@ impl MemoryConfigProvider {
         }
     }
 
-    /// Insert a value (synchronous, for initialization)
-    pub fn insert(&self, key: impl Into<String>, value: impl Into<String>) -> &Self {
-        let mut data = self.data.blocking_write();
-        data.insert(key.into(), value.into());
+    /// Add an initial value during construction (builder pattern)
+    pub fn with_value(mut self, key: impl Into<String>, value: impl Into<String>) -> Self {
+        // Safe: called during construction before any async access
+        Arc::get_mut(&mut self.data)
+            .expect("with_value must be called during construction")
+            .get_mut()
+            .insert(key.into(), value.into());
         self
+    }
+
+    /// Insert a value asynchronously
+    pub async fn insert(&self, key: impl Into<String>, value: impl Into<String>) {
+        let mut data = self.data.write().await;
+        data.insert(key.into(), value.into());
     }
 
     /// Get the number of stored values

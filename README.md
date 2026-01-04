@@ -4,7 +4,7 @@
 
 [![Crates.io](https://img.shields.io/crates/v/claude-agent.svg)](https://crates.io/crates/claude-agent)
 [![Docs.rs](https://img.shields.io/docsrs/claude-agent)](https://docs.rs/claude-agent)
-[![Rust](https://img.shields.io/badge/rust-1.92%2B-orange.svg)](https://www.rust-lang.org)
+[![Rust](https://img.shields.io/badge/rust-1.75%2B-orange.svg)](https://www.rust-lang.org)
 [![License](https://img.shields.io/crates/l/claude-agent.svg)](LICENSE)
 
 English | [한국어](README.ko.md)
@@ -17,11 +17,11 @@ English | [한국어](README.ko.md)
 |---------|:---:|:---:|
 | **Pure Rust, No Runtime Dependencies** | Native | Node.js/Python required |
 | **Claude Code CLI Auth Reuse** | OAuth token sharing | Manual API key setup |
-| **Automatic Prompt Caching** | Up to 90% cost savings | Manual implementation |
+| **Automatic Prompt Caching** | System + Message caching | Manual implementation |
 | **TOCTOU-Safe File Operations** | `openat()` + `O_NOFOLLOW` | Standard file I/O |
 | **Multi-Cloud Support** | Bedrock, Vertex, Foundry | Limited or none |
 | **OS-Level Sandboxing** | Landlock, Seatbelt | None |
-| **990+ Tests** | Production-proven | Varies |
+| **1000+ Tests** | Production-proven | Varies |
 
 ---
 
@@ -90,11 +90,9 @@ async fn main() -> claude_agent::Result<()> {
     while let Some(event) = stream.next().await {
         match event? {
             AgentEvent::Text(text) => print!("{text}"),
-            AgentEvent::ToolStart { name, .. } => eprintln!("\n[{name}]"),
+            AgentEvent::ToolComplete { name, .. } => eprintln!("\n[{name}]"),
             AgentEvent::Complete(result) => {
-                eprintln!("\nTokens: {} | Cost: ${:.4}",
-                    result.total_tokens(),
-                    result.total_cost_usd());
+                eprintln!("\nTokens: {}", result.total_tokens());
             }
             _ => {}
         }
@@ -119,8 +117,10 @@ Agent::builder()
 ### API Key
 
 ```rust
+use claude_agent::Auth;
+
 Agent::builder()
-    .api_key("sk-ant-...")
+    .auth(Auth::api_key("sk-ant-...")).await?
     .build()
     .await?
 ```
@@ -128,14 +128,22 @@ Agent::builder()
 ### Cloud Providers
 
 ```rust
+use claude_agent::Auth;
+
 // AWS Bedrock
-Agent::builder().bedrock("us-east-1").build().await?
+Agent::builder()
+    .auth(Auth::bedrock("us-east-1")).await?
+    .build().await?
 
 // Google Vertex AI
-Agent::builder().vertex("project-id", "us-central1").build().await?
+Agent::builder()
+    .auth(Auth::vertex("project-id", "us-central1")).await?
+    .build().await?
 
 // Azure AI Foundry
-Agent::builder().foundry("resource-name").build().await?
+Agent::builder()
+    .auth(Auth::foundry("resource-name")).await?
+    .build().await?
 ```
 
 See: [Authentication Guide](docs/authentication.md) | [Cloud Providers](docs/cloud-providers.md)
@@ -179,6 +187,22 @@ See: [Tools Guide](docs/tools.md)
 ---
 
 ## Key Features
+
+### Prompt Caching
+
+Automatic caching based on Anthropic best practices:
+
+- **System prompt caching**: Static context cached automatically
+- **Message history caching**: Last user turn cached for multi-turn efficiency
+
+```rust
+use claude_agent::CacheConfig;
+
+Agent::builder()
+    .cache(CacheConfig::default())  // Both enabled by default
+    // .cache(CacheConfig::system_only())  // System prompt only
+    // .cache(CacheConfig::disabled())     // No caching
+```
 
 ### 3 Built-in Subagents
 
@@ -244,10 +268,13 @@ See: [Hooks Guide](docs/hooks.md)
 ### MCP Integration
 
 ```rust
+use claude_agent::{McpManager, McpServerConfig};
+use std::collections::HashMap;
+
 let mut mcp = McpManager::new();
 mcp.add_server("filesystem", McpServerConfig::Stdio {
     command: "npx".into(),
-    args: vec!["-y", "@anthropic-ai/mcp-server-filesystem"],
+    args: vec!["-y".into(), "@anthropic-ai/mcp-server-filesystem".into()],
     env: HashMap::new(),
 }).await?;
 
@@ -284,7 +311,7 @@ See: [Security Guide](docs/security.md) | [Sandbox Guide](docs/sandbox.md)
 | [Memory](docs/memory-system.md) | CLAUDE.md and @import |
 | [Hooks](docs/hooks.md) | 10 lifecycle events |
 | [MCP](docs/mcp.md) | External MCP servers |
-| [Session](docs/session.md) | Persistence and compaction |
+| [Session](docs/session.md) | Persistence and prompt caching |
 | [Permissions](docs/permissions.md) | Permission modes and policies |
 | [Security](docs/security.md) | TOCTOU-safe operations |
 | [Sandbox](docs/sandbox.md) | Landlock and Seatbelt |
@@ -342,7 +369,7 @@ cargo run --example server_tools       # WebFetch, WebSearch
 ## Testing
 
 ```bash
-cargo test                    # 990+ tests
+cargo test                    # 1000+ tests
 cargo test -- --ignored       # + live API tests
 cargo clippy --all-features   # Lint
 ```

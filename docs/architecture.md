@@ -122,9 +122,9 @@ Memory and rules management.
 
 Prompt caching and conversation management.
 
-- Cache statistics tracking
+- Prompt caching (system + message history)
 - Automatic context compaction
-- State persistence
+- State persistence (Memory/PostgreSQL/Redis)
 
 ### Output Style (`src/output_style/`)
 

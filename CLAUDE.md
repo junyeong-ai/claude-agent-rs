@@ -1,6 +1,6 @@
 # claude-agent-rs
 
-Rust SDK for Claude API. 990+ tests, 45k lines, 199 files.
+Rust SDK for Claude API. 1000+ tests, 46k lines, 197 files.
 
 ## Architecture
 
@@ -29,7 +29,7 @@ src/
 | Type | Location | Purpose |
 |------|----------|---------|
 | `Agent` | agent/executor.rs | `execute()`, `execute_stream()` |
-| `AgentBuilder` | agent/builder.rs | Fluent construction |
+| `AgentBuilder` | agent/options/builder.rs | Fluent construction |
 | `Tool` | tools/traits.rs | `name()`, `description()`, `input_schema()`, `execute()` |
 | `SchemaTool` | tools/traits.rs | Auto schema via schemars |
 | `Auth` | auth/mod.rs | ApiKey, ClaudeCli, Bedrock, Vertex, Foundry |
@@ -38,6 +38,7 @@ src/
 | `Persistence` | session/persistence.rs | Session storage trait |
 | `HookManager` | hooks/manager.rs | Priority-based hook execution |
 | `McpManager` | mcp/manager.rs | `mcp__server__tool` naming |
+| `CacheConfig` | agent/config.rs | Prompt caching (system + messages) |
 
 ## 12 Built-in Tools
 
@@ -65,6 +66,24 @@ Task, TaskOutput, TodoWrite, Plan, Skill
 | PostToolUseFailure | No | PreCompact | No |
 | UserPromptSubmit | Yes | SessionStart | No |
 | Stop | No | SessionEnd | No |
+
+## Prompt Caching
+
+Anthropic best practices: cache last user turn for multi-turn efficiency.
+
+```rust
+// CacheConfig (agent/config.rs)
+pub struct CacheConfig {
+    pub enabled: bool,           // Master switch
+    pub system_prompt_cache: bool, // Static context
+    pub message_cache: bool,     // Last user message
+}
+
+// Applied in session/state/mod.rs
+fn apply_cache_breakpoint(&self, messages: &mut [Message]) {
+    // Sets cache_control on last user message
+}
+```
 
 ## Persistence Backends
 
@@ -99,6 +118,7 @@ Task, TaskOutput, TodoWrite, Plan, Skill
 | Add hook | impl `Hook` + `HookManager::register()` |
 | Add MCP server | `McpManager::add_server()` |
 | Modify security | `security/` (fs/, bash/, limits/, sandbox/) |
+| Modify caching | `session/state/mod.rs` (apply_cache_breakpoint) |
 
 ## Patterns
 
@@ -145,7 +165,7 @@ full = ["mcp", "cloud-all", "persistence-all", "otel"]
 ## Commands
 
 ```bash
-cargo test                    # 990+ tests
+cargo test                    # 1000+ tests
 cargo test -- --ignored       # + live API tests
 cargo clippy --all-features
 ```

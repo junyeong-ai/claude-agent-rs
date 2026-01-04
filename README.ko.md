@@ -4,7 +4,7 @@
 
 [![Crates.io](https://img.shields.io/crates/v/claude-agent.svg)](https://crates.io/crates/claude-agent)
 [![Docs.rs](https://img.shields.io/docsrs/claude-agent)](https://docs.rs/claude-agent)
-[![Rust](https://img.shields.io/badge/rust-1.92%2B-orange.svg)](https://www.rust-lang.org)
+[![Rust](https://img.shields.io/badge/rust-1.75%2B-orange.svg)](https://www.rust-lang.org)
 [![License](https://img.shields.io/crates/l/claude-agent.svg)](LICENSE)
 
 [English](README.md) | 한국어
@@ -17,11 +17,11 @@
 |------|:---:|:---:|
 | **순수 Rust, 런타임 의존성 없음** | 네이티브 | Node.js/Python 필요 |
 | **Claude Code CLI 인증 재사용** | OAuth 토큰 공유 | 수동 API 키 설정 |
-| **자동 Prompt Caching** | 최대 90% 비용 절감 | 수동 구현 |
+| **자동 프롬프트 캐싱** | 시스템 + 메시지 캐싱 | 수동 구현 |
 | **TOCTOU-Safe 파일 연산** | `openat()` + `O_NOFOLLOW` | 표준 파일 I/O |
 | **멀티 클라우드 지원** | Bedrock, Vertex, Foundry | 제한적 또는 없음 |
 | **OS 레벨 샌드박싱** | Landlock, Seatbelt | 없음 |
-| **990+ 테스트** | 프로덕션 검증됨 | 다양함 |
+| **1000+ 테스트** | 프로덕션 검증됨 | 다양함 |
 
 ---
 
@@ -90,11 +90,9 @@ async fn main() -> claude_agent::Result<()> {
     while let Some(event) = stream.next().await {
         match event? {
             AgentEvent::Text(text) => print!("{text}"),
-            AgentEvent::ToolStart { name, .. } => eprintln!("\n[{name}]"),
+            AgentEvent::ToolComplete { name, .. } => eprintln!("\n[{name}]"),
             AgentEvent::Complete(result) => {
-                eprintln!("\n토큰: {} | 비용: ${:.4}",
-                    result.total_tokens(),
-                    result.total_cost_usd());
+                eprintln!("\n토큰: {}", result.total_tokens());
             }
             _ => {}
         }
@@ -119,8 +117,10 @@ Agent::builder()
 ### API Key
 
 ```rust
+use claude_agent::Auth;
+
 Agent::builder()
-    .api_key("sk-ant-...")
+    .auth(Auth::api_key("sk-ant-...")).await?
     .build()
     .await?
 ```
@@ -128,14 +128,22 @@ Agent::builder()
 ### 클라우드 공급자
 
 ```rust
+use claude_agent::Auth;
+
 // AWS Bedrock
-Agent::builder().bedrock("us-east-1").build().await?
+Agent::builder()
+    .auth(Auth::bedrock("us-east-1")).await?
+    .build().await?
 
 // Google Vertex AI
-Agent::builder().vertex("project-id", "us-central1").build().await?
+Agent::builder()
+    .auth(Auth::vertex("project-id", "us-central1")).await?
+    .build().await?
 
 // Azure AI Foundry
-Agent::builder().foundry("resource-name").build().await?
+Agent::builder()
+    .auth(Auth::foundry("resource-name")).await?
+    .build().await?
 ```
 
 자세한 내용: [인증 가이드](docs/authentication.md) | [클라우드 공급자](docs/cloud-providers.md)
@@ -179,6 +187,22 @@ ToolAccess::except(["Bash", "Write"])       // 도구 제외
 ---
 
 ## 핵심 기능
+
+### 프롬프트 캐싱
+
+Anthropic 베스트 프랙티스 기반 자동 캐싱:
+
+- **시스템 프롬프트 캐싱**: 정적 컨텍스트 자동 캐싱
+- **메시지 히스토리 캐싱**: 멀티턴 효율을 위해 마지막 user 턴 캐싱
+
+```rust
+use claude_agent::CacheConfig;
+
+Agent::builder()
+    .cache(CacheConfig::default())  // 둘 다 기본 활성화
+    // .cache(CacheConfig::system_only())  // 시스템 프롬프트만
+    // .cache(CacheConfig::disabled())     // 캐싱 비활성화
+```
 
 ### 3개 내장 서브에이전트
 
@@ -244,10 +268,13 @@ $ARGUMENTS 환경에 배포합니다.
 ### MCP 통합
 
 ```rust
+use claude_agent::{McpManager, McpServerConfig};
+use std::collections::HashMap;
+
 let mut mcp = McpManager::new();
 mcp.add_server("filesystem", McpServerConfig::Stdio {
     command: "npx".into(),
-    args: vec!["-y", "@anthropic-ai/mcp-server-filesystem"],
+    args: vec!["-y".into(), "@anthropic-ai/mcp-server-filesystem".into()],
     env: HashMap::new(),
 }).await?;
 
@@ -284,7 +311,7 @@ Agent::builder().mcp_manager(mcp).build().await?
 | [메모리](docs/memory-system.md) | CLAUDE.md 및 @import |
 | [훅](docs/hooks.md) | 10개 라이프사이클 이벤트 |
 | [MCP](docs/mcp.md) | 외부 MCP 서버 |
-| [세션](docs/session.md) | 영속성 및 압축 |
+| [세션](docs/session.md) | 영속성 및 프롬프트 캐싱 |
 | [권한](docs/permissions.md) | 권한 모드 및 정책 |
 | [보안](docs/security.md) | TOCTOU-safe 연산 |
 | [샌드박스](docs/sandbox.md) | Landlock 및 Seatbelt |
@@ -342,7 +369,7 @@ cargo run --example server_tools       # WebFetch, WebSearch
 ## 테스트
 
 ```bash
-cargo test                    # 990+ 테스트
+cargo test                    # 1000+ 테스트
 cargo test -- --ignored       # + 라이브 API 테스트
 cargo clippy --all-features   # 린트
 ```

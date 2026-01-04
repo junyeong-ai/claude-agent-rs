@@ -1,6 +1,6 @@
 # Session Management
 
-Stateful conversation management with multi-backend persistence and context compaction.
+Stateful conversation management with multi-backend persistence, prompt caching, and context compaction.
 
 ## Architecture
 
@@ -155,6 +155,80 @@ if let Some(merged) = queue.merge_all().await {
 }
 
 queue.cancel(id).await;
+```
+
+## Prompt Caching
+
+Automatic caching based on Anthropic best practices for cost reduction in multi-turn conversations.
+
+```
+┌─────────────────────────────────────────────────────────────────────────┐
+│                       Prompt Caching Strategy                            │
+├─────────────────────────────────────────────────────────────────────────┤
+│                                                                          │
+│   Turn 1: [System] [User₁]                    → cache_creation           │
+│   Turn 2: [System] [User₁] [Asst₁] [User₂]   → cache_read + creation    │
+│   Turn 3: [System] [User₁] [Asst₁] [User₂] [Asst₂] [User₃] → cache_read │
+│                                        ↑                                 │
+│                              cache_control on last user                  │
+│                                                                          │
+└─────────────────────────────────────────────────────────────────────────┘
+```
+
+### Configuration
+
+```rust
+use claude_agent::CacheConfig;
+
+// Default: both enabled
+let config = CacheConfig::default();
+
+// System prompt only
+let config = CacheConfig::system_only();
+
+// Disabled
+let config = CacheConfig::disabled();
+
+// Custom
+let config = CacheConfig {
+    enabled: true,
+    system_prompt_cache: true,
+    message_cache: true,
+};
+
+Agent::builder()
+    .cache(config)
+    .build()
+    .await?
+```
+
+### How It Works
+
+1. **System prompt caching**: Static context (CLAUDE.md, tools, skills) cached automatically
+2. **Message history caching**: Last user message marked with `cache_control: ephemeral`
+3. **Cache TTL**: 5 minutes by default (Anthropic API)
+
+### Cost Impact
+
+| Token Type | Cost Multiplier |
+|------------|-----------------|
+| `cache_creation` | 1.25x input cost |
+| `cache_read` | 0.1x input cost |
+| Regular input | 1.0x |
+
+### Tracking
+
+```rust
+// TokenUsage includes cache fields
+pub struct TokenUsage {
+    pub input_tokens: u64,
+    pub output_tokens: u64,
+    pub cache_read_input_tokens: u64,
+    pub cache_creation_input_tokens: u64,
+}
+
+// Cache hit rate
+let hit_rate = usage.cache_hit_rate();  // cache_read / input
 ```
 
 ## Error Handling

@@ -11,11 +11,26 @@ static DANGEROUS_PATTERNS: LazyLock<Vec<(Regex, &'static str)>> = LazyLock::new(
         // Destructive file operations
         (Regex::new(r"rm\s+(-[rfRPd]+\s+)*/$").unwrap(), "rm root"),
         (Regex::new(r"rm\s+(-[rfRPd]+\s+)*/\*").unwrap(), "rm /*"),
+        (Regex::new(r"rm\s+(-[rfRPd]+\s+)*\./\*").unwrap(), "rm ./*"),
+        (Regex::new(r"rm\s+(-[rfRPd]+\s+)*\.\./").unwrap(), "rm ../"),
         (Regex::new(r"rm\s+(-[rfRPd]+\s+)*~/?").unwrap(), "rm home"),
         (Regex::new(r"rm\s+(-[rfRPd]+\s+)*\.\s*$").unwrap(), "rm ."),
         (
+            Regex::new(r"rm\s+(-[rfRPd]+\s+)*/\{").unwrap(),
+            "rm brace expansion",
+        ),
+        (
             Regex::new(r"\b(sudo|doas)\s+rm\b").unwrap(),
             "privileged rm",
+        ),
+        // Find with destructive actions
+        (
+            Regex::new(r"\bfind\s+/\s+.*-delete\b").unwrap(),
+            "find / -delete",
+        ),
+        (
+            Regex::new(r"\bfind\s+/\s+.*-exec\s+rm\b").unwrap(),
+            "find / -exec rm",
         ),
         // Disk operations
         (Regex::new(r"dd\s+.*if\s*=\s*/dev/zero").unwrap(), "dd zero"),
@@ -107,9 +122,14 @@ static DANGEROUS_PATTERNS: LazyLock<Vec<(Regex, &'static str)>> = LazyLock::new(
         (Regex::new(r"\bnmap\s+-sS").unwrap(), "nmap syn scan"),
         // Reverse shells
         (
-            Regex::new(r"bash\s+-i\s*>&\s*/dev/tcp/").unwrap(),
+            Regex::new(r"bash\s+-i\s*>?\s*&\s*/dev/tcp/").unwrap(),
             "bash reverse shell",
         ),
+        (
+            Regex::new(r"exec\s+\d+<>/dev/tcp/").unwrap(),
+            "exec fd reverse shell",
+        ),
+        (Regex::new(r"exec\s+\d+<&\d+").unwrap(), "exec fd redirect"),
         (
             Regex::new(r"\bnc\s+(-[a-z]+\s+)*-e\s+/bin/(ba)?sh").unwrap(),
             "nc reverse shell",

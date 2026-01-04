@@ -11,6 +11,8 @@ use uuid::Uuid;
 use super::super::SecurityError;
 use super::super::path::SafePath;
 
+const MAX_FILE_SIZE: u64 = 100 * 1024 * 1024; // 100MB
+
 pub struct SecureFileHandle {
     fd: OwnedFd,
     path: SafePath,
@@ -51,6 +53,8 @@ impl SecureFileHandle {
     }
 
     pub fn read_to_string(&self) -> Result<String, SecurityError> {
+        self.check_file_size()?;
+
         // SAFETY: self.fd is a valid OwnedFd. We create a temporary File from the raw fd,
         // use it for reading, then forget it to prevent double-close since OwnedFd owns the fd.
         let mut file = unsafe { std::fs::File::from_raw_fd(self.fd.as_raw_fd()) };
@@ -61,12 +65,28 @@ impl SecureFileHandle {
     }
 
     pub fn read_bytes(&self) -> Result<Vec<u8>, SecurityError> {
+        self.check_file_size()?;
+
         // SAFETY: Same as read_to_string - temporary File wrapper, forgotten to prevent double-close.
         let mut file = unsafe { std::fs::File::from_raw_fd(self.fd.as_raw_fd()) };
         let mut content = Vec::new();
         file.read_to_end(&mut content)?;
         std::mem::forget(file);
         Ok(content)
+    }
+
+    fn check_file_size(&self) -> Result<(), SecurityError> {
+        let stat = rustix::fs::fstat(&self.fd)
+            .map_err(|e| SecurityError::Io(std::io::Error::from_raw_os_error(e.raw_os_error())))?;
+
+        let size = stat.st_size as u64;
+        if size > MAX_FILE_SIZE {
+            return Err(SecurityError::InvalidPath(format!(
+                "File too large: {} bytes (max {} bytes)",
+                size, MAX_FILE_SIZE
+            )));
+        }
+        Ok(())
     }
 
     pub fn write_all(&self, content: &[u8]) -> Result<(), SecurityError> {

@@ -100,9 +100,13 @@ impl SecurityGuard {
 fn matches_patterns(path: &Path, patterns: &[String]) -> bool {
     let path_str = path.to_string_lossy();
     patterns.iter().any(|pattern| {
-        Pattern::new(pattern)
-            .map(|g| g.matches(&path_str))
-            .unwrap_or(false)
+        match Pattern::new(pattern) {
+            Ok(g) => g.matches(&path_str),
+            Err(e) => {
+                tracing::error!(pattern = %pattern, error = %e, "Invalid glob pattern in security policy");
+                true // Fail closed: treat invalid patterns as matching to prevent bypass
+            }
+        }
     })
 }
 

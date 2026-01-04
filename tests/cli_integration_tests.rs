@@ -314,7 +314,6 @@ mod oauth_config_tests {
     fn test_oauth_default_values() {
         let config = OAuthConfig::default();
 
-        assert!(config.system_prompt.contains("Claude Code"));
         assert!(config.user_agent.contains("claude-cli"));
         assert_eq!(config.app_identifier, "cli");
         assert!(config.url_params.contains_key("beta"));
@@ -323,14 +322,12 @@ mod oauth_config_tests {
     #[test]
     fn test_oauth_builder() {
         let config = OAuthConfig::builder()
-            .system_prompt("Custom Prompt")
             .user_agent("test-agent/1.0")
             .app_identifier("test-app")
             .url_param("custom", "value")
             .header("X-Custom", "header")
             .build();
 
-        assert_eq!(config.system_prompt, "Custom Prompt");
         assert_eq!(config.user_agent, "test-agent/1.0");
         assert_eq!(config.app_identifier, "test-app");
         assert!(config.url_params.contains_key("custom"));
@@ -599,10 +596,7 @@ mod client_builder_tests {
 
     #[tokio::test]
     async fn test_builder_with_oauth_config() {
-        let config = OAuthConfig::builder()
-            .system_prompt("Custom prompt")
-            .user_agent("test-agent/1.0")
-            .build();
+        let config = OAuthConfig::builder().user_agent("test-agent/1.0").build();
 
         let _builder = Client::builder()
             .auth(Auth::oauth("test-token"))

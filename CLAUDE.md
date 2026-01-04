@@ -1,6 +1,6 @@
 # claude-agent-rs
 
-Rust SDK for Claude API. 1061 tests, 44k lines, 198 files.
+Rust SDK for Claude API. 990+ tests, 45k lines, 199 files.
 
 ## Architecture
 
@@ -145,7 +145,7 @@ full = ["mcp", "cloud-all", "persistence-all", "otel"]
 ## Commands
 
 ```bash
-cargo test                    # 1061 tests
+cargo test                    # 990+ tests
 cargo test -- --ignored       # + live API tests
 cargo clippy --all-features
 ```

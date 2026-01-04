@@ -473,26 +473,28 @@ mod agent_loop_tests {
     fn test_agent_events_match_cli_output() {
         // Event types output by CLI:
         // - Text: text response
-        // - ToolStart: [Tool: name] output
-        // - ToolEnd: tool result output
+        // - ToolComplete: tool execution result
+        // - ToolBlocked: tool blocked by hook/permission
         // - Complete: final statistics
 
         let text_event = AgentEvent::Text("Hello".to_string());
-        let tool_start = AgentEvent::ToolStart {
+        let tool_complete = AgentEvent::ToolComplete {
             id: "id1".to_string(),
             name: "Read".to_string(),
-            input: serde_json::json!({}),
-        };
-        let tool_end = AgentEvent::ToolEnd {
-            id: "id1".to_string(),
             output: "file contents".to_string(),
             is_error: false,
+            duration_ms: 50,
+        };
+        let tool_blocked = AgentEvent::ToolBlocked {
+            id: "id2".to_string(),
+            name: "Bash".to_string(),
+            reason: "Permission denied".to_string(),
         };
 
         // Event type matching verification
         assert!(matches!(text_event, AgentEvent::Text(_)));
-        assert!(matches!(tool_start, AgentEvent::ToolStart { .. }));
-        assert!(matches!(tool_end, AgentEvent::ToolEnd { .. }));
+        assert!(matches!(tool_complete, AgentEvent::ToolComplete { .. }));
+        assert!(matches!(tool_blocked, AgentEvent::ToolBlocked { .. }));
     }
 }
 
@@ -919,7 +921,7 @@ mod error_tests {
             current: 250_000,
             max: 200_000,
         };
-        assert!(context_overflow.to_string().contains("Context window"));
+        assert!(context_overflow.to_string().contains("Context limit"));
     }
 }
 

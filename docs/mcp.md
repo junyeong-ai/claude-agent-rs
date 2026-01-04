@@ -315,7 +315,7 @@ mcp_manager.add_server("filesystem", config).await?;
 
 let agent = Agent::builder()
     .from_claude_code()
-    .mcp(mcp_manager)
+    .mcp_manager(mcp_manager)
     .build()
     .await?;
 
@@ -328,7 +328,7 @@ MCP support requires the `mcp` feature:
 
 ```toml
 [dependencies]
-claude-agent = { version = "0.1", features = ["mcp"] }
+claude-agent = { version = "0.2", features = ["mcp"] }
 ```
 
 Without the feature, MCP methods return stub errors.

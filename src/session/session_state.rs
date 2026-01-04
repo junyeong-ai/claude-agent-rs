@@ -364,9 +364,7 @@ mod tests {
     async fn test_plan_lifecycle() {
         let state = ToolState::new(SessionId::new());
 
-        let plan = state
-            .enter_plan_mode(Some("Test Plan".to_string()))
-            .await;
+        let plan = state.enter_plan_mode(Some("Test Plan".to_string())).await;
         assert_eq!(plan.status, PlanStatus::Draft);
         assert!(state.is_in_plan_mode().await);
 
@@ -421,9 +419,7 @@ mod tests {
 
         let todos = vec![TodoItem::new(session_id, "Task 1", "Doing task 1")];
         state.set_todos(todos).await;
-        state
-            .enter_plan_mode(Some("My Plan".to_string()))
-            .await;
+        state.enter_plan_mode(Some("My Plan".to_string())).await;
 
         let session = state.session().await;
         assert_eq!(session.todos.len(), 1);

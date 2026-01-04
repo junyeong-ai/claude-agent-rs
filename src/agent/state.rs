@@ -220,7 +220,7 @@ mod tests {
         assert_eq!(metrics.tool_stats.get("Bash").unwrap().errors, 1);
         assert_eq!(metrics.tool_call_records.len(), 3);
         assert_eq!(metrics.tool_call_records[0].tool_use_id, "tu_1");
-        assert_eq!(metrics.tool_call_records[2].is_error, true);
+        assert!(metrics.tool_call_records[2].is_error);
     }
 
     #[test]

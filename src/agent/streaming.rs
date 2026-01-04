@@ -22,8 +22,8 @@ use crate::context::PromptOrchestrator;
 use crate::hooks::{HookContext, HookEvent, HookInput, HookManager};
 use crate::session::ToolState;
 use crate::types::{
-    CompactResult, ContentBlock, PermissionDenial, StopReason, StreamEvent,
-    ToolResultBlock, ToolUseBlock, Usage, context_window,
+    CompactResult, ContentBlock, PermissionDenial, StopReason, StreamEvent, ToolResultBlock,
+    ToolUseBlock, Usage, context_window,
 };
 use crate::{Client, ToolRegistry};
 
@@ -243,8 +243,7 @@ impl StreamState {
             }))));
         }
 
-        let cache_messages =
-            self.cfg.config.cache.enabled && self.cfg.config.cache.message_cache;
+        let cache_messages = self.cfg.config.cache.enabled && self.cfg.config.cache.message_cache;
         let messages = self
             .cfg
             .tool_state
@@ -634,7 +633,10 @@ impl StreamState {
             let compact_result = self
                 .cfg
                 .tool_state
-                .compact(&self.cfg.client, self.cfg.config.execution.compact_keep_messages)
+                .compact(
+                    &self.cfg.client,
+                    self.cfg.config.execution.compact_keep_messages,
+                )
                 .await;
 
             if let Ok(CompactResult::Compacted { .. }) = compact_result {

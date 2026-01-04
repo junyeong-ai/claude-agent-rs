@@ -245,7 +245,8 @@ where
                                     this.recovery.complete_thinking_block()
                                 }
                                 Some(BlockType::ToolUse) => {
-                                    if let Some(tool_use) = this.recovery.complete_tool_use_block() {
+                                    if let Some(tool_use) = this.recovery.complete_tool_use_block()
+                                    {
                                         return Poll::Ready(Some(Ok(StreamItem::ToolUseComplete(
                                             tool_use,
                                         ))));

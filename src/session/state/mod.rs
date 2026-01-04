@@ -289,7 +289,8 @@ impl Session {
     }
 
     pub fn add_tool_results(&mut self, results: Vec<crate::types::ToolResultBlock>) {
-        let content: Vec<ContentBlock> = results.into_iter().map(ContentBlock::ToolResult).collect();
+        let content: Vec<ContentBlock> =
+            results.into_iter().map(ContentBlock::ToolResult).collect();
         let msg = SessionMessage::user(content);
         self.add_message(msg);
     }
@@ -335,8 +336,8 @@ impl Session {
 
         let summary_prompt = Self::format_for_summary(&to_summarize);
         let model = client.adapter().model(ModelType::Small).to_string();
-        let request =
-            CreateMessageRequest::new(&model, vec![Message::user(&summary_prompt)]).with_max_tokens(2000);
+        let request = CreateMessageRequest::new(&model, vec![Message::user(&summary_prompt)])
+            .with_max_tokens(2000);
         let response = client.send(request).await?;
         let summary = response.text();
 

@@ -72,7 +72,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     std::fs::create_dir_all(&subdir)?;
 
     // Create test files
-    std::fs::write(parent_path.join("secret.txt"), "SECRET DATA - should not be accessible")?;
+    std::fs::write(
+        parent_path.join("secret.txt"),
+        "SECRET DATA - should not be accessible",
+    )?;
     std::fs::write(working_path.join("allowed.txt"), "This file is allowed")?;
     std::fs::write(subdir.join("nested.txt"), "Nested file content")?;
 
@@ -164,9 +167,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("\nSection 2: ExecutionContext Tool Integration");
     println!("------------------------------------------------------------------------");
 
-    let security = SecurityContext::builder()
-        .root(&working_path)
-        .build()?;
+    let security = SecurityContext::builder().root(&working_path).build()?;
     let ctx = ExecutionContext::new(security);
 
     // Test 7: Read tool - allowed file
@@ -182,7 +183,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             .await;
 
         match &result.output {
-            claude_agent::ToolOutput::Success(content) if content.contains("This file is allowed") => Ok(()),
+            claude_agent::ToolOutput::Success(content)
+                if content.contains("This file is allowed") =>
+            {
+                Ok(())
+            }
             _ => Err(format!("Unexpected result: {:?}", result)),
         }
     });
@@ -199,7 +204,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             .await;
 
         match &result.output {
-            claude_agent::ToolOutput::Error(e) if e.to_string().contains("escape") || e.to_string().contains("outside") => Ok(()),
+            claude_agent::ToolOutput::Error(e)
+                if e.to_string().contains("escape") || e.to_string().contains("outside") =>
+            {
+                Ok(())
+            }
             claude_agent::ToolOutput::Error(_) => Ok(()), // Any error is acceptable for blocked access
             _ => Err(format!("Should be blocked! Got: {:?}", result)),
         }

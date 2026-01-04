@@ -10,8 +10,8 @@ use std::sync::Arc;
 
 use glob::Pattern;
 
-use super::path::{normalize_path, SafePath};
 use super::SecurityError;
+use super::path::{SafePath, normalize_path};
 use crate::permissions::ToolLimits;
 
 #[derive(Clone)]

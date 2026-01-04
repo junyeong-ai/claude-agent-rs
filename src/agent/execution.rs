@@ -98,10 +98,7 @@ impl Agent {
             .map_err(|_| crate::Error::Timeout(timeout))?
     }
 
-    async fn wait_for_execution(
-        &self,
-        timeout: std::time::Duration,
-    ) -> crate::Result<AgentResult> {
+    async fn wait_for_execution(&self, timeout: std::time::Duration) -> crate::Result<AgentResult> {
         let start = Instant::now();
         loop {
             if start.elapsed() > timeout {

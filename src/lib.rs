@@ -77,8 +77,8 @@ pub mod types;
 // Re-exports for convenience
 pub use agent::{
     Agent, AgentBuilder, AgentConfig, AgentEvent, AgentMetrics, AgentModelConfig, AgentResult,
-    AgentState, BudgetConfig, DEFAULT_COMPACT_KEEP_MESSAGES, ExecutionConfig, PromptConfig,
-    SecurityConfig, SystemPromptMode, ToolStats,
+    AgentState, BudgetConfig, CacheConfig, DEFAULT_COMPACT_KEEP_MESSAGES, ExecutionConfig,
+    MessageCacheStrategy, PromptConfig, SecurityConfig, SystemPromptMode, ToolStats,
 };
 #[cfg(feature = "cli-integration")]
 pub use auth::ClaudeCliProvider;
@@ -156,78 +156,132 @@ pub use client::FoundryAdapter;
 #[cfg(feature = "gcp")]
 pub use client::VertexAdapter;
 
-/// Error type for claude-agent operations
+/// Error type for claude-agent operations.
+///
+/// All errors include actionable context to help diagnose and resolve issues.
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
 pub enum Error {
-    #[error("API error ({status:?}): {message}")]
+    /// API returned an error response.
+    #[error("API error (HTTP {status}): {message}", status = status.map(|s| s.to_string()).unwrap_or_else(|| "unknown".into()))]
     Api {
         message: String,
         status: Option<u16>,
         error_type: Option<String>,
     },
 
-    #[error("Authentication error: {message}")]
+    /// Authentication failed.
+    #[error("Authentication failed: {message}")]
     Auth { message: String },
 
-    #[error("Network error: {0}")]
+    /// Network connectivity or request failed.
+    #[error("Network request failed: {0}")]
     Network(#[from] reqwest::Error),
 
-    #[error("JSON error: {0}")]
+    /// JSON serialization or deserialization failed.
+    #[error("JSON parsing failed: {0}")]
     Json(#[from] serde_json::Error),
 
+    /// Failed to parse response or configuration.
     #[error("Parse error: {0}")]
     Parse(String),
 
-    #[error("Tool error: {0}")]
+    /// Tool execution failed.
+    #[error("Tool execution failed: {0}")]
     Tool(#[from] types::ToolError),
 
+    /// Invalid or missing configuration.
     #[error("Configuration error: {0}")]
     Config(String),
 
+    /// File system operation failed.
     #[error("IO error: {0}")]
     Io(#[from] std::io::Error),
 
-    #[error("Rate limit exceeded, retry after {retry_after:?}")]
+    /// API rate limit exceeded.
+    #[error("Rate limit exceeded{}", match retry_after {
+        Some(d) => format!(", retry in {:.0}s", d.as_secs_f64()),
+        None => String::new(),
+    })]
     RateLimit {
         retry_after: Option<std::time::Duration>,
     },
 
-    #[error("Context window exceeded: {current} / {max} tokens")]
+    /// Context window token limit exceeded.
+    #[error("Context limit exceeded: {current}/{max} tokens ({:.0}% used)", (*current as f64 / *max as f64) * 100.0)]
     ContextOverflow { current: usize, max: usize },
 
-    #[error("Execution timed out after {0:?}")]
+    /// Operation exceeded timeout.
+    #[error("Operation timed out after {:.1}s", .0.as_secs_f64())]
     Timeout(std::time::Duration),
 
+    /// Request parameters are invalid.
     #[error("Invalid request: {0}")]
     InvalidRequest(String),
 
+    /// Streaming response error.
     #[error("Stream error: {0}")]
     Stream(String),
 
+    /// Required environment variable missing or invalid.
     #[error("Environment variable error: {0}")]
     Env(#[from] std::env::VarError),
 
-    #[error("Operation '{operation}' not supported by provider '{provider}'")]
+    /// Operation not supported by the current provider.
+    #[error("{operation} is not supported by {provider}")]
     NotSupported {
         provider: &'static str,
         operation: &'static str,
     },
 
+    /// Operation blocked by permission policy.
     #[error("Permission denied: {0}")]
     Permission(String),
 
-    #[error("Budget exceeded: used ${used:.2} of ${limit:.2} limit")]
+    /// Budget limit exceeded.
+    #[error("Budget exceeded: ${used:.2} used (limit: ${limit:.2}, over by ${:.2})", used - limit)]
     BudgetExceeded { used: f64, limit: f64 },
 
-    #[error("Model overloaded: {model}")]
+    /// Model is temporarily overloaded.
+    #[error("Model {model} is overloaded, try again later")]
     ModelOverloaded { model: String },
 
+    /// Session operation failed.
     #[error("Session error: {0}")]
     Session(String),
 
+    /// MCP server communication failed.
     #[error("MCP error: {0}")]
     Mcp(String),
+
+    /// System resource limit reached (memory, processes, etc.)
+    #[error("Resource exhausted: {0}")]
+    ResourceExhausted(String),
+
+    /// Hook execution failed (blockable hooks only).
+    #[error("Hook '{hook}' failed: {reason}")]
+    HookFailed { hook: String, reason: String },
+
+    /// Hook timed out (blockable hooks only).
+    #[error("Hook '{hook}' timed out after {duration_secs}s")]
+    HookTimeout { hook: String, duration_secs: u64 },
+}
+
+/// Error category for unified error handling.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ErrorCategory {
+    /// Authentication or authorization failures (401, 403)
+    Authorization,
+    /// Configuration, parsing, or setup errors
+    Configuration,
+    /// Network, rate limit, or transient errors that may succeed on retry
+    Transient,
+    /// Session, MCP, or other stateful operation errors
+    Stateful,
+    /// Internal errors (IO, JSON, unexpected states)
+    Internal,
+    /// Resource limits (budget, context, timeout)
+    ResourceLimit,
 }
 
 impl Error {
@@ -237,16 +291,58 @@ impl Error {
         }
     }
 
+    pub fn category(&self) -> ErrorCategory {
+        match self {
+            Error::Auth { .. } => ErrorCategory::Authorization,
+            Error::Api {
+                status: Some(401 | 403),
+                ..
+            } => ErrorCategory::Authorization,
+            Error::Permission(_) | Error::HookFailed { .. } | Error::HookTimeout { .. } => {
+                ErrorCategory::Authorization
+            }
+
+            Error::Config(_) | Error::Parse(_) | Error::Env(_) | Error::InvalidRequest(_) => {
+                ErrorCategory::Configuration
+            }
+
+            Error::Network(_) | Error::RateLimit { .. } | Error::ModelOverloaded { .. } => {
+                ErrorCategory::Transient
+            }
+            Error::Api {
+                status: Some(500..=599),
+                ..
+            } => ErrorCategory::Transient,
+
+            Error::Session(_) | Error::Mcp(_) | Error::Stream(_) => ErrorCategory::Stateful,
+
+            Error::BudgetExceeded { .. }
+            | Error::ContextOverflow { .. }
+            | Error::Timeout(_)
+            | Error::ResourceExhausted(_) => ErrorCategory::ResourceLimit,
+
+            Error::Io(_)
+            | Error::Json(_)
+            | Error::Tool(_)
+            | Error::Api { .. }
+            | Error::NotSupported { .. } => ErrorCategory::Internal,
+        }
+    }
+
+    pub fn is_authorization_error(&self) -> bool {
+        self.category() == ErrorCategory::Authorization
+    }
+
+    pub fn is_configuration_error(&self) -> bool {
+        self.category() == ErrorCategory::Configuration
+    }
+
+    pub fn is_resource_limit(&self) -> bool {
+        self.category() == ErrorCategory::ResourceLimit
+    }
+
     pub fn is_retryable(&self) -> bool {
-        matches!(
-            self,
-            Error::RateLimit { .. }
-                | Error::Network(_)
-                | Error::Api {
-                    status: Some(500..=599),
-                    ..
-                }
-        )
+        self.category() == ErrorCategory::Transient
     }
 
     pub fn is_unauthorized(&self) -> bool {
@@ -354,6 +450,7 @@ impl From<security::SecurityError> for Error {
     fn from(err: security::SecurityError) -> Self {
         match err {
             security::SecurityError::Io(e) => Error::Io(e),
+            security::SecurityError::ResourceLimit(msg) => Error::ResourceExhausted(msg),
             security::SecurityError::BashBlocked(msg) => Error::Permission(msg),
             security::SecurityError::DeniedPath(path) => {
                 Error::Permission(format!("denied path: {}", path.display()))
@@ -364,7 +461,14 @@ impl From<security::SecurityError> for Error {
             security::SecurityError::NotWithinSandbox(path) => {
                 Error::Permission(format!("path not within sandbox: {}", path.display()))
             }
-            _ => Error::Permission(err.to_string()),
+            security::SecurityError::InvalidPath(msg) => Error::Config(msg),
+            security::SecurityError::AbsoluteSymlink(path) => Error::Permission(format!(
+                "absolute symlink outside sandbox: {}",
+                path.display()
+            )),
+            security::SecurityError::SymlinkDepthExceeded { path, max } => Error::Permission(
+                format!("symlink depth exceeded (max {}): {}", max, path.display()),
+            ),
         }
     }
 }

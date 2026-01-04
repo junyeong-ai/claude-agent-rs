@@ -21,7 +21,7 @@ English | [한국어](README.ko.md)
 | **TOCTOU-Safe File Operations** | `openat()` + `O_NOFOLLOW` | Standard file I/O |
 | **Multi-Cloud Support** | Bedrock, Vertex, Foundry | Limited or none |
 | **OS-Level Sandboxing** | Landlock, Seatbelt | None |
-| **1000+ Tests** | Production-proven | Varies |
+| **990+ Tests** | Production-proven | Varies |
 
 ---
 
@@ -251,7 +251,7 @@ mcp.add_server("filesystem", McpServerConfig::Stdio {
     env: HashMap::new(),
 }).await?;
 
-Agent::builder().mcp(mcp).build().await?
+Agent::builder().mcp_manager(mcp).build().await?
 ```
 
 See: [MCP Guide](docs/mcp.md)
@@ -320,7 +320,6 @@ claude-agent = { version = "0.2", features = ["mcp", "postgres"] }
 ## Examples
 
 ```bash
-cargo run --example sdk_core_test      # Core SDK
 cargo run --example advanced_test      # Skills, subagents, hooks
 cargo run --example all_tools_test     # All 12 tools
 cargo run --example server_tools       # WebFetch, WebSearch
@@ -343,7 +342,7 @@ cargo run --example server_tools       # WebFetch, WebSearch
 ## Testing
 
 ```bash
-cargo test                    # 1061 tests
+cargo test                    # 990+ tests
 cargo test -- --ignored       # + live API tests
 cargo clippy --all-features   # Lint
 ```

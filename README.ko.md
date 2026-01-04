@@ -21,7 +21,7 @@
 | **TOCTOU-Safe 파일 연산** | `openat()` + `O_NOFOLLOW` | 표준 파일 I/O |
 | **멀티 클라우드 지원** | Bedrock, Vertex, Foundry | 제한적 또는 없음 |
 | **OS 레벨 샌드박싱** | Landlock, Seatbelt | 없음 |
-| **1000+ 테스트** | 프로덕션 검증됨 | 다양함 |
+| **990+ 테스트** | 프로덕션 검증됨 | 다양함 |
 
 ---
 
@@ -251,7 +251,7 @@ mcp.add_server("filesystem", McpServerConfig::Stdio {
     env: HashMap::new(),
 }).await?;
 
-Agent::builder().mcp(mcp).build().await?
+Agent::builder().mcp_manager(mcp).build().await?
 ```
 
 자세한 내용: [MCP 가이드](docs/mcp.md)
@@ -320,7 +320,6 @@ claude-agent = { version = "0.2", features = ["mcp", "postgres"] }
 ## 예제
 
 ```bash
-cargo run --example sdk_core_test      # 코어 SDK
 cargo run --example advanced_test      # 스킬, 서브에이전트, 훅
 cargo run --example all_tools_test     # 12개 전체 도구
 cargo run --example server_tools       # WebFetch, WebSearch
@@ -343,7 +342,7 @@ cargo run --example server_tools       # WebFetch, WebSearch
 ## 테스트
 
 ```bash
-cargo test                    # 1061개 테스트
+cargo test                    # 990+ 테스트
 cargo test -- --ignored       # + 라이브 API 테스트
 cargo clippy --all-features   # 린트
 ```

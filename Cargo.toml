@@ -141,10 +141,6 @@ otel = ["opentelemetry", "opentelemetry_sdk", "opentelemetry-otlp", "opentelemet
 full = ["mcp", "cloud-all", "persistence-all", "otel"]
 
 [[example]]
-name = "sdk_core_test"
-path = "examples/sdk_core_test.rs"
-
-[[example]]
 name = "advanced_test"
 path = "examples/advanced_test.rs"
 

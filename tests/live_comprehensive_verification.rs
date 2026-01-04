@@ -767,8 +767,7 @@ mod skill_system_tests {
 // =============================================================================
 
 mod caching_tests {
-    use claude_agent::session::CacheStats;
-    use claude_agent::types::SystemPrompt;
+    use claude_agent::types::{SystemPrompt, TokenUsage};
 
     #[tokio::test]
     #[ignore = "Live API test"]
@@ -789,19 +788,18 @@ mod caching_tests {
 
     #[tokio::test]
     #[ignore = "Live API test"]
-    async fn test_cache_stats() {
-        println!("\n=== Caching: Cache Stats ===");
+    async fn test_token_usage_cache_tracking() {
+        println!("\n=== Caching: Token Usage Cache Tracking ===");
 
-        let stats = CacheStats {
-            cache_hits: 8,
-            cache_misses: 2,
-            cache_read_tokens: 10000,
-            ..Default::default()
+        let usage = TokenUsage {
+            input_tokens: 10000,
+            output_tokens: 500,
+            cache_read_input_tokens: 8000,
+            cache_creation_input_tokens: 0,
         };
 
-        assert_eq!(stats.hit_rate(), 0.8);
-        assert!(stats.tokens_saved() > 0);
-        println!("✓ Cache stats verified");
+        assert!((usage.cache_hit_rate() - 0.8).abs() < 0.01);
+        println!("✓ Cache hit rate calculation verified");
     }
 }
 

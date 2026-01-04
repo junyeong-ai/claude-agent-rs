@@ -1131,8 +1131,7 @@ mod progressive_disclosure_tests {
 // =============================================================================
 
 mod caching_tests {
-    use claude_agent::session::CacheStats;
-    use claude_agent::types::SystemPrompt;
+    use claude_agent::types::{SystemPrompt, TokenUsage};
 
     #[tokio::test]
     #[ignore = "Live API test"]
@@ -1157,22 +1156,22 @@ mod caching_tests {
 
     #[tokio::test]
     #[ignore = "Live API test"]
-    async fn test_cache_stats() {
-        super::print_test_header("Caching: Statistics");
+    async fn test_token_usage_cache() {
+        super::print_test_header("Caching: Token Usage");
         let start = std::time::Instant::now();
 
-        let stats = CacheStats {
-            cache_hits: 8,
-            cache_misses: 2,
-            cache_read_tokens: 10000,
-            ..Default::default()
+        let usage = TokenUsage {
+            input_tokens: 10000,
+            output_tokens: 500,
+            cache_read_input_tokens: 8000,
+            cache_creation_input_tokens: 0,
         };
 
-        let success = (stats.hit_rate() - 0.8).abs() < 0.01 && stats.tokens_saved() > 0;
+        let success = (usage.cache_hit_rate() - 0.8).abs() < 0.01;
 
         super::print_result(
             success,
-            "Cache statistics calculated",
+            "Cache hit rate calculated",
             start.elapsed().as_millis(),
         );
         assert!(success);

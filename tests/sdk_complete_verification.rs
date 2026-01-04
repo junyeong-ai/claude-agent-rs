@@ -15,7 +15,7 @@ use claude_agent::{
     },
     context::{ContextBuilder, MemoryLoader, RuleIndex, SkillIndex},
     hooks::{HookEvent, HookOutput},
-    session::{CacheConfigBuilder, CacheStats, CompactStrategy, SessionCacheManager},
+    session::CompactStrategy,
     skills::{CommandLoader, SkillDefinition, SkillExecutor, SkillRegistry, SkillTool},
     tools::{
         BashTool, EditTool, ExecutionContext, GlobTool, GrepTool, ProcessManager, ReadTool, Tool,
@@ -785,34 +785,6 @@ mod caching_tests {
         } else {
             panic!("Expected Text variant");
         }
-    }
-
-    #[test]
-    fn test_session_cache_manager() {
-        let manager = SessionCacheManager::new();
-        assert!(manager.is_enabled());
-    }
-
-    #[test]
-    fn test_cache_stats() {
-        let stats = CacheStats {
-            cache_hits: 8,
-            cache_misses: 2,
-            cache_read_tokens: 10000,
-            ..Default::default()
-        };
-
-        assert_eq!(stats.hit_rate(), 0.8);
-        assert!(stats.tokens_saved() > 0);
-    }
-
-    #[test]
-    fn test_cache_config_builder() {
-        let enabled = CacheConfigBuilder::new().build();
-        assert!(enabled.is_enabled());
-
-        let disabled = CacheConfigBuilder::new().disabled().build();
-        assert!(!disabled.is_enabled());
     }
 
     #[test]

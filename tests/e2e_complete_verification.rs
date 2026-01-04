@@ -19,9 +19,8 @@ use claude_agent::{
     Agent, Auth, Client, ToolAccess, ToolOutput, ToolRestricted,
     client::CloudProvider,
     config::SettingsLoader,
-    context::{ContextBuilder, MemoryLoader, RuleIndex, SkillIndex, StaticContext},
+    context::{ContextBuilder, MemoryLoader, RuleIndex, SkillIndex},
     hooks::{HookEvent, HookOutput},
-    session::{CacheConfigBuilder, CacheStats, SessionCacheManager},
     skills::{CommandLoader, SkillDefinition, SkillExecutor, SkillRegistry, SkillTool},
     tools::{
         BashTool, EditTool, ExecutionContext, GlobTool, GrepTool, ReadTool, Tool, ToolRegistry,
@@ -700,16 +699,13 @@ Deploy to $ARGUMENTS environment:
 // =============================================================================
 
 mod prompt_caching_tests {
-    use super::*;
+    use claude_agent::types::{CacheType, SystemPrompt};
 
     #[test]
     fn test_cache_control_type() {
         println!("\n{}", "═".repeat(70));
         println!("TEST: Prompt Caching - Cache Control Types");
         println!("{}", "═".repeat(70));
-
-        // Test system prompt with caching
-        use claude_agent::types::{CacheType, SystemPrompt};
 
         let cached_prompt = SystemPrompt::cached("You are a helpful assistant");
         if let SystemPrompt::Blocks(blocks) = cached_prompt {
@@ -727,84 +723,6 @@ mod prompt_caching_tests {
         }
 
         println!("✅ Cache control types: PASSED\n");
-    }
-
-    #[test]
-    fn test_session_cache_manager() {
-        println!("\n{}", "═".repeat(70));
-        println!("TEST: SessionCacheManager");
-        println!("{}", "═".repeat(70));
-
-        let mut manager = SessionCacheManager::new();
-        assert!(manager.is_enabled());
-
-        // Initialize with static context
-        let ctx = StaticContext::new()
-            .with_system_prompt("You are helpful")
-            .with_claude_md("# Project\n\nInstructions here.");
-
-        manager.initialize(&ctx);
-
-        // Build cached system blocks
-        let blocks = manager.build_cached_system(&ctx);
-        assert!(!blocks.is_empty());
-        assert!(blocks.iter().all(|b| b.cache_control.is_some()));
-        println!("✓ Cache control added to static context blocks");
-
-        // Test context change detection
-        assert!(!manager.has_context_changed(&ctx));
-        let new_ctx = StaticContext::new().with_system_prompt("Different prompt");
-        assert!(manager.has_context_changed(&new_ctx));
-        println!("✓ Context change detection works");
-
-        // Record usage
-        manager.record_usage(1000, 0); // Cache hit
-        manager.record_usage(0, 500); // Cache miss
-        assert_eq!(manager.stats().cache_hits, 1);
-        assert_eq!(manager.stats().cache_misses, 1);
-        assert_eq!(manager.stats().cache_read_tokens, 1000);
-        assert_eq!(manager.stats().cache_creation_tokens, 500);
-        println!("✓ Cache statistics tracking works");
-
-        println!("✅ SessionCacheManager: PASSED\n");
-    }
-
-    #[test]
-    fn test_cache_stats() {
-        println!("\n{}", "═".repeat(70));
-        println!("TEST: Cache Statistics");
-        println!("{}", "═".repeat(70));
-
-        let mut stats = CacheStats::default();
-
-        // Initial state
-        assert_eq!(stats.hit_rate(), 0.0);
-
-        // Record hits and misses
-        stats.cache_hits = 8;
-        stats.cache_misses = 2;
-        stats.cache_read_tokens = 10000;
-
-        assert_eq!(stats.hit_rate(), 0.8);
-        println!("✓ 80% hit rate calculated correctly");
-
-        let saved = stats.tokens_saved();
-        assert!(saved > 0);
-        println!("✓ Tokens saved: {} (90% of cache reads)", saved);
-
-        println!("✅ Cache statistics: PASSED\n");
-    }
-
-    #[test]
-    fn test_cache_config_builder() {
-        let manager = CacheConfigBuilder::new().build();
-        assert!(manager.is_enabled());
-
-        let disabled = CacheConfigBuilder::new().disabled().build();
-        assert!(!disabled.is_enabled());
-
-        println!("✓ CacheConfigBuilder: enabled and disabled modes work");
-        println!("✅ Cache config builder: PASSED\n");
     }
 
     #[test]
@@ -1304,8 +1222,7 @@ fn test_summary() {
     println!("║                                                                        ║");
     println!("║  SECTION 5: Prompt Caching                                             ║");
     println!("║    ✓ SystemPrompt::cached() with cache_control                         ║");
-    println!("║    ✓ SessionCacheManager                                               ║");
-    println!("║    ✓ CacheStats (hit rate, tokens saved)                               ║");
+    println!("║    ✓ Message history caching (last user turn)                          ║");
     println!("║    ✓ TokenUsage with cache_read/cache_creation fields                  ║");
     println!("║                                                                        ║");
     println!("║  SECTION 6: Memory System                                              ║");

@@ -57,6 +57,8 @@ pub struct ExecutionConfig {
     pub max_iterations: usize,
     /// Overall execution timeout
     pub timeout: Option<Duration>,
+    /// Timeout between streaming chunks (detects stalled connections)
+    pub chunk_timeout: Duration,
     /// Enable automatic context compaction
     pub auto_compact: bool,
     /// Context usage threshold for compaction (0.0-1.0)
@@ -70,6 +72,7 @@ impl Default for ExecutionConfig {
         Self {
             max_iterations: 100,
             timeout: Some(Duration::from_secs(300)),
+            chunk_timeout: Duration::from_secs(60),
             auto_compact: true,
             compact_threshold: crate::types::DEFAULT_COMPACT_THRESHOLD,
             compact_keep_messages: 4,
@@ -90,6 +93,11 @@ impl ExecutionConfig {
 
     pub fn without_timeout(mut self) -> Self {
         self.timeout = None;
+        self
+    }
+
+    pub fn with_chunk_timeout(mut self, timeout: Duration) -> Self {
+        self.chunk_timeout = timeout;
         self
     }
 
@@ -245,6 +253,52 @@ impl PromptConfig {
     }
 }
 
+/// Cache configuration for prompt caching.
+#[derive(Debug, Clone)]
+pub struct CacheConfig {
+    pub enabled: bool,
+    pub system_prompt_cache: bool,
+    pub message_cache: bool,
+}
+
+impl Default for CacheConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            system_prompt_cache: true,
+            message_cache: true,
+        }
+    }
+}
+
+impl CacheConfig {
+    pub fn disabled() -> Self {
+        Self {
+            enabled: false,
+            system_prompt_cache: false,
+            message_cache: false,
+        }
+    }
+
+    pub fn system_only() -> Self {
+        Self {
+            enabled: true,
+            system_prompt_cache: true,
+            message_cache: false,
+        }
+    }
+
+    pub fn with_system_cache(mut self, enabled: bool) -> Self {
+        self.system_prompt_cache = enabled;
+        self
+    }
+
+    pub fn with_message_cache(mut self, enabled: bool) -> Self {
+        self.message_cache = enabled;
+        self
+    }
+}
+
 /// Server-side tools configuration.
 ///
 /// Anthropic's built-in server-side tools (Brave Search, web fetch).
@@ -296,13 +350,9 @@ pub struct AgentConfig {
     pub security: SecurityConfig,
     pub budget: BudgetConfig,
     pub prompt: PromptConfig,
+    pub cache: CacheConfig,
     pub working_dir: Option<PathBuf>,
-    /// Server-side tools configuration.
-    ///
-    /// When ToolAccess allows "WebSearch" or "WebFetch", these server-side tools
-    /// are injected into API requests. Pricing: $10 per 1,000 searches.
     pub server_tools: ServerToolsConfig,
-    /// Enable coding mode (captures environment context: cwd, git branch, etc.)
     pub coding_mode: bool,
 }
 
@@ -333,6 +383,11 @@ impl AgentConfig {
 
     pub fn with_prompt(mut self, config: PromptConfig) -> Self {
         self.prompt = config;
+        self
+    }
+
+    pub fn with_cache(mut self, config: CacheConfig) -> Self {
+        self.cache = config;
         self
     }
 

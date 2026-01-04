@@ -1,9 +1,19 @@
 //! Conversation context management.
 
-use crate::types::{CompactResult, ContentBlock, Message, Role, Usage};
+use crate::types::{CacheControl, CompactResult, ContentBlock, Message, Role, Usage};
 
 const CHARS_PER_TOKEN: usize = 4;
 const NON_TEXT_BLOCK_TOKENS: usize = 25;
+const MAX_MESSAGE_CACHE_BREAKPOINTS: usize = 3;
+const MIN_TOKENS_FOR_CACHE: usize = 1024;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum MessageCacheStrategy {
+    Disabled,
+    #[default]
+    Auto,
+    Manual,
+}
 
 #[derive(Debug, Default)]
 pub struct ConversationContext {
@@ -12,6 +22,8 @@ pub struct ConversationContext {
     estimated_tokens: usize,
     summary: Option<String>,
     compactions: usize,
+    cache_strategy: MessageCacheStrategy,
+    cache_breakpoints: Vec<usize>,
 }
 
 impl ConversationContext {
@@ -19,9 +31,26 @@ impl ConversationContext {
         Self::default()
     }
 
+    pub fn with_cache_strategy(mut self, strategy: MessageCacheStrategy) -> Self {
+        self.cache_strategy = strategy;
+        self
+    }
+
+    pub fn set_cache_strategy(&mut self, strategy: MessageCacheStrategy) {
+        self.cache_strategy = strategy;
+    }
+
+    pub fn cache_strategy(&self) -> MessageCacheStrategy {
+        self.cache_strategy
+    }
+
     pub fn push(&mut self, message: Message) {
         self.estimated_tokens += Self::estimate_message_tokens(&message);
         self.messages.push(message);
+
+        if self.cache_strategy == MessageCacheStrategy::Auto {
+            self.update_cache_breakpoints();
+        }
     }
 
     pub fn update_usage(&mut self, usage: Usage) {
@@ -51,6 +80,20 @@ impl ConversationContext {
 
     pub fn messages_mut(&mut self) -> &mut Vec<Message> {
         &mut self.messages
+    }
+
+    /// Consume context and return owned messages.
+    /// Use this at the end of execution to avoid cloning.
+    pub fn into_messages(self) -> Vec<Message> {
+        self.messages
+    }
+
+    /// Take messages, leaving an empty vec.
+    /// Useful when you need to consume messages but keep the context.
+    pub fn take_messages(&mut self) -> Vec<Message> {
+        self.estimated_tokens = 0;
+        self.cache_breakpoints.clear();
+        std::mem::take(&mut self.messages)
     }
 
     pub fn total_usage(&self) -> &Usage {
@@ -135,6 +178,67 @@ impl ConversationContext {
 
     pub fn is_empty(&self) -> bool {
         self.messages.is_empty()
+    }
+
+    pub fn cache_breakpoints(&self) -> &[usize] {
+        &self.cache_breakpoints
+    }
+
+    pub fn set_manual_breakpoints(&mut self, breakpoints: Vec<usize>) {
+        if self.cache_strategy == MessageCacheStrategy::Manual {
+            self.cache_breakpoints = breakpoints
+                .into_iter()
+                .filter(|&i| i < self.messages.len())
+                .take(MAX_MESSAGE_CACHE_BREAKPOINTS)
+                .collect();
+            self.apply_cache_breakpoints();
+        }
+    }
+
+    fn update_cache_breakpoints(&mut self) {
+        if self.messages.len() < 4 || self.estimated_tokens < MIN_TOKENS_FOR_CACHE {
+            return;
+        }
+
+        self.clear_all_cache_control();
+
+        let total_tokens = self.estimated_tokens;
+        let mut breakpoints = Vec::with_capacity(MAX_MESSAGE_CACHE_BREAKPOINTS);
+
+        let mut cumulative = 0;
+        let target_interval = total_tokens / (MAX_MESSAGE_CACHE_BREAKPOINTS + 1);
+
+        for (i, msg) in self.messages.iter().enumerate() {
+            cumulative += Self::estimate_message_tokens(msg);
+
+            if cumulative >= target_interval * (breakpoints.len() + 1)
+                && breakpoints.len() < MAX_MESSAGE_CACHE_BREAKPOINTS
+                && i < self.messages.len() - 2
+            {
+                breakpoints.push(i);
+            }
+        }
+
+        self.cache_breakpoints = breakpoints;
+        self.apply_cache_breakpoints();
+    }
+
+    fn apply_cache_breakpoints(&mut self) {
+        for &idx in &self.cache_breakpoints {
+            if let Some(msg) = self.messages.get_mut(idx) {
+                msg.set_cache_on_last_block(CacheControl::ephemeral());
+            }
+        }
+    }
+
+    fn clear_all_cache_control(&mut self) {
+        for msg in &mut self.messages {
+            msg.clear_cache_control();
+        }
+    }
+
+    pub fn messages_with_cache(&self) -> Vec<Message> {
+        self.messages.clone()
     }
 
     fn estimate_message_tokens(message: &Message) -> usize {
@@ -254,5 +358,62 @@ mod tests {
     fn test_compactions_counter() {
         let history = ConversationContext::new();
         assert_eq!(history.compactions(), 0);
+    }
+
+    #[test]
+    fn test_cache_strategy_default() {
+        let ctx = ConversationContext::new();
+        assert_eq!(ctx.cache_strategy(), MessageCacheStrategy::Auto);
+    }
+
+    #[test]
+    fn test_cache_strategy_disabled() {
+        let mut ctx =
+            ConversationContext::new().with_cache_strategy(MessageCacheStrategy::Disabled);
+
+        for i in 0..10 {
+            ctx.push(Message::user(format!(
+                "Message {} with lots of content to ensure tokens",
+                i
+            )));
+        }
+        ctx.estimated_tokens = 5000;
+
+        assert!(ctx.cache_breakpoints().is_empty());
+    }
+
+    #[test]
+    fn test_auto_cache_breakpoints() {
+        let mut ctx = ConversationContext::new();
+
+        let long_content = "x".repeat(500);
+        for i in 0..20 {
+            ctx.push(Message::user(format!("Message {} {}", i, long_content)));
+        }
+
+        assert!(ctx.estimated_tokens() >= MIN_TOKENS_FOR_CACHE);
+        assert!(!ctx.cache_breakpoints().is_empty());
+        assert!(ctx.cache_breakpoints().len() <= MAX_MESSAGE_CACHE_BREAKPOINTS);
+    }
+
+    #[test]
+    fn test_manual_cache_breakpoints() {
+        let mut ctx = ConversationContext::new().with_cache_strategy(MessageCacheStrategy::Manual);
+
+        for i in 0..10 {
+            ctx.push(Message::user(format!("Message {}", i)));
+        }
+
+        ctx.set_manual_breakpoints(vec![2, 5, 8]);
+        assert_eq!(ctx.cache_breakpoints(), &[2, 5, 8]);
+    }
+
+    #[test]
+    fn test_cache_breakpoints_not_set_for_small_context() {
+        let mut ctx = ConversationContext::new();
+        ctx.push(Message::user("Short message"));
+        ctx.push(Message::user("Another short one"));
+
+        assert!(ctx.cache_breakpoints().is_empty());
     }
 }

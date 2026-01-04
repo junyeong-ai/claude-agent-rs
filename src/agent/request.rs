@@ -7,7 +7,7 @@ use crate::agent::config::{AgentConfig, ServerToolsConfig, SystemPromptMode};
 use crate::client::messages::CreateMessageRequest;
 use crate::output_style::{OutputStyle, SystemPromptGenerator};
 use crate::tools::ToolRegistry;
-use crate::types::Message;
+use crate::types::{Message, SystemBlock, SystemPrompt};
 
 pub struct RequestBuilder {
     model: String,
@@ -18,6 +18,7 @@ pub struct RequestBuilder {
     system_prompt_mode: SystemPromptMode,
     custom_system_prompt: Option<String>,
     base_system_prompt: String,
+    cache_enabled: bool,
 }
 
 impl RequestBuilder {
@@ -37,11 +38,12 @@ impl RequestBuilder {
             system_prompt_mode: config.prompt.system_prompt_mode,
             custom_system_prompt: config.prompt.system_prompt.clone(),
             base_system_prompt,
+            cache_enabled: config.cache.enabled && config.cache.system_prompt_cache,
         }
     }
 
     pub fn build(&self, messages: Vec<Message>, dynamic_rules: &str) -> CreateMessageRequest {
-        let system_prompt = self.build_system_prompt(dynamic_rules);
+        let system_prompt = self.build_system_prompt_blocks(dynamic_rules);
 
         let mut request = CreateMessageRequest::new(&self.model, messages)
             .with_max_tokens(self.max_tokens)
@@ -65,8 +67,10 @@ impl RequestBuilder {
         request
     }
 
-    fn build_system_prompt(&self, dynamic_rules: &str) -> String {
-        let mut prompt = match self.system_prompt_mode {
+    fn build_system_prompt_blocks(&self, dynamic_rules: &str) -> SystemPrompt {
+        let mut blocks = Vec::new();
+
+        let static_prompt = match self.system_prompt_mode {
             SystemPromptMode::Replace => self
                 .custom_system_prompt
                 .clone()
@@ -81,12 +85,23 @@ impl RequestBuilder {
             }
         };
 
-        if !dynamic_rules.is_empty() {
-            prompt.push_str("\n\n");
-            prompt.push_str(dynamic_rules);
+        if !static_prompt.is_empty() {
+            blocks.push(if self.cache_enabled {
+                SystemBlock::cached(&static_prompt)
+            } else {
+                SystemBlock::uncached(&static_prompt)
+            });
         }
 
-        prompt
+        if !dynamic_rules.is_empty() {
+            blocks.push(SystemBlock::uncached(dynamic_rules));
+        }
+
+        if blocks.is_empty() {
+            SystemPrompt::Text(String::new())
+        } else {
+            SystemPrompt::Blocks(blocks)
+        }
     }
 
     fn generate_base_prompt(

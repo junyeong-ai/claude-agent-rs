@@ -115,25 +115,27 @@ fn test_agent_event_variants() {
     let text_event = AgentEvent::Text("Hello".to_string());
     assert!(matches!(text_event, AgentEvent::Text(_)));
 
-    let tool_start = AgentEvent::ToolStart {
+    let tool_complete = AgentEvent::ToolComplete {
         id: "tool_1".to_string(),
         name: "Read".to_string(),
-        input: serde_json::json!({"file_path": "/test"}),
-    };
-    assert!(matches!(tool_start, AgentEvent::ToolStart { .. }));
-
-    let tool_end = AgentEvent::ToolEnd {
-        id: "tool_1".to_string(),
         output: "file content".to_string(),
         is_error: false,
+        duration_ms: 50,
     };
     assert!(matches!(
-        tool_end,
-        AgentEvent::ToolEnd {
+        tool_complete,
+        AgentEvent::ToolComplete {
             is_error: false,
             ..
         }
     ));
+
+    let tool_blocked = AgentEvent::ToolBlocked {
+        id: "tool_2".to_string(),
+        name: "Bash".to_string(),
+        reason: "Permission denied".to_string(),
+    };
+    assert!(matches!(tool_blocked, AgentEvent::ToolBlocked { .. }));
 }
 
 #[test]
@@ -240,10 +242,16 @@ fn test_hook_output_builder() {
 
 #[test]
 fn test_hook_event_can_block() {
+    // Blockable events (fail-closed)
     assert!(HookEvent::PreToolUse.can_block());
     assert!(HookEvent::UserPromptSubmit.can_block());
+    assert!(HookEvent::SessionStart.can_block());
+    assert!(HookEvent::PreCompact.can_block());
+    assert!(HookEvent::SubagentStart.can_block());
+
+    // Non-blockable events (fail-open)
     assert!(!HookEvent::PostToolUse.can_block());
-    assert!(!HookEvent::SessionStart.can_block());
+    assert!(!HookEvent::SessionEnd.can_block());
 }
 
 #[test]

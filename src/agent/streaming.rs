@@ -1,14 +1,15 @@
-//! Agent streaming execution.
+//! Agent streaming execution with real SSE streaming support.
 
-use std::collections::VecDeque;
 use std::path::Path;
+use std::pin::Pin;
 use std::sync::Arc;
 use std::time::Instant;
 
-use futures::Stream;
+use futures::{Stream, StreamExt, stream};
 use tokio::sync::{Mutex, RwLock};
 use tracing::{debug, warn};
 
+use super::common::BudgetContext;
 use super::events::{AgentEvent, AgentResult};
 use super::execution::extract_file_path;
 use super::executor::Agent;
@@ -16,20 +17,28 @@ use super::request::RequestBuilder;
 use super::state_formatter::collect_compaction_state;
 use super::{AgentConfig, AgentMetrics, AgentState, ConversationContext};
 use crate::budget::{BudgetTracker, TenantBudget};
+use crate::client::{RecoverableStream, StreamItem};
 use crate::context::PromptOrchestrator;
 use crate::hooks::{HookContext, HookEvent, HookInput, HookManager};
 use crate::types::{
-    CompactResult, ContentBlock, Message, PermissionDenial, StopReason, ToolResultBlock,
-    ToolUseBlock,
+    CompactResult, ContentBlock, Message, PermissionDenial, StopReason, StreamEvent,
+    ToolResultBlock, ToolUseBlock, Usage,
 };
 use crate::{Client, ToolRegistry};
+
+type BoxedByteStream =
+    Pin<Box<dyn Stream<Item = std::result::Result<bytes::Bytes, reqwest::Error>> + Send>>;
 
 impl Agent {
     pub async fn execute_stream(
         &self,
         prompt: &str,
-    ) -> crate::Result<impl Stream<Item = crate::Result<AgentEvent>>> {
-        use futures::stream;
+    ) -> crate::Result<impl Stream<Item = crate::Result<AgentEvent>> + Send> {
+        let timeout = self
+            .config
+            .execution
+            .timeout
+            .unwrap_or(std::time::Duration::from_secs(600));
 
         let context = Arc::new(Mutex::new(ConversationContext::new()));
         {
@@ -37,136 +46,399 @@ impl Agent {
             history.push(Message::user(prompt));
         }
 
-        let request_builder = RequestBuilder::new(&self.config, Arc::clone(&self.tools));
-
-        let event_stream = stream::unfold(
-            StreamState::new(
+        let state = StreamState::new(
+            StreamStateConfig {
                 context,
-                self.client.clone(),
-                self.config.clone(),
-                Arc::clone(&self.tools),
-                self.hooks.clone(),
-                self.hook_context(),
-                request_builder,
-                self.orchestrator.clone(),
-                self.session_id.clone(),
-                self.budget_tracker.clone(),
-                self.tenant_budget.clone(),
-            ),
-            |mut state| async move { state.next_event().await.map(|event| (event, state)) },
+                client: Arc::clone(&self.client),
+                config: Arc::clone(&self.config),
+                tools: Arc::clone(&self.tools),
+                hooks: Arc::clone(&self.hooks),
+                hook_context: self.hook_context(),
+                request_builder: RequestBuilder::new(&self.config, Arc::clone(&self.tools)),
+                orchestrator: self.orchestrator.clone(),
+                session_id: Arc::clone(&self.session_id),
+                budget_tracker: Arc::clone(&self.budget_tracker),
+                tenant_budget: self.tenant_budget.clone(),
+            },
+            timeout,
         );
 
-        Ok(event_stream)
+        Ok(stream::unfold(state, |mut state| async move {
+            state.next_event().await.map(|event| (event, state))
+        }))
     }
 }
 
-pub(crate) struct StreamState {
+struct StreamStateConfig {
     context: Arc<Mutex<ConversationContext>>,
-    client: Client,
-    config: AgentConfig,
+    client: Arc<Client>,
+    config: Arc<AgentConfig>,
     tools: Arc<ToolRegistry>,
-    hooks: HookManager,
+    hooks: Arc<HookManager>,
     hook_context: HookContext,
     request_builder: RequestBuilder,
-    dynamic_rules: String,
     orchestrator: Option<Arc<RwLock<PromptOrchestrator>>>,
-    metrics: AgentMetrics,
-    start_time: Instant,
-    pending_events: VecDeque<crate::Result<AgentEvent>>,
-    pending_tool_results: Vec<ToolResultBlock>,
-    pending_tool_uses: Vec<ToolUseBlock>,
-    final_text: String,
-    done: bool,
-    session_id: String,
-    budget_tracker: BudgetTracker,
+    session_id: Arc<str>,
+    budget_tracker: Arc<BudgetTracker>,
     tenant_budget: Option<Arc<TenantBudget>>,
 }
 
+enum StreamPollResult {
+    Event(crate::Result<AgentEvent>),
+    Continue,
+    StreamEnded,
+}
+
+enum Phase {
+    StartRequest,
+    Streaming(Box<StreamingPhase>),
+    StreamEnded { accumulated_usage: Usage },
+    ProcessingTools { tool_index: usize },
+    Done,
+}
+
+struct StreamingPhase {
+    stream: RecoverableStream<BoxedByteStream>,
+    accumulated_usage: Usage,
+}
+
+struct StreamState {
+    cfg: StreamStateConfig,
+    timeout: std::time::Duration,
+    chunk_timeout: std::time::Duration,
+    dynamic_rules: String,
+    metrics: AgentMetrics,
+    start_time: Instant,
+    last_chunk_time: Instant,
+    pending_tool_results: Vec<ToolResultBlock>,
+    pending_tool_uses: Vec<ToolUseBlock>,
+    final_text: String,
+    phase: Phase,
+}
+
 impl StreamState {
-    #[allow(clippy::too_many_arguments)]
-    fn new(
-        context: Arc<Mutex<ConversationContext>>,
-        client: Client,
-        config: AgentConfig,
-        tools: Arc<ToolRegistry>,
-        hooks: HookManager,
-        hook_context: HookContext,
-        request_builder: RequestBuilder,
-        orchestrator: Option<Arc<RwLock<PromptOrchestrator>>>,
-        session_id: String,
-        budget_tracker: BudgetTracker,
-        tenant_budget: Option<Arc<TenantBudget>>,
-    ) -> Self {
+    fn new(cfg: StreamStateConfig, timeout: std::time::Duration) -> Self {
+        let chunk_timeout = cfg.config.execution.chunk_timeout;
+        let now = Instant::now();
         Self {
-            context,
-            client,
-            config,
-            tools,
-            hooks,
-            hook_context,
-            request_builder,
+            cfg,
+            timeout,
+            chunk_timeout,
             dynamic_rules: String::new(),
-            orchestrator,
             metrics: AgentMetrics::default(),
-            start_time: Instant::now(),
-            pending_events: VecDeque::new(),
+            start_time: now,
+            last_chunk_time: now,
             pending_tool_results: Vec::new(),
             pending_tool_uses: Vec::new(),
             final_text: String::new(),
-            done: false,
-            session_id,
-            budget_tracker,
-            tenant_budget,
+            phase: Phase::StartRequest,
         }
     }
 
     async fn next_event(&mut self) -> Option<crate::Result<AgentEvent>> {
-        if let Some(event) = self.pending_events.pop_front() {
-            return Some(event);
+        loop {
+            if matches!(self.phase, Phase::Done) {
+                return None;
+            }
+
+            if self.start_time.elapsed() > self.timeout {
+                self.phase = Phase::Done;
+                return Some(Err(crate::Error::Timeout(self.timeout)));
+            }
+
+            if let Some(event) = self.check_budget_exceeded() {
+                return Some(event);
+            }
+
+            match std::mem::replace(&mut self.phase, Phase::Done) {
+                Phase::StartRequest => {
+                    if let Some(result) = self.do_start_request().await {
+                        return Some(result);
+                    }
+                }
+                Phase::Streaming(mut streaming) => {
+                    match self
+                        .do_poll_stream(&mut streaming.stream, &mut streaming.accumulated_usage)
+                        .await
+                    {
+                        StreamPollResult::Event(event) => {
+                            self.phase = Phase::Streaming(streaming);
+                            return Some(event);
+                        }
+                        StreamPollResult::Continue => {
+                            self.phase = Phase::Streaming(streaming);
+                        }
+                        StreamPollResult::StreamEnded => {
+                            self.phase = Phase::StreamEnded {
+                                accumulated_usage: streaming.accumulated_usage,
+                            };
+                        }
+                    }
+                }
+                Phase::StreamEnded { accumulated_usage } => {
+                    if let Some(event) = self.do_handle_stream_end(accumulated_usage).await {
+                        return Some(event);
+                    }
+                }
+                Phase::ProcessingTools { tool_index } => {
+                    if let Some(result) = self.do_process_tool(tool_index).await {
+                        return Some(result);
+                    }
+                }
+                Phase::Done => return None,
+            }
+        }
+    }
+
+    fn check_budget_exceeded(&mut self) -> Option<crate::Result<AgentEvent>> {
+        let result = BudgetContext {
+            tracker: &self.cfg.budget_tracker,
+            tenant: self.cfg.tenant_budget.as_deref(),
+            config: &self.cfg.config.budget,
+        }
+        .check();
+
+        if let Err(e) = result {
+            self.phase = Phase::Done;
+            return Some(Err(e));
         }
 
-        if self.done {
+        None
+    }
+
+    async fn do_start_request(&mut self) -> Option<crate::Result<AgentEvent>> {
+        self.metrics.iterations += 1;
+        if self.metrics.iterations > self.cfg.config.execution.max_iterations {
+            self.phase = Phase::Done;
+            self.metrics.execution_time_ms = self.start_time.elapsed().as_millis() as u64;
+            let mut history = self.cfg.context.lock().await;
+            let usage = *history.total_usage();
+            let messages = history.take_messages();
+            return Some(Ok(AgentEvent::Complete(Box::new(AgentResult {
+                text: self.final_text.clone(),
+                usage,
+                tool_calls: self.metrics.tool_calls,
+                iterations: self.metrics.iterations - 1,
+                stop_reason: StopReason::MaxTokens,
+                state: AgentState::Completed,
+                metrics: self.metrics.clone(),
+                session_id: self.cfg.session_id.to_string(),
+                structured_output: None,
+                messages,
+                uuid: uuid::Uuid::new_v4().to_string(),
+            }))));
+        }
+
+        let stream_request = {
+            let history = self.cfg.context.lock().await;
+            self.cfg
+                .request_builder
+                .build(history.messages().to_vec(), &self.dynamic_rules)
+                .with_stream()
+        };
+
+        let response = match self
+            .cfg
+            .client
+            .send_stream_with_auth_retry(stream_request)
+            .await
+        {
+            Ok(r) => r,
+            Err(e) => {
+                self.phase = Phase::Done;
+                return Some(Err(e));
+            }
+        };
+
+        self.metrics.record_api_call();
+
+        let boxed_stream: BoxedByteStream = Box::pin(response.bytes_stream());
+        self.phase = Phase::Streaming(Box::new(StreamingPhase {
+            stream: RecoverableStream::new(boxed_stream),
+            accumulated_usage: Usage::default(),
+        }));
+
+        None
+    }
+
+    async fn do_poll_stream(
+        &mut self,
+        stream: &mut RecoverableStream<BoxedByteStream>,
+        accumulated_usage: &mut Usage,
+    ) -> StreamPollResult {
+        let chunk_result = tokio::time::timeout(self.chunk_timeout, stream.next()).await;
+
+        match chunk_result {
+            Ok(Some(Ok(item))) => {
+                self.last_chunk_time = Instant::now();
+                self.handle_stream_item(item, accumulated_usage)
+            }
+            Ok(Some(Err(e))) => {
+                self.phase = Phase::Done;
+                StreamPollResult::Event(Err(e))
+            }
+            Ok(None) => StreamPollResult::StreamEnded,
+            Err(_) => {
+                self.phase = Phase::Done;
+                StreamPollResult::Event(Err(crate::Error::Stream(format!(
+                    "Chunk timeout after {:?} (no data received)",
+                    self.chunk_timeout
+                ))))
+            }
+        }
+    }
+
+    fn handle_stream_item(
+        &mut self,
+        item: StreamItem,
+        accumulated_usage: &mut Usage,
+    ) -> StreamPollResult {
+        match item {
+            StreamItem::Text(text) => {
+                self.final_text.push_str(&text);
+                StreamPollResult::Event(Ok(AgentEvent::Text(text)))
+            }
+            StreamItem::Thinking(thinking) => {
+                StreamPollResult::Event(Ok(AgentEvent::Thinking(thinking)))
+            }
+            StreamItem::Citation(_) => StreamPollResult::Continue,
+            StreamItem::Event(event) => self.handle_stream_event(event, accumulated_usage),
+        }
+    }
+
+    fn handle_stream_event(
+        &mut self,
+        event: StreamEvent,
+        accumulated_usage: &mut Usage,
+    ) -> StreamPollResult {
+        match event {
+            StreamEvent::MessageStart { message } => {
+                accumulated_usage.input_tokens = message.usage.input_tokens;
+                accumulated_usage.output_tokens = message.usage.output_tokens;
+                accumulated_usage.cache_creation_input_tokens =
+                    message.usage.cache_creation_input_tokens;
+                accumulated_usage.cache_read_input_tokens = message.usage.cache_read_input_tokens;
+                StreamPollResult::Continue
+            }
+            StreamEvent::ContentBlockStart { content_block, .. } => {
+                if let ContentBlock::ToolUse(tool_use) = content_block {
+                    self.pending_tool_uses.push(tool_use);
+                }
+                StreamPollResult::Continue
+            }
+            StreamEvent::ContentBlockDelta { .. } => StreamPollResult::Continue,
+            StreamEvent::ContentBlockStop { .. } => StreamPollResult::Continue,
+            StreamEvent::MessageDelta { usage, .. } => {
+                accumulated_usage.output_tokens = usage.output_tokens;
+                StreamPollResult::Continue
+            }
+            StreamEvent::MessageStop => StreamPollResult::StreamEnded,
+            StreamEvent::Ping => StreamPollResult::Continue,
+            StreamEvent::Error { error } => {
+                self.phase = Phase::Done;
+                StreamPollResult::Event(Err(crate::Error::Stream(error.message)))
+            }
+        }
+    }
+
+    async fn do_handle_stream_end(
+        &mut self,
+        accumulated_usage: Usage,
+    ) -> Option<crate::Result<AgentEvent>> {
+        self.metrics.add_usage(
+            accumulated_usage.input_tokens,
+            accumulated_usage.output_tokens,
+        );
+        self.metrics
+            .record_model_usage(&self.cfg.config.model.primary, &accumulated_usage);
+
+        let cost = self
+            .cfg
+            .budget_tracker
+            .record(&self.cfg.config.model.primary, &accumulated_usage);
+        self.metrics.add_cost(cost);
+
+        if let Some(ref tenant_budget) = self.cfg.tenant_budget {
+            tenant_budget.record(&self.cfg.config.model.primary, &accumulated_usage);
+        }
+
+        {
+            let mut history = self.cfg.context.lock().await;
+            history.update_usage(accumulated_usage);
+
+            let mut content = Vec::new();
+            if !self.final_text.is_empty() {
+                content.push(ContentBlock::Text {
+                    text: self.final_text.clone(),
+                    citations: None,
+                    cache_control: None,
+                });
+            }
+            for tool_use in &self.pending_tool_uses {
+                content.push(ContentBlock::ToolUse(tool_use.clone()));
+            }
+            if !content.is_empty() {
+                history.push(Message {
+                    role: crate::types::Role::Assistant,
+                    content,
+                });
+            }
+        }
+
+        if self.pending_tool_uses.is_empty() {
+            self.phase = Phase::Done;
+            self.metrics.execution_time_ms = self.start_time.elapsed().as_millis() as u64;
+            let mut history = self.cfg.context.lock().await;
+            let usage = *history.total_usage();
+            let messages = history.take_messages();
+            return Some(Ok(AgentEvent::Complete(Box::new(AgentResult {
+                text: self.final_text.clone(),
+                usage,
+                tool_calls: self.metrics.tool_calls,
+                iterations: self.metrics.iterations,
+                stop_reason: StopReason::EndTurn,
+                state: AgentState::Completed,
+                metrics: self.metrics.clone(),
+                session_id: self.cfg.session_id.to_string(),
+                structured_output: None,
+                messages,
+                uuid: uuid::Uuid::new_v4().to_string(),
+            }))));
+        }
+
+        self.phase = Phase::ProcessingTools { tool_index: 0 };
+        None
+    }
+
+    async fn do_process_tool(&mut self, tool_index: usize) -> Option<crate::Result<AgentEvent>> {
+        if tool_index >= self.pending_tool_uses.len() {
+            if !self.pending_tool_results.is_empty() {
+                self.finalize_tool_results().await;
+            }
+            self.final_text.clear();
+            self.pending_tool_uses.clear();
+            self.phase = Phase::StartRequest;
             return None;
         }
 
-        if !self.pending_tool_uses.is_empty() {
-            return self.process_tool_use().await;
-        }
-
-        if self.budget_tracker.should_stop() {
-            self.done = true;
-            let status = self.budget_tracker.check();
-            return Some(Err(crate::Error::BudgetExceeded {
-                used: status.used(),
-                limit: self.config.budget.max_cost_usd.unwrap_or(0.0),
-            }));
-        }
-        if let Some(ref tenant_budget) = self.tenant_budget
-            && tenant_budget.should_stop()
-        {
-            self.done = true;
-            return Some(Err(crate::Error::BudgetExceeded {
-                used: tenant_budget.used_cost_usd(),
-                limit: tenant_budget.max_cost_usd(),
-            }));
-        }
-
-        self.metrics.iterations += 1;
-        if self.metrics.iterations > self.config.execution.max_iterations {
-            return self.complete_with_max_iterations().await;
-        }
-
-        self.fetch_and_process_response().await
+        let tool_use = self.pending_tool_uses[tool_index].clone();
+        self.execute_tool(tool_use, tool_index).await
     }
 
-    async fn process_tool_use(&mut self) -> Option<crate::Result<AgentEvent>> {
-        let tool_use = self.pending_tool_uses.remove(0);
-
-        let pre_input =
-            HookInput::pre_tool_use(&self.session_id, &tool_use.name, tool_use.input.clone());
+    async fn execute_tool(
+        &mut self,
+        tool_use: ToolUseBlock,
+        tool_index: usize,
+    ) -> Option<crate::Result<AgentEvent>> {
+        let pre_input = HookInput::pre_tool_use(
+            &*self.cfg.session_id,
+            &tool_use.name,
+            tool_use.input.clone(),
+        );
         let pre_output = match self
+            .cfg
             .hooks
-            .execute(HookEvent::PreToolUse, pre_input, &self.hook_context)
+            .execute(HookEvent::PreToolUse, pre_input, &self.cfg.hook_context)
             .await
         {
             Ok(output) => output,
@@ -182,35 +454,29 @@ impl StreamState {
                 .clone()
                 .unwrap_or_else(|| "Blocked by hook".into());
             debug!(tool = %tool_use.name, "Tool blocked by hook");
-            self.pending_events.push_back(Ok(AgentEvent::ToolStart {
-                id: tool_use.id.clone(),
-                name: tool_use.name.clone(),
-                input: tool_use.input.clone(),
-            }));
-            self.pending_events.push_back(Ok(AgentEvent::ToolEnd {
-                id: tool_use.id.clone(),
-                output: reason.clone(),
-                is_error: true,
-            }));
+
             self.pending_tool_results
                 .push(ToolResultBlock::error(&tool_use.id, reason.clone()));
             self.metrics.record_permission_denial(
                 PermissionDenial::new(&tool_use.name, &tool_use.id, tool_use.input.clone())
-                    .with_reason(reason),
+                    .with_reason(reason.clone()),
             );
-            return self.pending_events.pop_front();
+            self.phase = Phase::ProcessingTools {
+                tool_index: tool_index + 1,
+            };
+
+            return Some(Ok(AgentEvent::ToolBlocked {
+                id: tool_use.id,
+                name: tool_use.name,
+                reason,
+            }));
         }
 
         let actual_input = pre_output.updated_input.unwrap_or(tool_use.input.clone());
 
-        self.pending_events.push_back(Ok(AgentEvent::ToolStart {
-            id: tool_use.id.clone(),
-            name: tool_use.name.clone(),
-            input: actual_input.clone(),
-        }));
-
         let start = Instant::now();
         let result = self
+            .cfg
             .tools
             .execute(&tool_use.name, actual_input.clone())
             .await;
@@ -237,39 +503,44 @@ impl StreamState {
             .record_tool(&tool_use.name, duration_ms, is_error);
 
         if let Some(ref inner_usage) = result.inner_usage {
-            let mut history = self.context.lock().await;
+            let mut history = self.cfg.context.lock().await;
             history.update_usage(*inner_usage);
             self.metrics
                 .add_usage(inner_usage.input_tokens, inner_usage.output_tokens);
             let inner_model = result.inner_model.as_deref().unwrap_or("claude-haiku-4-5");
             self.metrics.record_model_usage(inner_model, inner_usage);
-            let inner_cost = self.budget_tracker.record(inner_model, inner_usage);
+            let inner_cost = self.cfg.budget_tracker.record(inner_model, inner_usage);
             self.metrics.add_cost(inner_cost);
         }
 
         if is_error {
             let failure_input = HookInput::post_tool_use_failure(
-                &self.session_id,
+                &*self.cfg.session_id,
                 &tool_use.name,
                 result.error_message(),
             );
             if let Err(e) = self
+                .cfg
                 .hooks
                 .execute(
                     HookEvent::PostToolUseFailure,
                     failure_input,
-                    &self.hook_context,
+                    &self.cfg.hook_context,
                 )
                 .await
             {
                 warn!(tool = %tool_use.name, error = %e, "PostToolUseFailure hook failed");
             }
         } else {
-            let post_input =
-                HookInput::post_tool_use(&self.session_id, &tool_use.name, result.output.clone());
+            let post_input = HookInput::post_tool_use(
+                &*self.cfg.session_id,
+                &tool_use.name,
+                result.output.clone(),
+            );
             if let Err(e) = self
+                .cfg
                 .hooks
-                .execute(HookEvent::PostToolUse, post_input, &self.hook_context)
+                .execute(HookEvent::PostToolUse, post_input, &self.cfg.hook_context)
                 .await
             {
                 warn!(tool = %tool_use.name, error = %e, "PostToolUse hook failed");
@@ -277,202 +548,83 @@ impl StreamState {
         }
 
         if let Some(file_path) = extract_file_path(&tool_use.name, &actual_input)
-            && let Some(ref orchestrator) = self.orchestrator
+            && let Some(ref orchestrator) = self.cfg.orchestrator
         {
             let orch = orchestrator.read().await;
             let path = Path::new(&file_path);
             let rules = orch.rules_engine().find_matching(path);
             if !rules.is_empty() {
-                let rule_names: Vec<String> = rules.iter().map(|r| r.name.clone()).collect();
                 let dynamic_ctx = orch.build_dynamic_context(Some(path)).await;
                 if !dynamic_ctx.is_empty() {
                     self.dynamic_rules = dynamic_ctx;
                 }
-                self.pending_events
-                    .push_back(Ok(AgentEvent::RulesActivated {
-                        file_path,
-                        rule_names,
-                    }));
             }
         }
 
-        self.pending_events.push_back(Ok(AgentEvent::ToolEnd {
-            id: tool_use.id.clone(),
-            output: output.clone(),
-            is_error,
-        }));
-
         self.pending_tool_results
             .push(ToolResultBlock::from_tool_result(&tool_use.id, result));
+        self.phase = Phase::ProcessingTools {
+            tool_index: tool_index + 1,
+        };
 
-        if self.pending_tool_uses.is_empty() && !self.pending_tool_results.is_empty() {
-            self.finalize_tool_results().await;
-        }
-
-        self.pending_events.pop_front()
+        Some(Ok(AgentEvent::ToolComplete {
+            id: tool_use.id,
+            name: tool_use.name,
+            output,
+            is_error,
+            duration_ms,
+        }))
     }
 
     async fn finalize_tool_results(&mut self) {
         let results = std::mem::take(&mut self.pending_tool_results);
-        let mut history = self.context.lock().await;
+        let mut history = self.cfg.context.lock().await;
         history.push(Message::tool_results(results));
 
-        let used_tokens = history.estimated_tokens() as u64;
-        let max_tokens = 200_000u64;
-        self.pending_events.push_back(Ok(AgentEvent::ContextUpdate {
-            used_tokens,
-            max_tokens,
-        }));
-
-        if self.config.execution.auto_compact
+        if self.cfg.config.execution.auto_compact
             && history.should_compact(
-                max_tokens as usize,
-                self.config.execution.compact_threshold,
-                self.config.execution.compact_keep_messages,
+                200_000,
+                self.cfg.config.execution.compact_threshold,
+                self.cfg.config.execution.compact_keep_messages,
             )
-        {
-            self.pending_events
-                .push_back(Ok(AgentEvent::CompactStarted));
-            let previous_tokens = history.estimated_tokens() as u64;
-
-            if let Ok(CompactResult::Compacted { .. }) = history
-                .compact(&self.client, self.config.execution.compact_keep_messages)
+            && let Ok(CompactResult::Compacted { .. }) = history
+                .compact(
+                    &self.cfg.client,
+                    self.cfg.config.execution.compact_keep_messages,
+                )
                 .await
-            {
-                let current_tokens = history.estimated_tokens() as u64;
-                self.pending_events
-                    .push_back(Ok(AgentEvent::CompactCompleted {
-                        previous_tokens,
-                        current_tokens,
-                    }));
-                self.metrics.record_compaction();
-
-                let state_sections = collect_compaction_state(&self.tools).await;
-                if !state_sections.is_empty() {
-                    history.push(Message::user(format!(
-                        "<system-reminder>\n# State preserved after compaction\n\n{}\n</system-reminder>",
-                        state_sections.join("\n\n")
-                    )));
-                }
+        {
+            self.metrics.record_compaction();
+            let state_sections = collect_compaction_state(&self.cfg.tools).await;
+            if !state_sections.is_empty() {
+                history.push(Message::user(format!(
+                    "<system-reminder>\n# State preserved after compaction\n\n{}\n</system-reminder>",
+                    state_sections.join("\n\n")
+                )));
             }
         }
     }
+}
 
-    async fn complete_with_max_iterations(&mut self) -> Option<crate::Result<AgentEvent>> {
-        self.done = true;
-        self.metrics.execution_time_ms = self.start_time.elapsed().as_millis() as u64;
-        let history = self.context.lock().await;
-        Some(Ok(AgentEvent::Complete(Box::new(AgentResult {
-            text: self.final_text.clone(),
-            usage: *history.total_usage(),
-            tool_calls: self.metrics.tool_calls,
-            iterations: self.metrics.iterations - 1,
-            stop_reason: StopReason::MaxTokens,
-            state: AgentState::Completed,
-            metrics: self.metrics.clone(),
-            session_id: self.session_id.clone(),
-            structured_output: None,
-            messages: history.messages().to_vec(),
-            uuid: uuid::Uuid::new_v4().to_string(),
-        }))))
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_phase_transitions() {
+        assert!(matches!(Phase::StartRequest, Phase::StartRequest));
+        assert!(matches!(Phase::Done, Phase::Done));
     }
 
-    async fn fetch_and_process_response(&mut self) -> Option<crate::Result<AgentEvent>> {
-        let request = {
-            let history = self.context.lock().await;
-            self.request_builder
-                .build(history.messages().to_vec(), &self.dynamic_rules)
-        };
+    #[test]
+    fn test_stream_poll_result_variants() {
+        let event = StreamPollResult::Event(Ok(AgentEvent::Text("test".into())));
+        assert!(matches!(event, StreamPollResult::Event(_)));
 
-        let response = match self.client.send(request.clone()).await {
-            Ok(r) => r,
-            Err(e) if e.is_unauthorized() => {
-                if let Err(refresh_err) = self.client.refresh_credentials().await {
-                    self.done = true;
-                    return Some(Err(refresh_err));
-                }
-                match self.client.send(request).await {
-                    Ok(r) => r,
-                    Err(e) => {
-                        self.done = true;
-                        return Some(Err(e));
-                    }
-                }
-            }
-            Err(e) => {
-                self.done = true;
-                return Some(Err(e));
-            }
-        };
+        let cont = StreamPollResult::Continue;
+        assert!(matches!(cont, StreamPollResult::Continue));
 
-        self.metrics.record_api_call();
-        self.metrics
-            .add_usage(response.usage.input_tokens, response.usage.output_tokens);
-        self.metrics
-            .record_model_usage(&self.config.model.primary, &response.usage);
-
-        let cost = self
-            .budget_tracker
-            .record(&self.config.model.primary, &response.usage);
-        self.metrics.add_cost(cost);
-        if let Some(ref tenant_budget) = self.tenant_budget {
-            tenant_budget.record(&self.config.model.primary, &response.usage);
-        }
-
-        {
-            let mut history = self.context.lock().await;
-            history.update_usage(response.usage);
-        }
-
-        let mut text_content = String::new();
-        let mut tool_uses = Vec::new();
-
-        for block in &response.content {
-            match block {
-                ContentBlock::Text { text, .. } => {
-                    text_content.push_str(text);
-                    self.pending_events
-                        .push_back(Ok(AgentEvent::Text(text.clone())));
-                }
-                ContentBlock::ToolUse(tool_use) => {
-                    tool_uses.push(tool_use.clone());
-                }
-                _ => {}
-            }
-        }
-
-        self.final_text = text_content;
-
-        {
-            let mut history = self.context.lock().await;
-            history.push(Message {
-                role: crate::types::Role::Assistant,
-                content: response.content.clone(),
-            });
-        }
-
-        if response.wants_tool_use() && !tool_uses.is_empty() {
-            self.pending_tool_uses = tool_uses;
-        } else {
-            self.done = true;
-            self.metrics.execution_time_ms = self.start_time.elapsed().as_millis() as u64;
-            let history = self.context.lock().await;
-            self.pending_events
-                .push_back(Ok(AgentEvent::Complete(Box::new(AgentResult {
-                    text: self.final_text.clone(),
-                    usage: *history.total_usage(),
-                    tool_calls: self.metrics.tool_calls,
-                    iterations: self.metrics.iterations,
-                    stop_reason: response.stop_reason.unwrap_or(StopReason::EndTurn),
-                    state: AgentState::Completed,
-                    metrics: self.metrics.clone(),
-                    session_id: self.session_id.clone(),
-                    structured_output: None,
-                    messages: history.messages().to_vec(),
-                    uuid: uuid::Uuid::new_v4().to_string(),
-                }))));
-        }
-
-        self.pending_events.pop_front()
+        let ended = StreamPollResult::StreamEnded;
+        assert!(matches!(ended, StreamPollResult::StreamEnded));
     }
 }

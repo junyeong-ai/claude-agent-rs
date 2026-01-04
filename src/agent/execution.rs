@@ -5,9 +5,11 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use tokio::sync::RwLock;
-use tracing::{debug, error, info, instrument, warn};
+use tracing::{debug, info, instrument, warn};
 
+use super::common::BudgetContext;
 use super::events::AgentResult;
+use super::executor::Agent;
 use super::request::RequestBuilder;
 use super::state_formatter::collect_compaction_state;
 use super::{AgentMetrics, AgentState, ConversationContext};
@@ -17,46 +19,14 @@ use crate::types::{
     CompactResult, ContentBlock, Message, PermissionDenial, StopReason, ToolResultBlock,
 };
 
-use super::executor::Agent;
-use crate::types::ApiResponse;
-
 impl Agent {
-    async fn send_with_retry(
-        &self,
-        request_builder: &RequestBuilder,
-        messages: Vec<Message>,
-        dynamic_rules: &str,
-    ) -> crate::Result<ApiResponse> {
-        const MAX_AUTH_RETRIES: u8 = 2;
-        let mut auth_attempts = 0u8;
-
-        loop {
-            let request = request_builder.build(messages.clone(), dynamic_rules);
-            match self.client.send(request).await {
-                Ok(resp) => return Ok(resp),
-                Err(e) if e.is_unauthorized() && auth_attempts < MAX_AUTH_RETRIES => {
-                    auth_attempts += 1;
-                    debug!(
-                        attempt = auth_attempts,
-                        "Received 401, attempting credential refresh"
-                    );
-                    self.client.refresh_credentials().await?;
-                }
-                Err(e) => {
-                    error!(error = %e, "API request failed");
-                    return Err(e);
-                }
-            }
-        }
-    }
-
     async fn handle_compaction(
         &self,
         context: &mut ConversationContext,
         hook_ctx: &HookContext,
         metrics: &mut AgentMetrics,
     ) {
-        let pre_compact_input = HookInput::pre_compact(&self.session_id);
+        let pre_compact_input = HookInput::pre_compact(&*self.session_id);
         if let Err(e) = self
             .hooks
             .execute(HookEvent::PreCompact, pre_compact_input, hook_ctx)
@@ -92,28 +62,12 @@ impl Agent {
     }
 
     fn check_budget(&self) -> crate::Result<()> {
-        if self.budget_tracker.should_stop() {
-            let status = self.budget_tracker.check();
-            warn!(used = ?status.used(), "Budget exceeded, stopping execution");
-            return Err(crate::Error::BudgetExceeded {
-                used: status.used(),
-                limit: self.config.budget.max_cost_usd.unwrap_or(0.0),
-            });
+        BudgetContext {
+            tracker: &self.budget_tracker,
+            tenant: self.tenant_budget.as_deref(),
+            config: &self.config.budget,
         }
-        if let Some(ref tenant_budget) = self.tenant_budget
-            && tenant_budget.should_stop()
-        {
-            warn!(
-                tenant_id = %tenant_budget.tenant_id,
-                used = tenant_budget.used_cost_usd(),
-                "Tenant budget exceeded, stopping execution"
-            );
-            return Err(crate::Error::BudgetExceeded {
-                used: tenant_budget.used_cost_usd(),
-                limit: tenant_budget.max_cost_usd(),
-            });
-        }
-        Ok(())
+        .check()
     }
 
     pub async fn execute(&self, prompt: &str) -> crate::Result<AgentResult> {
@@ -164,7 +118,7 @@ impl Agent {
         let execution_start = Instant::now();
         let hook_ctx = self.hook_context();
 
-        let session_start_input = HookInput::session_start(&self.session_id);
+        let session_start_input = HookInput::session_start(&*self.session_id);
         if let Err(e) = self
             .hooks
             .execute(HookEvent::SessionStart, session_start_input, &hook_ctx)
@@ -173,14 +127,14 @@ impl Agent {
             warn!(error = %e, "SessionStart hook failed");
         }
 
-        let prompt_input = HookInput::user_prompt_submit(&self.session_id, prompt);
+        let prompt_input = HookInput::user_prompt_submit(&*self.session_id, prompt);
         let prompt_output = self
             .hooks
             .execute(HookEvent::UserPromptSubmit, prompt_input, &hook_ctx)
             .await?;
 
         if !prompt_output.continue_execution {
-            let session_end_input = HookInput::session_end(&self.session_id);
+            let session_end_input = HookInput::session_end(&*self.session_id);
             if let Err(e) = self
                 .hooks
                 .execute(HookEvent::SessionEnd, session_end_input, &hook_ctx)
@@ -222,19 +176,15 @@ impl Agent {
             debug!(iteration = metrics.iterations, "Starting iteration");
 
             let api_start = Instant::now();
-            let response = self
-                .send_with_retry(
-                    &request_builder,
-                    context.messages().to_vec(),
-                    &dynamic_rules_context,
-                )
-                .await?;
+            let request =
+                request_builder.build(context.messages().to_vec(), &dynamic_rules_context);
+            let response = self.client.send_with_auth_retry(request).await?;
             let api_duration_ms = api_start.elapsed().as_millis() as u64;
             metrics.record_api_call_with_timing(api_duration_ms);
             debug!(api_time_ms = api_duration_ms, "API call completed");
 
             context.update_usage(response.usage);
-            metrics.add_usage(response.usage.input_tokens, response.usage.output_tokens);
+            metrics.add_usage_with_cache(&response.usage);
             metrics.record_model_usage(&self.config.model.primary, &response.usage);
 
             if let Some(ref server_usage) = response.usage.server_tool_use {
@@ -279,12 +229,12 @@ impl Agent {
             let tool_uses = response.tool_uses();
             let hook_ctx = self.hook_context();
 
-            let mut prepared: Vec<(String, String, serde_json::Value)> = Vec::new();
-            let mut blocked: Vec<ToolResultBlock> = Vec::new();
+            let mut prepared = Vec::with_capacity(tool_uses.len());
+            let mut blocked = Vec::with_capacity(tool_uses.len());
 
             for tool_use in &tool_uses {
                 let pre_input = HookInput::pre_tool_use(
-                    &self.session_id,
+                    &*self.session_id,
                     &tool_use.name,
                     tool_use.input.clone(),
                 );
@@ -360,7 +310,7 @@ impl Agent {
 
                 if is_error {
                     let failure_input = HookInput::post_tool_use_failure(
-                        &self.session_id,
+                        &*self.session_id,
                         &name,
                         result.error_message(),
                     );
@@ -373,7 +323,7 @@ impl Agent {
                     }
                 } else {
                     let post_input =
-                        HookInput::post_tool_use(&self.session_id, &name, result.output.clone());
+                        HookInput::post_tool_use(&*self.session_id, &name, result.output.clone());
                     if let Err(e) = self
                         .hooks
                         .execute(HookEvent::PostToolUse, post_input, &hook_ctx)
@@ -401,7 +351,7 @@ impl Agent {
 
         metrics.execution_time_ms = execution_start.elapsed().as_millis() as u64;
 
-        let stop_input = HookInput::stop(&self.session_id);
+        let stop_input = HookInput::stop(&*self.session_id);
         if let Err(e) = self
             .hooks
             .execute(HookEvent::Stop, stop_input, &hook_ctx)
@@ -410,7 +360,7 @@ impl Agent {
             warn!(error = %e, "Stop hook failed");
         }
 
-        let session_end_input = HookInput::session_end(&self.session_id);
+        let session_end_input = HookInput::session_end(&*self.session_id);
         if let Err(e) = self
             .hooks
             .execute(HookEvent::SessionEnd, session_end_input, &hook_ctx)
@@ -428,23 +378,26 @@ impl Agent {
             "Agent execution completed"
         );
 
+        let usage = *context.total_usage();
+        let messages = context.take_messages();
+
         Ok(AgentResult {
             text: final_text,
-            usage: *context.total_usage(),
+            usage,
             tool_calls: metrics.tool_calls,
             iterations: metrics.iterations,
             stop_reason: final_stop_reason,
             state: AgentState::Completed,
             metrics,
-            session_id: self.session_id.clone(),
+            session_id: self.session_id.to_string(),
             structured_output: None,
-            messages: context.messages().to_vec(),
+            messages,
             uuid: uuid::Uuid::new_v4().to_string(),
         })
     }
 
     pub(crate) fn hook_context(&self) -> HookContext {
-        HookContext::new(&self.session_id)
+        HookContext::new(&*self.session_id)
             .with_cwd(self.config.working_dir.clone().unwrap_or_default())
             .with_env(self.config.security.env.clone())
     }

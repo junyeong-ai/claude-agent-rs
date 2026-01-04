@@ -13,14 +13,14 @@ use crate::tools::{ToolRegistry, ToolRegistryBuilder};
 use crate::types::Message;
 
 pub struct Agent {
-    pub(crate) client: Client,
-    pub(crate) config: AgentConfig,
+    pub(crate) client: Arc<Client>,
+    pub(crate) config: Arc<AgentConfig>,
     pub(crate) tools: Arc<ToolRegistry>,
-    pub(crate) hooks: HookManager,
-    pub(crate) session_id: String,
+    pub(crate) hooks: Arc<HookManager>,
+    pub(crate) session_id: Arc<str>,
     pub(crate) orchestrator: Option<Arc<RwLock<PromptOrchestrator>>>,
     pub(crate) initial_messages: Option<Vec<Message>>,
-    pub(crate) budget_tracker: BudgetTracker,
+    pub(crate) budget_tracker: Arc<BudgetTracker>,
     pub(crate) tenant_budget: Option<Arc<TenantBudget>>,
     pub(crate) mcp_manager: Option<Arc<crate::mcp::McpManager>>,
 }
@@ -32,7 +32,13 @@ impl Agent {
             config.working_dir.clone(),
             Some(config.security.permission_policy.clone()),
         );
-        Self::from_parts(client, config, Arc::new(tools), HookManager::new(), None)
+        Self::from_parts(
+            Arc::new(client),
+            Arc::new(config),
+            Arc::new(tools),
+            Arc::new(HookManager::new()),
+            None,
+        )
     }
 
     pub fn with_skills(
@@ -50,7 +56,13 @@ impl Agent {
         }
 
         let tools = builder.build();
-        Self::from_parts(client, config, Arc::new(tools), HookManager::new(), None)
+        Self::from_parts(
+            Arc::new(client),
+            Arc::new(config),
+            Arc::new(tools),
+            Arc::new(HookManager::new()),
+            None,
+        )
     }
 
     pub fn with_components(
@@ -59,7 +71,13 @@ impl Agent {
         tools: ToolRegistry,
         hooks: HookManager,
     ) -> Self {
-        Self::from_parts(client, config, Arc::new(tools), hooks, None)
+        Self::from_parts(
+            Arc::new(client),
+            Arc::new(config),
+            Arc::new(tools),
+            Arc::new(hooks),
+            None,
+        )
     }
 
     pub fn with_orchestrator(
@@ -70,10 +88,10 @@ impl Agent {
         orchestrator: PromptOrchestrator,
     ) -> Self {
         Self::from_parts(
-            client,
-            config,
+            Arc::new(client),
+            Arc::new(config),
             tools,
-            hooks,
+            Arc::new(hooks),
             Some(Arc::new(RwLock::new(orchestrator))),
         )
     }
@@ -84,14 +102,20 @@ impl Agent {
         tools: Arc<ToolRegistry>,
         hooks: HookManager,
     ) -> Self {
-        Self::from_parts(client, config, tools, hooks, None)
+        Self::from_parts(
+            Arc::new(client),
+            Arc::new(config),
+            tools,
+            Arc::new(hooks),
+            None,
+        )
     }
 
     fn from_parts(
-        client: Client,
-        config: AgentConfig,
+        client: Arc<Client>,
+        config: Arc<AgentConfig>,
         tools: Arc<ToolRegistry>,
-        hooks: HookManager,
+        hooks: Arc<HookManager>,
         orchestrator: Option<Arc<RwLock<PromptOrchestrator>>>,
     ) -> Self {
         let budget_tracker = match config.budget.max_cost_usd {
@@ -107,43 +131,47 @@ impl Agent {
             config,
             tools,
             hooks,
-            session_id: uuid::Uuid::new_v4().to_string(),
+            session_id: uuid::Uuid::new_v4().to_string().into(),
             orchestrator,
             initial_messages: None,
-            budget_tracker,
+            budget_tracker: Arc::new(budget_tracker),
             tenant_budget: None,
             mcp_manager: None,
         }
     }
 
-    fn resolve_model_aliases(mut config: AgentConfig, client: &Client) -> AgentConfig {
+    fn resolve_model_aliases(config: Arc<AgentConfig>, client: &Client) -> Arc<AgentConfig> {
         let model_config = &client.config().models;
 
-        // Resolve primary model alias
         let primary = &config.model.primary;
         let resolved_primary = model_config.resolve_alias(primary);
-        if resolved_primary != primary {
-            tracing::debug!(
-                alias = %primary,
-                resolved = %resolved_primary,
-                "Resolved primary model alias"
-            );
-            config.model.primary = resolved_primary.to_string();
-        }
 
-        // Resolve small model alias
         let small = &config.model.small;
         let resolved_small = model_config.resolve_alias(small);
-        if resolved_small != small {
-            tracing::debug!(
-                alias = %small,
-                resolved = %resolved_small,
-                "Resolved small model alias"
-            );
-            config.model.small = resolved_small.to_string();
-        }
 
-        config
+        // Only create new Arc if aliases changed
+        if resolved_primary != primary || resolved_small != small {
+            let mut new_config = (*config).clone();
+            if resolved_primary != primary {
+                tracing::debug!(
+                    alias = %primary,
+                    resolved = %resolved_primary,
+                    "Resolved primary model alias"
+                );
+                new_config.model.primary = resolved_primary.to_string();
+            }
+            if resolved_small != small {
+                tracing::debug!(
+                    alias = %small,
+                    resolved = %resolved_small,
+                    "Resolved small model alias"
+                );
+                new_config.model.small = resolved_small.to_string();
+            }
+            Arc::new(new_config)
+        } else {
+            config
+        }
     }
 
     pub fn with_tenant_budget(mut self, budget: Arc<TenantBudget>) -> Self {
@@ -166,7 +194,7 @@ impl Agent {
     }
 
     pub fn with_session_id(mut self, id: impl Into<String>) -> Self {
-        self.session_id = id.into();
+        self.session_id = id.into().into();
         self
     }
 
@@ -184,13 +212,18 @@ impl Agent {
     }
 
     #[must_use]
-    pub fn hooks(&self) -> &HookManager {
+    pub fn hooks(&self) -> &Arc<HookManager> {
         &self.hooks
     }
 
     #[must_use]
     pub fn session_id(&self) -> &str {
         &self.session_id
+    }
+
+    #[must_use]
+    pub fn client(&self) -> &Arc<Client> {
+        &self.client
     }
 
     pub fn orchestrator(&self) -> Option<&Arc<RwLock<PromptOrchestrator>>> {

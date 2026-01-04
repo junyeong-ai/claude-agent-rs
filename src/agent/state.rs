@@ -41,19 +41,17 @@ pub struct AgentMetrics {
     pub tool_calls: usize,
     pub input_tokens: u32,
     pub output_tokens: u32,
+    pub cache_read_tokens: u32,
+    pub cache_creation_tokens: u32,
     pub execution_time_ms: u64,
     pub errors: usize,
     pub compactions: usize,
     pub api_calls: usize,
     pub total_cost_usd: f64,
     pub tool_stats: std::collections::HashMap<String, ToolStats>,
-    /// Per-model usage tracking (like CLI's modelUsage).
     pub model_usage: std::collections::HashMap<String, ModelUsage>,
-    /// Server-side tool usage statistics.
     pub server_tool_use: ServerToolUse,
-    /// List of permission denials that occurred.
     pub permission_denials: Vec<PermissionDenial>,
-    /// Total API call time in milliseconds (duration_api_ms).
     pub api_time_ms: u64,
 }
 
@@ -72,6 +70,24 @@ impl AgentMetrics {
     pub fn add_usage(&mut self, input: u32, output: u32) {
         self.input_tokens += input;
         self.output_tokens += output;
+    }
+
+    pub fn add_usage_with_cache(&mut self, usage: &Usage) {
+        self.input_tokens += usage.input_tokens;
+        self.output_tokens += usage.output_tokens;
+        self.cache_read_tokens += usage.cache_read_input_tokens.unwrap_or(0);
+        self.cache_creation_tokens += usage.cache_creation_input_tokens.unwrap_or(0);
+    }
+
+    pub fn cache_hit_rate(&self) -> f64 {
+        if self.input_tokens == 0 {
+            return 0.0;
+        }
+        self.cache_read_tokens as f64 / self.input_tokens as f64
+    }
+
+    pub fn cache_tokens_saved(&self) -> u32 {
+        (self.cache_read_tokens as f64 * 0.9) as u32
     }
 
     pub fn add_cost(&mut self, cost: f64) {

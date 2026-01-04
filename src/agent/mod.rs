@@ -1,5 +1,6 @@
 //! Agent execution engine.
 
+mod common;
 mod config;
 mod context;
 mod events;
@@ -18,10 +19,10 @@ mod task_registry;
 mod tests;
 
 pub use config::{
-    AgentConfig, AgentModelConfig, BudgetConfig, ExecutionConfig, PromptConfig, SecurityConfig,
-    SystemPromptMode,
+    AgentConfig, AgentModelConfig, BudgetConfig, CacheConfig, ExecutionConfig, PromptConfig,
+    SecurityConfig, SystemPromptMode,
 };
-pub use context::ConversationContext;
+pub use context::{ConversationContext, MessageCacheStrategy};
 pub use events::{AgentEvent, AgentResult};
 pub use executor::Agent;
 pub use options::{AgentBuilder, DEFAULT_COMPACT_KEEP_MESSAGES};

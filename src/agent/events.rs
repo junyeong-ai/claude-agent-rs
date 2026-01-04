@@ -7,29 +7,22 @@ use crate::types::{Message, StopReason, Usage};
 #[derive(Debug, Clone)]
 pub enum AgentEvent {
     Text(String),
-    ToolStart {
+    Thinking(String),
+    ToolComplete {
         id: String,
         name: String,
-        input: serde_json::Value,
-    },
-    ToolEnd {
-        id: String,
         output: String,
         is_error: bool,
+        duration_ms: u64,
     },
-    Thinking(String),
+    ToolBlocked {
+        id: String,
+        name: String,
+        reason: String,
+    },
     ContextUpdate {
         used_tokens: u64,
         max_tokens: u64,
-    },
-    RulesActivated {
-        file_path: String,
-        rule_names: Vec<String>,
-    },
-    CompactStarted,
-    CompactCompleted {
-        previous_tokens: u64,
-        current_tokens: u64,
     },
     Complete(Box<AgentResult>),
 }

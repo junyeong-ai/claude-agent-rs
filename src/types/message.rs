@@ -122,6 +122,30 @@ impl Message {
             .filter_map(|block| block.as_search_result())
             .collect()
     }
+
+    pub fn with_cache_on_last_block(mut self) -> Self {
+        if let Some(last) = self.content.pop() {
+            self.content
+                .push(last.with_cache_control(CacheControl::ephemeral()));
+        }
+        self
+    }
+
+    pub fn set_cache_on_last_block(&mut self, cache: CacheControl) {
+        if let Some(last) = self.content.last_mut() {
+            last.set_cache_control(Some(cache));
+        }
+    }
+
+    pub fn clear_cache_control(&mut self) {
+        for block in &mut self.content {
+            block.set_cache_control(None);
+        }
+    }
+
+    pub fn has_cache_control(&self) -> bool {
+        self.content.iter().any(|b| b.is_cached())
+    }
 }
 
 /// System prompt configuration

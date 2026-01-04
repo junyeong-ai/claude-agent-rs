@@ -517,15 +517,6 @@ impl PermissionDenial {
     }
 }
 
-/// Extended cache information tracking ephemeral cache tiers.
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-pub struct CacheCreationInfo {
-    /// 1-hour ephemeral cache tokens.
-    pub ephemeral_1h_input_tokens: u32,
-    /// 5-minute ephemeral cache tokens.
-    pub ephemeral_5m_input_tokens: u32,
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

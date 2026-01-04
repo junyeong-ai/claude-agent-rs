@@ -24,9 +24,9 @@ pub use document::{DocumentBlock, DocumentContentBlock, DocumentSource};
 pub use message::{CacheControl, CacheTtl, CacheType, Message, Role, SystemBlock, SystemPrompt};
 pub use models::{DEFAULT_COMPACT_THRESHOLD, context_window};
 pub use response::{
-    ApiResponse, CacheCreationInfo, CompactResult, ContentDelta, MessageDeltaData,
-    MessageStartData, ModelUsage, PermissionDenial, ServerToolUse, ServerToolUseUsage, StopReason,
-    StreamError, StreamEvent, TokenUsage, Usage,
+    ApiResponse, CompactResult, ContentDelta, MessageDeltaData, MessageStartData, ModelUsage,
+    PermissionDenial, ServerToolUse, ServerToolUseUsage, StopReason, StreamError, StreamEvent,
+    TokenUsage, Usage,
 };
 pub use search::{SearchResultBlock, SearchResultContentBlock};
 pub use tool::{

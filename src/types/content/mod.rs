@@ -18,6 +18,7 @@ pub use tool_blocks::{ToolResultBlock, ToolResultContent, ToolResultContentBlock
 
 use super::citations::Citation;
 use super::document::DocumentBlock;
+use super::message::CacheControl;
 use super::search::SearchResultBlock;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -27,6 +28,8 @@ pub enum ContentBlock {
         text: String,
         #[serde(skip_serializing_if = "Option::is_none")]
         citations: Option<Vec<Citation>>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        cache_control: Option<CacheControl>,
     },
     Image {
         source: ImageSource,
@@ -67,6 +70,7 @@ impl From<&str> for ContentBlock {
         ContentBlock::Text {
             text: text.to_string(),
             citations: None,
+            cache_control: None,
         }
     }
 }
@@ -76,6 +80,7 @@ impl From<String> for ContentBlock {
         ContentBlock::Text {
             text,
             citations: None,
+            cache_control: None,
         }
     }
 }
@@ -97,6 +102,23 @@ impl ContentBlock {
         ContentBlock::Text {
             text: text.into(),
             citations: None,
+            cache_control: None,
+        }
+    }
+
+    pub fn text_cached(text: impl Into<String>) -> Self {
+        ContentBlock::Text {
+            text: text.into(),
+            citations: None,
+            cache_control: Some(CacheControl::ephemeral()),
+        }
+    }
+
+    pub fn text_with_cache(text: impl Into<String>, cache: CacheControl) -> Self {
+        ContentBlock::Text {
+            text: text.into(),
+            citations: None,
+            cache_control: Some(cache),
         }
     }
 
@@ -108,6 +130,7 @@ impl ContentBlock {
             } else {
                 Some(citations)
             },
+            cache_control: None,
         }
     }
 
@@ -163,6 +186,52 @@ impl ContentBlock {
 
     pub fn has_citations(&self) -> bool {
         matches!(self, ContentBlock::Text { citations: Some(c), .. } if !c.is_empty())
+    }
+
+    pub fn cache_control(&self) -> Option<&CacheControl> {
+        match self {
+            ContentBlock::Text { cache_control, .. } => cache_control.as_ref(),
+            ContentBlock::Document(doc) => doc.cache_control.as_ref(),
+            ContentBlock::SearchResult(sr) => sr.cache_control.as_ref(),
+            _ => None,
+        }
+    }
+
+    pub fn is_cached(&self) -> bool {
+        self.cache_control().is_some()
+    }
+
+    /// Set cache control in-place (only for Text blocks).
+    pub fn set_cache_control(&mut self, cache: Option<CacheControl>) {
+        if let ContentBlock::Text { cache_control, .. } = self {
+            *cache_control = cache;
+        }
+    }
+
+    pub fn with_cache_control(self, cache: CacheControl) -> Self {
+        match self {
+            ContentBlock::Text {
+                text, citations, ..
+            } => ContentBlock::Text {
+                text,
+                citations,
+                cache_control: Some(cache),
+            },
+            other => other,
+        }
+    }
+
+    pub fn without_cache_control(self) -> Self {
+        match self {
+            ContentBlock::Text {
+                text, citations, ..
+            } => ContentBlock::Text {
+                text,
+                citations,
+                cache_control: None,
+            },
+            other => other,
+        }
     }
 
     pub fn as_document(&self) -> Option<&DocumentBlock> {
@@ -255,6 +324,27 @@ mod tests {
         let block = ContentBlock::text("Hello");
         assert_eq!(block.as_text(), Some("Hello"));
         assert!(!block.has_citations());
+        assert!(!block.is_cached());
+    }
+
+    #[test]
+    fn test_content_block_cached() {
+        let block = ContentBlock::text_cached("Hello");
+        assert_eq!(block.as_text(), Some("Hello"));
+        assert!(block.is_cached());
+        assert!(block.cache_control().is_some());
+    }
+
+    #[test]
+    fn test_content_block_with_cache_control() {
+        use crate::types::{CacheControl, CacheTtl};
+
+        let block = ContentBlock::text("Hello").with_cache_control(CacheControl::ephemeral_1h());
+        assert!(block.is_cached());
+        assert_eq!(block.cache_control().unwrap().ttl, Some(CacheTtl::OneHour));
+
+        let block = block.without_cache_control();
+        assert!(!block.is_cached());
     }
 
     #[test]

@@ -653,6 +653,7 @@ impl PostgresPersistence {
                 output_tokens: row.try_get::<i64, _>("total_output_tokens").unwrap_or(0) as u64,
                 ..Default::default()
             },
+            current_input_tokens: 0,
             total_cost_usd: row
                 .try_get::<rust_decimal::Decimal, _>("total_cost_usd")
                 .ok()

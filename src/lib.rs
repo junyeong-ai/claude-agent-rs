@@ -78,7 +78,7 @@ pub mod types;
 pub use agent::{
     Agent, AgentBuilder, AgentConfig, AgentEvent, AgentMetrics, AgentModelConfig, AgentResult,
     AgentState, BudgetConfig, CacheConfig, DEFAULT_COMPACT_KEEP_MESSAGES, ExecutionConfig,
-    MessageCacheStrategy, PromptConfig, SecurityConfig, SystemPromptMode, ToolStats,
+    PromptConfig, SecurityConfig, SystemPromptMode, ToolStats,
 };
 #[cfg(feature = "cli-integration")]
 pub use auth::ClaudeCliProvider;
@@ -118,7 +118,9 @@ pub use output_style::{
 pub use output_style::{OutputStyleLoader, SystemPromptGenerator};
 pub use permissions::{PermissionDecision, PermissionMode, PermissionPolicy, PermissionResult};
 pub use session::{
-    CompactExecutor, CompactStrategy, Session, SessionConfig, SessionId, SessionManager,
+    CompactExecutor, CompactStrategy, ExecutionGuard, QueueError, Session, SessionConfig,
+    SessionError, SessionId, SessionManager, SessionMessage, SessionResult, SessionState,
+    ToolState,
 };
 #[cfg(feature = "cli-integration")]
 pub use skills::FileSkillProvider;

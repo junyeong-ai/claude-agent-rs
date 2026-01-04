@@ -70,6 +70,8 @@ impl ProcessManager {
         cmd.envs(env);
         cmd.stdout(std::process::Stdio::piped());
         cmd.stderr(std::process::Stdio::piped());
+        // Ensure process is killed when Child is dropped (safety net)
+        cmd.kill_on_drop(true);
 
         let child = cmd.spawn().map_err(|e| format!("Failed to spawn: {}", e))?;
 
@@ -93,7 +95,7 @@ impl ProcessManager {
         Ok(id)
     }
 
-    /// Kill a background process.
+    /// Kill a background process and wait to reap it (prevents zombie).
     pub async fn kill(&self, id: &ProcessId) -> Result<(), String> {
         let mut processes = self.processes.lock().await;
 
@@ -101,7 +103,10 @@ impl ProcessManager {
             proc.child
                 .kill()
                 .await
-                .map_err(|e| format!("Failed to kill: {}", e))
+                .map_err(|e| format!("Failed to kill: {}", e))?;
+            // Wait to reap the process and prevent zombie
+            let _ = proc.child.wait().await;
+            Ok(())
         } else {
             Err(format!("Process '{}' not found", id))
         }

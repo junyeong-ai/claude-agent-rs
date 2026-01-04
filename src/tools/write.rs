@@ -22,12 +22,6 @@ pub struct WriteInput {
 #[derive(Debug, Clone, Copy, Default)]
 pub struct WriteTool;
 
-impl WriteTool {
-    pub fn new() -> Self {
-        Self
-    }
-}
-
 #[async_trait]
 impl SchemaTool for WriteTool {
     type Input = WriteInput;

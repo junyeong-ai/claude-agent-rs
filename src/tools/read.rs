@@ -29,12 +29,6 @@ pub struct ReadInput {
 #[derive(Debug, Clone, Copy, Default)]
 pub struct ReadTool;
 
-impl ReadTool {
-    pub fn new() -> Self {
-        Self
-    }
-}
-
 enum FileType {
     Text,
     #[cfg(feature = "multimedia")]

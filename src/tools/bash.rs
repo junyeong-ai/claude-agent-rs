@@ -7,6 +7,7 @@ use std::time::Duration;
 use async_trait::async_trait;
 use schemars::JsonSchema;
 use serde::Deserialize;
+use tokio::io::AsyncReadExt;
 use tokio::process::Command;
 use tokio::time::timeout;
 
@@ -98,12 +99,34 @@ impl BashTool {
             });
         }
 
-        let result = timeout(timeout_duration, cmd.output()).await;
+        // Ensure process is killed when dropped (safety net)
+        cmd.kill_on_drop(true);
 
-        match result {
-            Ok(Ok(output)) => {
-                let stdout = String::from_utf8_lossy(&output.stdout);
-                let stderr = String::from_utf8_lossy(&output.stderr);
+        // Spawn explicitly for proper cleanup on timeout
+        let mut child = match cmd.spawn() {
+            Ok(child) => child,
+            Err(e) => return ToolResult::error(format!("Failed to spawn: {}", e)),
+        };
+
+        // Take stdout/stderr handles before waiting (allows reading after wait)
+        let mut stdout_handle = child.stdout.take();
+        let mut stderr_handle = child.stderr.take();
+
+        match timeout(timeout_duration, child.wait()).await {
+            Ok(Ok(status)) => {
+                // Read output from taken handles
+                let mut stdout_buf = Vec::new();
+                let mut stderr_buf = Vec::new();
+
+                if let Some(ref mut handle) = stdout_handle {
+                    let _ = handle.read_to_end(&mut stdout_buf).await;
+                }
+                if let Some(ref mut handle) = stderr_handle {
+                    let _ = handle.read_to_end(&mut stderr_buf).await;
+                }
+
+                let stdout = String::from_utf8_lossy(&stdout_buf);
+                let stderr = String::from_utf8_lossy(&stderr_buf);
 
                 let mut combined = String::new();
 
@@ -128,18 +151,23 @@ impl BashTool {
                     combined = "(no output)".to_string();
                 }
 
-                if !output.status.success() {
-                    let code = output.status.code().unwrap_or(-1);
+                if !status.success() {
+                    let code = status.code().unwrap_or(-1);
                     combined = format!("Exit code: {}\n{}", code, combined);
                 }
 
                 ToolResult::success(combined)
             }
             Ok(Err(e)) => ToolResult::error(format!("Failed to execute command: {}", e)),
-            Err(_) => ToolResult::error(format!(
-                "Command timed out after {} seconds",
-                timeout_ms / 1000
-            )),
+            Err(_) => {
+                // Timeout: explicitly kill and wait to prevent zombie process
+                let _ = child.kill().await;
+                let _ = child.wait().await;
+                ToolResult::error(format!(
+                    "Command timed out after {} seconds",
+                    timeout_ms / 1000
+                ))
+            }
         }
     }
 

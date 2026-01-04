@@ -26,12 +26,6 @@ pub struct EditInput {
 #[derive(Debug, Clone, Copy, Default)]
 pub struct EditTool;
 
-impl EditTool {
-    pub fn new() -> Self {
-        Self
-    }
-}
-
 #[async_trait]
 impl SchemaTool for EditTool {
     type Input = EditInput;

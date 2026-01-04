@@ -58,12 +58,6 @@ pub struct GrepInput {
 #[derive(Debug, Clone, Copy, Default)]
 pub struct GrepTool;
 
-impl GrepTool {
-    pub fn new() -> Self {
-        Self
-    }
-}
-
 #[async_trait]
 impl SchemaTool for GrepTool {
     type Input = GrepInput;

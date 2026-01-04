@@ -1,4 +1,4 @@
-//! Agent streaming execution with real SSE streaming support.
+//! Agent streaming execution with session-based context management.
 
 use std::path::Path;
 use std::pin::Pin;
@@ -6,7 +6,7 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use futures::{Stream, StreamExt, stream};
-use tokio::sync::{Mutex, RwLock};
+use tokio::sync::RwLock;
 use tracing::{debug, warn};
 
 use super::common::BudgetContext;
@@ -15,14 +15,15 @@ use super::execution::extract_file_path;
 use super::executor::Agent;
 use super::request::RequestBuilder;
 use super::state_formatter::collect_compaction_state;
-use super::{AgentConfig, AgentMetrics, AgentState, ConversationContext};
+use super::{AgentConfig, AgentMetrics, AgentState};
 use crate::budget::{BudgetTracker, TenantBudget};
 use crate::client::{RecoverableStream, StreamItem};
 use crate::context::PromptOrchestrator;
 use crate::hooks::{HookContext, HookEvent, HookInput, HookManager};
+use crate::session::ToolState;
 use crate::types::{
-    CompactResult, ContentBlock, Message, PermissionDenial, StopReason, StreamEvent,
-    ToolResultBlock, ToolUseBlock, Usage,
+    CompactResult, ContentBlock, PermissionDenial, StopReason, StreamEvent,
+    ToolResultBlock, ToolUseBlock, Usage, context_window,
 };
 use crate::{Client, ToolRegistry};
 
@@ -40,15 +41,22 @@ impl Agent {
             .timeout
             .unwrap_or(std::time::Duration::from_secs(600));
 
-        let context = Arc::new(Mutex::new(ConversationContext::new()));
-        {
-            let mut history = context.lock().await;
-            history.push(Message::user(prompt));
+        if self.state.is_executing() {
+            self.state
+                .enqueue(prompt)
+                .await
+                .map_err(|e| crate::Error::Session(format!("Queue full: {}", e)))?;
+        } else {
+            self.state
+                .with_session_mut(|session| {
+                    session.add_user_message(prompt);
+                })
+                .await;
         }
 
         let state = StreamState::new(
             StreamStateConfig {
-                context,
+                tool_state: self.state.clone(),
                 client: Arc::clone(&self.client),
                 config: Arc::clone(&self.config),
                 tools: Arc::clone(&self.tools),
@@ -70,7 +78,7 @@ impl Agent {
 }
 
 struct StreamStateConfig {
-    context: Arc<Mutex<ConversationContext>>,
+    tool_state: ToolState,
     client: Arc<Client>,
     config: Arc<AgentConfig>,
     tools: Arc<ToolRegistry>,
@@ -113,6 +121,7 @@ struct StreamState {
     pending_tool_results: Vec<ToolResultBlock>,
     pending_tool_uses: Vec<ToolUseBlock>,
     final_text: String,
+    total_usage: Usage,
     phase: Phase,
 }
 
@@ -131,6 +140,7 @@ impl StreamState {
             pending_tool_results: Vec::new(),
             pending_tool_uses: Vec::new(),
             final_text: String::new(),
+            total_usage: Usage::default(),
             phase: Phase::StartRequest,
         }
     }
@@ -211,12 +221,16 @@ impl StreamState {
         if self.metrics.iterations > self.cfg.config.execution.max_iterations {
             self.phase = Phase::Done;
             self.metrics.execution_time_ms = self.start_time.elapsed().as_millis() as u64;
-            let mut history = self.cfg.context.lock().await;
-            let usage = *history.total_usage();
-            let messages = history.take_messages();
+
+            let messages = self
+                .cfg
+                .tool_state
+                .with_session(|session| session.to_api_messages())
+                .await;
+
             return Some(Ok(AgentEvent::Complete(Box::new(AgentResult {
                 text: self.final_text.clone(),
-                usage,
+                usage: self.total_usage,
                 tool_calls: self.metrics.tool_calls,
                 iterations: self.metrics.iterations - 1,
                 stop_reason: StopReason::MaxTokens,
@@ -229,13 +243,19 @@ impl StreamState {
             }))));
         }
 
-        let stream_request = {
-            let history = self.cfg.context.lock().await;
-            self.cfg
-                .request_builder
-                .build(history.messages().to_vec(), &self.dynamic_rules)
-                .with_stream()
-        };
+        let cache_messages =
+            self.cfg.config.cache.enabled && self.cfg.config.cache.message_cache;
+        let messages = self
+            .cfg
+            .tool_state
+            .with_session(|session| session.to_api_messages_with_cache(cache_messages))
+            .await;
+
+        let stream_request = self
+            .cfg
+            .request_builder
+            .build(messages, &self.dynamic_rules)
+            .with_stream();
 
         let response = match self
             .cfg
@@ -302,6 +322,10 @@ impl StreamState {
                 StreamPollResult::Event(Ok(AgentEvent::Thinking(thinking)))
             }
             StreamItem::Citation(_) => StreamPollResult::Continue,
+            StreamItem::ToolUseComplete(tool_use) => {
+                self.pending_tool_uses.push(tool_use);
+                StreamPollResult::Continue
+            }
             StreamItem::Event(event) => self.handle_stream_event(event, accumulated_usage),
         }
     }
@@ -320,12 +344,7 @@ impl StreamState {
                 accumulated_usage.cache_read_input_tokens = message.usage.cache_read_input_tokens;
                 StreamPollResult::Continue
             }
-            StreamEvent::ContentBlockStart { content_block, .. } => {
-                if let ContentBlock::ToolUse(tool_use) = content_block {
-                    self.pending_tool_uses.push(tool_use);
-                }
-                StreamPollResult::Continue
-            }
+            StreamEvent::ContentBlockStart { .. } => StreamPollResult::Continue,
             StreamEvent::ContentBlockDelta { .. } => StreamPollResult::Continue,
             StreamEvent::ContentBlockStop { .. } => StreamPollResult::Continue,
             StreamEvent::MessageDelta { usage, .. } => {
@@ -345,6 +364,8 @@ impl StreamState {
         &mut self,
         accumulated_usage: Usage,
     ) -> Option<crate::Result<AgentEvent>> {
+        self.total_usage.input_tokens += accumulated_usage.input_tokens;
+        self.total_usage.output_tokens += accumulated_usage.output_tokens;
         self.metrics.add_usage(
             accumulated_usage.input_tokens,
             accumulated_usage.output_tokens,
@@ -362,38 +383,41 @@ impl StreamState {
             tenant_budget.record(&self.cfg.config.model.primary, &accumulated_usage);
         }
 
-        {
-            let mut history = self.cfg.context.lock().await;
-            history.update_usage(accumulated_usage);
+        self.cfg
+            .tool_state
+            .with_session_mut(|session| {
+                session.update_usage(&accumulated_usage);
 
-            let mut content = Vec::new();
-            if !self.final_text.is_empty() {
-                content.push(ContentBlock::Text {
-                    text: self.final_text.clone(),
-                    citations: None,
-                    cache_control: None,
-                });
-            }
-            for tool_use in &self.pending_tool_uses {
-                content.push(ContentBlock::ToolUse(tool_use.clone()));
-            }
-            if !content.is_empty() {
-                history.push(Message {
-                    role: crate::types::Role::Assistant,
-                    content,
-                });
-            }
-        }
+                let mut content = Vec::new();
+                if !self.final_text.is_empty() {
+                    content.push(ContentBlock::Text {
+                        text: self.final_text.clone(),
+                        citations: None,
+                        cache_control: None,
+                    });
+                }
+                for tool_use in &self.pending_tool_uses {
+                    content.push(ContentBlock::ToolUse(tool_use.clone()));
+                }
+                if !content.is_empty() {
+                    session.add_assistant_message(content, Some(accumulated_usage));
+                }
+            })
+            .await;
 
         if self.pending_tool_uses.is_empty() {
             self.phase = Phase::Done;
             self.metrics.execution_time_ms = self.start_time.elapsed().as_millis() as u64;
-            let mut history = self.cfg.context.lock().await;
-            let usage = *history.total_usage();
-            let messages = history.take_messages();
+
+            let messages = self
+                .cfg
+                .tool_state
+                .with_session(|session| session.to_api_messages())
+                .await;
+
             return Some(Ok(AgentEvent::Complete(Box::new(AgentResult {
                 text: self.final_text.clone(),
-                usage,
+                usage: self.total_usage,
                 tool_calls: self.metrics.tool_calls,
                 iterations: self.metrics.iterations,
                 stop_reason: StopReason::EndTurn,
@@ -503,8 +527,14 @@ impl StreamState {
             .record_tool(&tool_use.name, duration_ms, is_error);
 
         if let Some(ref inner_usage) = result.inner_usage {
-            let mut history = self.cfg.context.lock().await;
-            history.update_usage(*inner_usage);
+            self.cfg
+                .tool_state
+                .with_session_mut(|session| {
+                    session.update_usage(inner_usage);
+                })
+                .await;
+            self.total_usage.input_tokens += inner_usage.input_tokens;
+            self.total_usage.output_tokens += inner_usage.output_tokens;
             self.metrics
                 .add_usage(inner_usage.input_tokens, inner_usage.output_tokens);
             let inner_model = result.inner_model.as_deref().unwrap_or("claude-haiku-4-5");
@@ -578,29 +608,49 @@ impl StreamState {
 
     async fn finalize_tool_results(&mut self) {
         let results = std::mem::take(&mut self.pending_tool_results);
-        let mut history = self.cfg.context.lock().await;
-        history.push(Message::tool_results(results));
+        let max_tokens = context_window::for_model(&self.cfg.config.model.primary);
 
-        if self.cfg.config.execution.auto_compact
-            && history.should_compact(
-                200_000,
-                self.cfg.config.execution.compact_threshold,
-                self.cfg.config.execution.compact_keep_messages,
-            )
-            && let Ok(CompactResult::Compacted { .. }) = history
-                .compact(
-                    &self.cfg.client,
-                    self.cfg.config.execution.compact_keep_messages,
-                )
-                .await
-        {
-            self.metrics.record_compaction();
-            let state_sections = collect_compaction_state(&self.cfg.tools).await;
-            if !state_sections.is_empty() {
-                history.push(Message::user(format!(
-                    "<system-reminder>\n# State preserved after compaction\n\n{}\n</system-reminder>",
-                    state_sections.join("\n\n")
-                )));
+        self.cfg
+            .tool_state
+            .with_session_mut(|session| {
+                session.add_tool_results(results);
+            })
+            .await;
+
+        let should_compact = self
+            .cfg
+            .tool_state
+            .with_session(|session| {
+                self.cfg.config.execution.auto_compact
+                    && session.should_compact(
+                        max_tokens,
+                        self.cfg.config.execution.compact_threshold,
+                        self.cfg.config.execution.compact_keep_messages,
+                    )
+            })
+            .await;
+
+        if should_compact {
+            let compact_result = self
+                .cfg
+                .tool_state
+                .compact(&self.cfg.client, self.cfg.config.execution.compact_keep_messages)
+                .await;
+
+            if let Ok(CompactResult::Compacted { .. }) = compact_result {
+                self.metrics.record_compaction();
+                let state_sections = collect_compaction_state(&self.cfg.tools).await;
+                if !state_sections.is_empty() {
+                    self.cfg
+                        .tool_state
+                        .with_session_mut(|session| {
+                            session.add_user_message(format!(
+                                "<system-reminder>\n# State preserved after compaction\n\n{}\n</system-reminder>",
+                                state_sections.join("\n\n")
+                            ));
+                        })
+                        .await;
+                }
             }
         }
     }

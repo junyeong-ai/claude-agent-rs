@@ -1,6 +1,5 @@
 //! Session management for stateful conversations.
 
-pub mod cache;
 pub mod compact;
 pub mod manager;
 pub mod persistence;
@@ -14,7 +13,6 @@ pub mod state;
 pub mod types;
 
 pub use crate::types::TokenUsage;
-pub use cache::{CacheConfigBuilder, CacheStats, SessionCacheManager};
 pub use compact::{CompactExecutor, CompactStrategy};
 pub use manager::SessionManager;
 pub use persistence::{MemoryPersistence, Persistence, PersistenceFactory};
@@ -24,8 +22,8 @@ pub use persistence_postgres::{
 };
 #[cfg(feature = "redis-backend")]
 pub use persistence_redis::{RedisConfig, RedisPersistence};
-pub use queue::{InputQueue, MergedInput, QueuedInput, SharedInputQueue};
-pub use session_state::ToolState;
+pub use queue::{InputQueue, MergedInput, QueueError, QueuedInput, SharedInputQueue};
+pub use session_state::{ExecutionGuard, ToolState};
 pub use state::{
     MessageId, MessageMetadata, PermissionPolicy, Session, SessionConfig, SessionId,
     SessionMessage, SessionMode, SessionState, SessionType,

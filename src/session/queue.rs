@@ -11,6 +11,26 @@ use uuid::Uuid;
 use super::state::SessionId;
 use super::types::EnvironmentContext;
 
+const MAX_QUEUE_SIZE: usize = 100;
+const MAX_MERGE_CHARS: usize = 100_000;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum QueueError {
+    Full,
+    MergeLimitExceeded,
+}
+
+impl std::fmt::Display for QueueError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Full => write!(f, "queue is full"),
+            Self::MergeLimitExceeded => write!(f, "merge size limit exceeded"),
+        }
+    }
+}
+
+impl std::error::Error for QueueError {}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct QueuedInput {
     pub id: Uuid,
@@ -44,36 +64,46 @@ pub struct MergedInput {
     pub environment: Option<EnvironmentContext>,
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct InputQueue {
     items: VecDeque<QueuedInput>,
 }
 
+impl Default for InputQueue {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl InputQueue {
     pub fn new() -> Self {
-        Self::default()
+        Self {
+            items: VecDeque::with_capacity(16),
+        }
     }
 
-    pub fn enqueue(&mut self, input: QueuedInput) -> Uuid {
+    pub fn enqueue(&mut self, input: QueuedInput) -> Result<Uuid, QueueError> {
+        if self.items.len() >= MAX_QUEUE_SIZE {
+            return Err(QueueError::Full);
+        }
         let id = input.id;
         self.items.push_back(input);
-        id
+        Ok(id)
     }
 
     pub fn cancel(&mut self, id: Uuid) -> Option<QueuedInput> {
-        if let Some(pos) = self.items.iter().position(|i| i.id == id) {
-            self.items.remove(pos)
-        } else {
-            None
-        }
+        self.items
+            .iter()
+            .position(|i| i.id == id)
+            .and_then(|pos| self.items.remove(pos))
     }
 
     pub fn cancel_all(&mut self) -> Vec<QueuedInput> {
         self.items.drain(..).collect()
     }
 
-    pub fn pending(&self) -> Vec<&QueuedInput> {
-        self.items.iter().collect()
+    pub fn pending(&self) -> impl Iterator<Item = &QueuedInput> {
+        self.items.iter()
     }
 
     pub fn pending_count(&self) -> usize {
@@ -89,16 +119,24 @@ impl InputQueue {
             return None;
         }
 
-        let items: Vec<QueuedInput> = self.items.drain(..).collect();
-        let ids: Vec<Uuid> = items.iter().map(|i| i.id).collect();
-        let environment = items.last().and_then(|i| i.environment.clone());
+        let mut ids = Vec::with_capacity(self.items.len());
+        let mut total_len = 0;
+        let mut contents = Vec::with_capacity(self.items.len());
+        let mut environment = None;
 
-        let content = items
-            .into_iter()
-            .map(|i| i.content)
-            .collect::<Vec<_>>()
-            .join("\n");
+        while let Some(item) = self.items.pop_front() {
+            let item_len = item.content.len();
+            if total_len + item_len > MAX_MERGE_CHARS && !contents.is_empty() {
+                self.items.push_front(item);
+                break;
+            }
+            ids.push(item.id);
+            total_len += item_len + 1;
+            environment = item.environment.or(environment);
+            contents.push(item.content);
+        }
 
+        let content = contents.join("\n");
         Some(MergedInput {
             ids,
             content,
@@ -123,7 +161,7 @@ impl SharedInputQueue {
         }
     }
 
-    pub async fn enqueue(&self, input: QueuedInput) -> Uuid {
+    pub async fn enqueue(&self, input: QueuedInput) -> Result<Uuid, QueueError> {
         self.inner.write().await.enqueue(input)
     }
 
@@ -152,19 +190,19 @@ impl SharedInputQueue {
     }
 
     pub async fn pending_ids(&self) -> Vec<Uuid> {
-        self.inner
-            .read()
-            .await
-            .pending()
-            .iter()
-            .map(|i| i.id)
-            .collect()
+        self.inner.read().await.pending().map(|i| i.id).collect()
     }
 }
 
 impl Default for SharedInputQueue {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+impl std::fmt::Debug for SharedInputQueue {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("SharedInputQueue").finish_non_exhaustive()
     }
 }
 
@@ -178,7 +216,7 @@ mod tests {
         let session_id = SessionId::new();
 
         let input = QueuedInput::new(session_id, "Hello");
-        let id = queue.enqueue(input);
+        let id = queue.enqueue(input).unwrap();
 
         assert_eq!(queue.pending_count(), 1);
 
@@ -189,15 +227,29 @@ mod tests {
     }
 
     #[test]
+    fn test_queue_size_limit() {
+        let mut queue = InputQueue::new();
+        let session_id = SessionId::new();
+
+        for i in 0..MAX_QUEUE_SIZE {
+            let input = QueuedInput::new(session_id, format!("Message {}", i));
+            assert!(queue.enqueue(input).is_ok());
+        }
+
+        let input = QueuedInput::new(session_id, "Overflow");
+        assert_eq!(queue.enqueue(input), Err(QueueError::Full));
+    }
+
+    #[test]
     fn test_queue_cancel() {
         let mut queue = InputQueue::new();
         let session_id = SessionId::new();
 
         let input1 = QueuedInput::new(session_id, "First");
-        let id1 = queue.enqueue(input1);
+        let id1 = queue.enqueue(input1).unwrap();
 
         let input2 = QueuedInput::new(session_id, "Second");
-        let _id2 = queue.enqueue(input2);
+        let _id2 = queue.enqueue(input2).unwrap();
 
         assert_eq!(queue.pending_count(), 2);
 
@@ -213,7 +265,7 @@ mod tests {
         let session_id = SessionId::new();
 
         let input = QueuedInput::new(session_id, "Only one");
-        queue.enqueue(input);
+        queue.enqueue(input).unwrap();
 
         let merged = queue.merge_all().unwrap();
         assert_eq!(merged.ids.len(), 1);
@@ -226,9 +278,15 @@ mod tests {
         let mut queue = InputQueue::new();
         let session_id = SessionId::new();
 
-        queue.enqueue(QueuedInput::new(session_id, "First"));
-        queue.enqueue(QueuedInput::new(session_id, "Second"));
-        queue.enqueue(QueuedInput::new(session_id, "Third"));
+        queue
+            .enqueue(QueuedInput::new(session_id, "First"))
+            .unwrap();
+        queue
+            .enqueue(QueuedInput::new(session_id, "Second"))
+            .unwrap();
+        queue
+            .enqueue(QueuedInput::new(session_id, "Third"))
+            .unwrap();
 
         let merged = queue.merge_all().unwrap();
         assert_eq!(merged.ids.len(), 3);
@@ -250,8 +308,12 @@ mod tests {
             ..Default::default()
         };
 
-        queue.enqueue(QueuedInput::new(session_id, "First").with_environment(env1));
-        queue.enqueue(QueuedInput::new(session_id, "Second").with_environment(env2));
+        queue
+            .enqueue(QueuedInput::new(session_id, "First").with_environment(env1))
+            .unwrap();
+        queue
+            .enqueue(QueuedInput::new(session_id, "Second").with_environment(env2))
+            .unwrap();
 
         let merged = queue.merge_all().unwrap();
         assert_eq!(
@@ -271,12 +333,38 @@ mod tests {
         let mut queue = InputQueue::new();
         let session_id = SessionId::new();
 
-        queue.enqueue(QueuedInput::new(session_id, "First"));
-        queue.enqueue(QueuedInput::new(session_id, "Second"));
+        queue
+            .enqueue(QueuedInput::new(session_id, "First"))
+            .unwrap();
+        queue
+            .enqueue(QueuedInput::new(session_id, "Second"))
+            .unwrap();
 
         let cancelled = queue.cancel_all();
         assert_eq!(cancelled.len(), 2);
         assert!(queue.is_empty());
+    }
+
+    #[test]
+    fn test_queue_merge_size_limit() {
+        let mut queue = InputQueue::new();
+        let session_id = SessionId::new();
+
+        let large_content = "x".repeat(MAX_MERGE_CHARS / 2 + 1);
+        queue
+            .enqueue(QueuedInput::new(session_id, large_content.clone()))
+            .unwrap();
+        queue
+            .enqueue(QueuedInput::new(session_id, large_content.clone()))
+            .unwrap();
+        queue
+            .enqueue(QueuedInput::new(session_id, "Small"))
+            .unwrap();
+
+        let merged = queue.merge_all().unwrap();
+        assert_eq!(merged.ids.len(), 1);
+        assert!(!queue.is_empty());
+        assert_eq!(queue.pending_count(), 2);
     }
 
     #[tokio::test]
@@ -284,7 +372,10 @@ mod tests {
         let queue = SharedInputQueue::new();
         let session_id = SessionId::new();
 
-        let id = queue.enqueue(QueuedInput::new(session_id, "Test")).await;
+        let id = queue
+            .enqueue(QueuedInput::new(session_id, "Test"))
+            .await
+            .unwrap();
         assert_eq!(queue.pending_count().await, 1);
 
         let cancelled = queue.cancel(id).await;

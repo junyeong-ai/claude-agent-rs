@@ -9,6 +9,7 @@ use crate::Client;
 use crate::budget::{BudgetTracker, TenantBudget};
 use crate::context::PromptOrchestrator;
 use crate::hooks::HookManager;
+use crate::session::ToolState;
 use crate::tools::{ToolRegistry, ToolRegistryBuilder};
 use crate::types::Message;
 
@@ -18,6 +19,7 @@ pub struct Agent {
     pub(crate) tools: Arc<ToolRegistry>,
     pub(crate) hooks: Arc<HookManager>,
     pub(crate) session_id: Arc<str>,
+    pub(crate) state: ToolState,
     pub(crate) orchestrator: Option<Arc<RwLock<PromptOrchestrator>>>,
     pub(crate) initial_messages: Option<Vec<Message>>,
     pub(crate) budget_tracker: Arc<BudgetTracker>,
@@ -123,15 +125,21 @@ impl Agent {
             None => BudgetTracker::unlimited(),
         };
 
-        // Resolve model aliases using client's model config
         let config = Self::resolve_model_aliases(config, &client);
+
+        let state = tools
+            .tool_state()
+            .cloned()
+            .unwrap_or_else(|| ToolState::new(crate::session::SessionId::new()));
+        let session_id: Arc<str> = state.session_id().to_string().into();
 
         Self {
             client,
             config,
             tools,
             hooks,
-            session_id: uuid::Uuid::new_v4().to_string().into(),
+            session_id,
+            state,
             orchestrator,
             initial_messages: None,
             budget_tracker: Arc::new(budget_tracker),
@@ -238,5 +246,10 @@ impl Agent {
     #[must_use]
     pub fn tools(&self) -> &Arc<ToolRegistry> {
         &self.tools
+    }
+
+    #[must_use]
+    pub fn state(&self) -> &ToolState {
+        &self.state
     }
 }

@@ -1,4 +1,4 @@
-//! Agent execution logic.
+//! Agent execution logic with session-based context management.
 
 use std::path::Path;
 use std::sync::Arc;
@@ -12,17 +12,19 @@ use super::events::AgentResult;
 use super::executor::Agent;
 use super::request::RequestBuilder;
 use super::state_formatter::collect_compaction_state;
-use super::{AgentMetrics, AgentState, ConversationContext};
+use super::{AgentMetrics, AgentState};
 use crate::context::PromptOrchestrator;
 use crate::hooks::{HookContext, HookEvent, HookInput};
+use crate::session::ExecutionGuard;
 use crate::types::{
-    CompactResult, ContentBlock, Message, PermissionDenial, StopReason, ToolResultBlock,
+    CompactResult, ContentBlock, Message, PermissionDenial, StopReason, ToolResultBlock, Usage,
+    context_window,
 };
 
 impl Agent {
-    async fn handle_compaction(
+    async fn handle_compaction<'a>(
         &self,
-        context: &mut ConversationContext,
+        _guard: &ExecutionGuard<'a>,
         hook_ctx: &HookContext,
         metrics: &mut AgentMetrics,
     ) {
@@ -35,28 +37,34 @@ impl Agent {
             warn!(error = %e, "PreCompact hook failed");
         }
 
-        debug!("Compacting context");
-        match context
+        debug!("Compacting session context");
+        let compact_result = self
+            .state
             .compact(&self.client, self.config.execution.compact_keep_messages)
-            .await
-        {
+            .await;
+
+        match compact_result {
             Ok(CompactResult::Compacted { saved_tokens, .. }) => {
-                info!(saved_tokens, "Context compacted");
+                info!(saved_tokens, "Session context compacted");
                 metrics.record_compaction();
 
                 let state_sections = collect_compaction_state(&self.tools).await;
                 if !state_sections.is_empty() {
-                    context.push(Message::user(format!(
-                        "<system-reminder>\n# State preserved after compaction\n\n{}\n</system-reminder>",
-                        state_sections.join("\n\n")
-                    )));
+                    self.state
+                        .with_session_mut(|session| {
+                            session.add_user_message(format!(
+                                "<system-reminder>\n# State preserved after compaction\n\n{}\n</system-reminder>",
+                                state_sections.join("\n\n")
+                            ));
+                        })
+                        .await;
                 }
             }
             Ok(CompactResult::NotNeeded | CompactResult::Skipped { .. }) => {
                 debug!("Compaction skipped or not needed");
             }
             Err(e) => {
-                warn!(error = %e, "Context compaction failed");
+                warn!(error = %e, "Session compaction failed");
             }
         }
     }
@@ -77,9 +85,37 @@ impl Agent {
             .timeout
             .unwrap_or(std::time::Duration::from_secs(600));
 
+        if self.state.is_executing() {
+            self.state
+                .enqueue(prompt)
+                .await
+                .map_err(|e| crate::Error::Session(format!("Queue full: {}", e)))?;
+            return self.wait_for_execution(timeout).await;
+        }
+
         tokio::time::timeout(timeout, self.execute_inner(prompt))
             .await
             .map_err(|_| crate::Error::Timeout(timeout))?
+    }
+
+    async fn wait_for_execution(
+        &self,
+        timeout: std::time::Duration,
+    ) -> crate::Result<AgentResult> {
+        let start = Instant::now();
+        loop {
+            if start.elapsed() > timeout {
+                return Err(crate::Error::Timeout(timeout));
+            }
+
+            if !self.state.is_executing()
+                && let Some(merged) = self.state.dequeue_or_merge().await
+            {
+                return self.execute_inner(&merged.content).await;
+            }
+
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        }
     }
 
     pub async fn execute_with_messages(
@@ -115,6 +151,7 @@ impl Agent {
 
     #[instrument(skip(self, prompt), fields(session_id = %self.session_id))]
     async fn execute_inner(&self, prompt: &str) -> crate::Result<AgentResult> {
+        let guard = self.state.acquire_execution().await;
         let execution_start = Instant::now();
         let hook_ctx = self.hook_context();
 
@@ -127,7 +164,13 @@ impl Agent {
             warn!(error = %e, "SessionStart hook failed");
         }
 
-        let prompt_input = HookInput::user_prompt_submit(&*self.session_id, prompt);
+        let final_prompt = if let Some(merged) = self.state.dequeue_or_merge().await {
+            format!("{}\n{}", prompt, merged.content)
+        } else {
+            prompt.to_string()
+        };
+
+        let prompt_input = HookInput::user_prompt_submit(&*self.session_id, &final_prompt);
         let prompt_output = self
             .hooks
             .execute(HookEvent::UserPromptSubmit, prompt_input, &hook_ctx)
@@ -149,17 +192,22 @@ impl Agent {
             ));
         }
 
-        let mut context = ConversationContext::new();
-        context.push(Message::user(prompt));
+        self.state
+            .with_session_mut(|session| {
+                session.add_user_message(&final_prompt);
+            })
+            .await;
 
         let mut metrics = AgentMetrics::default();
         let mut final_text = String::new();
         let mut final_stop_reason = StopReason::EndTurn;
         let mut dynamic_rules_context = String::new();
+        let mut total_usage = Usage::default();
 
         let request_builder = RequestBuilder::new(&self.config, Arc::clone(&self.tools));
+        let max_tokens = context_window::for_model(&self.config.model.primary);
 
-        info!(prompt_len = prompt.len(), "Starting agent execution");
+        info!(prompt_len = final_prompt.len(), "Starting agent execution");
 
         loop {
             metrics.iterations += 1;
@@ -175,15 +223,27 @@ impl Agent {
 
             debug!(iteration = metrics.iterations, "Starting iteration");
 
+            let cache_messages = self.config.cache.enabled && self.config.cache.message_cache;
+            let messages = self
+                .state
+                .with_session(|session| session.to_api_messages_with_cache(cache_messages))
+                .await;
+
             let api_start = Instant::now();
-            let request =
-                request_builder.build(context.messages().to_vec(), &dynamic_rules_context);
+            let request = request_builder.build(messages, &dynamic_rules_context);
             let response = self.client.send_with_auth_retry(request).await?;
             let api_duration_ms = api_start.elapsed().as_millis() as u64;
             metrics.record_api_call_with_timing(api_duration_ms);
             debug!(api_time_ms = api_duration_ms, "API call completed");
 
-            context.update_usage(response.usage);
+            self.state
+                .with_session_mut(|session| {
+                    session.update_usage(&response.usage);
+                })
+                .await;
+
+            total_usage.input_tokens += response.usage.input_tokens;
+            total_usage.output_tokens += response.usage.output_tokens;
             metrics.add_usage_with_cache(&response.usage);
             metrics.record_model_usage(&self.config.model.primary, &response.usage);
 
@@ -199,27 +259,14 @@ impl Agent {
                 tenant_budget.record(&self.config.model.primary, &response.usage);
             }
 
-            if let Some(ref orchestrator) = self.orchestrator {
-                let mut orch = orchestrator.write().await;
-                orch.update_usage(&crate::types::TokenUsage {
-                    input_tokens: response.usage.input_tokens as u64,
-                    output_tokens: response.usage.output_tokens as u64,
-                    cache_read_input_tokens: response.usage.cache_read_input_tokens.unwrap_or(0)
-                        as u64,
-                    cache_creation_input_tokens: response
-                        .usage
-                        .cache_creation_input_tokens
-                        .unwrap_or(0) as u64,
-                });
-            }
-
             final_text = response.text();
             final_stop_reason = response.stop_reason.unwrap_or(StopReason::EndTurn);
 
-            context.push(Message {
-                role: crate::types::Role::Assistant,
-                content: response.content.clone(),
-            });
+            self.state
+                .with_session_mut(|session| {
+                    session.add_assistant_message(response.content.clone(), Some(response.usage));
+                })
+                .await;
 
             if !response.wants_tool_use() {
                 debug!("No tool use requested, ending loop");
@@ -272,6 +319,11 @@ impl Agent {
 
             let parallel_results: Vec<_> = futures::future::join_all(tool_futures).await;
 
+            let all_non_retryable = !parallel_results.is_empty()
+                && parallel_results
+                    .iter()
+                    .all(|(_, _, _, result, _)| result.is_non_retryable());
+
             let mut results = blocked;
             for (id, name, input, result, duration_ms) in parallel_results {
                 let is_error = result.is_error();
@@ -279,7 +331,13 @@ impl Agent {
                 metrics.record_tool(&name, duration_ms, is_error);
 
                 if let Some(ref inner_usage) = result.inner_usage {
-                    context.update_usage(*inner_usage);
+                    self.state
+                        .with_session_mut(|session| {
+                            session.update_usage(inner_usage);
+                        })
+                        .await;
+                    total_usage.input_tokens += inner_usage.input_tokens;
+                    total_usage.output_tokens += inner_usage.output_tokens;
                     metrics.add_usage(inner_usage.input_tokens, inner_usage.output_tokens);
                     let inner_model = result.inner_model.as_deref().unwrap_or("claude-haiku-4-5");
                     metrics.record_model_usage(inner_model, inner_usage);
@@ -335,16 +393,31 @@ impl Agent {
                 results.push(ToolResultBlock::from_tool_result(&id, result));
             }
 
-            context.push(Message::tool_results(results));
+            self.state
+                .with_session_mut(|session| {
+                    session.add_tool_results(results);
+                })
+                .await;
 
-            if self.config.execution.auto_compact
-                && context.should_compact(
-                    200_000,
-                    self.config.execution.compact_threshold,
-                    self.config.execution.compact_keep_messages,
-                )
-            {
-                self.handle_compaction(&mut context, &hook_ctx, &mut metrics)
+            if all_non_retryable {
+                warn!("All tool calls failed with non-retryable errors, ending execution");
+                break;
+            }
+
+            let should_compact = self
+                .state
+                .with_session(|session| {
+                    self.config.execution.auto_compact
+                        && session.should_compact(
+                            max_tokens,
+                            self.config.execution.compact_threshold,
+                            self.config.execution.compact_keep_messages,
+                        )
+                })
+                .await;
+
+            if should_compact {
+                self.handle_compaction(&guard, &hook_ctx, &mut metrics)
                     .await;
             }
         }
@@ -378,12 +451,16 @@ impl Agent {
             "Agent execution completed"
         );
 
-        let usage = *context.total_usage();
-        let messages = context.take_messages();
+        let messages = self
+            .state
+            .with_session(|session| session.to_api_messages())
+            .await;
+
+        drop(guard);
 
         Ok(AgentResult {
             text: final_text,
-            usage,
+            usage: total_usage,
             tool_calls: metrics.tool_calls,
             iterations: metrics.iterations,
             stop_reason: final_stop_reason,

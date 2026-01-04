@@ -2,6 +2,20 @@
 //!
 //! Implements session-level Prompt Caching using Anthropic's cache_control
 //! feature for token efficiency.
+//!
+//! ## Anthropic Prompt Caching Overview
+//!
+//! - Maximum 4 cache breakpoints per request
+//! - Minimum 1024 tokens for cacheable content
+//! - TTL: 5 minutes (default) or 1 hour (extended)
+//! - Cache read cost: ~10% of normal input tokens
+//! - Cache write cost: ~125% of normal input tokens
+//!
+//! ## Cache Strategy
+//!
+//! 1. System prompt: Always cached (1 breakpoint)
+//! 2. Static context (tools, CLAUDE.md): Cached (within system)
+//! 3. Message history: Dynamic breakpoints (up to 3)
 
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
@@ -12,21 +26,20 @@ use super::state::Session;
 use crate::context::StaticContext;
 use crate::types::SystemBlock;
 
-/// Cache statistics for a session
+const CACHE_READ_SAVINGS_RATE: f64 = 0.9;
+const CACHE_WRITE_OVERHEAD_RATE: f64 = 0.25;
+
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct CacheStats {
-    /// Total cache read tokens
     pub cache_read_tokens: u64,
-    /// Total cache creation tokens
     pub cache_creation_tokens: u64,
-    /// Number of cache hits
     pub cache_hits: u64,
-    /// Number of cache misses
     pub cache_misses: u64,
+    pub total_requests: u64,
+    pub total_input_tokens: u64,
 }
 
 impl CacheStats {
-    /// Calculate cache hit rate
     pub fn hit_rate(&self) -> f64 {
         let total = self.cache_hits + self.cache_misses;
         if total == 0 {
@@ -35,13 +48,23 @@ impl CacheStats {
         self.cache_hits as f64 / total as f64
     }
 
-    /// Estimated tokens saved through caching
     pub fn tokens_saved(&self) -> u64 {
-        // Cache reads are ~90% cheaper than creation
-        (self.cache_read_tokens as f64 * 0.9) as u64
+        (self.cache_read_tokens as f64 * CACHE_READ_SAVINGS_RATE) as u64
     }
 
-    /// Update stats from token usage
+    pub fn cache_efficiency(&self) -> f64 {
+        if self.total_input_tokens == 0 {
+            return 0.0;
+        }
+        self.cache_read_tokens as f64 / self.total_input_tokens as f64
+    }
+
+    pub fn estimated_cost_savings(&self, cost_per_million: f64) -> f64 {
+        let saved = self.tokens_saved() as f64;
+        let write_overhead = self.cache_creation_tokens as f64 * CACHE_WRITE_OVERHEAD_RATE;
+        (saved - write_overhead) / 1_000_000.0 * cost_per_million
+    }
+
     pub fn update(&mut self, cache_read: u64, cache_creation: u64) {
         self.cache_read_tokens += cache_read;
         self.cache_creation_tokens += cache_creation;
@@ -51,6 +74,25 @@ impl CacheStats {
         } else if cache_creation > 0 {
             self.cache_misses += 1;
         }
+    }
+
+    pub fn record_request(&mut self, input_tokens: u64, cache_read: u64, cache_creation: u64) {
+        self.total_requests += 1;
+        self.total_input_tokens += input_tokens;
+        self.update(cache_read, cache_creation);
+    }
+
+    pub fn merge(&mut self, other: &CacheStats) {
+        self.cache_read_tokens += other.cache_read_tokens;
+        self.cache_creation_tokens += other.cache_creation_tokens;
+        self.cache_hits += other.cache_hits;
+        self.cache_misses += other.cache_misses;
+        self.total_requests += other.total_requests;
+        self.total_input_tokens += other.total_input_tokens;
+    }
+
+    pub fn reset(&mut self) {
+        *self = Self::default();
     }
 }
 
@@ -221,16 +263,12 @@ mod tests {
     #[test]
     fn test_cache_stats_hit_rate() {
         let mut stats = CacheStats::default();
-
-        // No data
         assert_eq!(stats.hit_rate(), 0.0);
 
-        // All hits
         stats.cache_hits = 10;
         stats.cache_misses = 0;
         assert_eq!(stats.hit_rate(), 1.0);
 
-        // 50% hit rate
         stats.cache_hits = 5;
         stats.cache_misses = 5;
         assert_eq!(stats.hit_rate(), 0.5);
@@ -240,15 +278,76 @@ mod tests {
     fn test_cache_stats_update() {
         let mut stats = CacheStats::default();
 
-        // Cache hit
         stats.update(100, 0);
         assert_eq!(stats.cache_hits, 1);
         assert_eq!(stats.cache_read_tokens, 100);
 
-        // Cache miss
         stats.update(0, 200);
         assert_eq!(stats.cache_misses, 1);
         assert_eq!(stats.cache_creation_tokens, 200);
+    }
+
+    #[test]
+    fn test_cache_stats_record_request() {
+        let mut stats = CacheStats::default();
+
+        stats.record_request(1000, 800, 0);
+        assert_eq!(stats.total_requests, 1);
+        assert_eq!(stats.total_input_tokens, 1000);
+        assert_eq!(stats.cache_read_tokens, 800);
+        assert_eq!(stats.cache_hits, 1);
+    }
+
+    #[test]
+    fn test_cache_efficiency() {
+        let stats = CacheStats {
+            total_input_tokens: 10000,
+            cache_read_tokens: 8000,
+            ..Default::default()
+        };
+
+        assert!((stats.cache_efficiency() - 0.8).abs() < 0.001);
+    }
+
+    #[test]
+    fn test_tokens_saved() {
+        let stats = CacheStats {
+            cache_read_tokens: 10000,
+            ..Default::default()
+        };
+
+        assert_eq!(stats.tokens_saved(), 9000);
+    }
+
+    #[test]
+    fn test_estimated_cost_savings() {
+        let stats = CacheStats {
+            cache_read_tokens: 1_000_000,
+            cache_creation_tokens: 100_000,
+            ..Default::default()
+        };
+
+        let savings = stats.estimated_cost_savings(3.0);
+        assert!(savings > 0.0);
+    }
+
+    #[test]
+    fn test_cache_stats_merge() {
+        let mut stats1 = CacheStats {
+            cache_read_tokens: 100,
+            cache_hits: 5,
+            ..Default::default()
+        };
+
+        let stats2 = CacheStats {
+            cache_read_tokens: 200,
+            cache_hits: 3,
+            ..Default::default()
+        };
+
+        stats1.merge(&stats2);
+        assert_eq!(stats1.cache_read_tokens, 300);
+        assert_eq!(stats1.cache_hits, 8);
     }
 
     #[test]

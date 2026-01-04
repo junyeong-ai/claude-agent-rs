@@ -19,9 +19,11 @@ pub use compact::{CompactExecutor, CompactStrategy};
 pub use manager::SessionManager;
 pub use persistence::{MemoryPersistence, Persistence, PersistenceFactory};
 #[cfg(feature = "postgres")]
-pub use persistence_postgres::{PostgresConfig, PostgresPersistence};
+pub use persistence_postgres::{
+    PgPoolConfig, PostgresConfig, PostgresPersistence, PostgresSchema, SchemaIssue,
+};
 #[cfg(feature = "redis-backend")]
-pub use persistence_redis::RedisPersistence;
+pub use persistence_redis::{RedisConfig, RedisPersistence};
 pub use queue::{InputQueue, MergedInput, QueuedInput, SharedInputQueue};
 pub use session_state::ToolState;
 pub use state::{

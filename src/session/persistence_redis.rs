@@ -11,22 +11,26 @@ use super::types::{QueueItem, SummarySnapshot};
 use super::{SessionError, SessionResult};
 use uuid::Uuid;
 
-pub struct RedisPersistence {
-    client: Arc<redis::Client>,
-    key_prefix: String,
-    default_ttl: Option<Duration>,
+#[derive(Clone, Debug)]
+pub struct RedisConfig {
+    pub key_prefix: String,
+    pub default_ttl: Option<Duration>,
+    pub connection_timeout: Duration,
+    pub response_timeout: Duration,
 }
 
-impl RedisPersistence {
-    pub fn new(redis_url: &str) -> Result<Self, redis::RedisError> {
-        let client = redis::Client::open(redis_url)?;
-        Ok(Self {
-            client: Arc::new(client),
+impl Default for RedisConfig {
+    fn default() -> Self {
+        Self {
             key_prefix: "claude:session:".to_string(),
             default_ttl: Some(Duration::from_secs(86400 * 7)),
-        })
+            connection_timeout: Duration::from_secs(10),
+            response_timeout: Duration::from_secs(30),
+        }
     }
+}
 
+impl RedisConfig {
     pub fn with_prefix(mut self, prefix: impl Into<String>) -> Self {
         self.key_prefix = prefix.into();
         self
@@ -41,34 +45,73 @@ impl RedisPersistence {
         self.default_ttl = None;
         self
     }
+}
+
+pub struct RedisPersistence {
+    client: Arc<redis::Client>,
+    config: RedisConfig,
+}
+
+impl RedisPersistence {
+    pub fn new(redis_url: &str) -> Result<Self, redis::RedisError> {
+        Self::from_config(redis_url, RedisConfig::default())
+    }
+
+    pub fn from_config(redis_url: &str, config: RedisConfig) -> Result<Self, redis::RedisError> {
+        let client = redis::Client::open(redis_url)?;
+        Ok(Self {
+            client: Arc::new(client),
+            config,
+        })
+    }
+
+    pub fn with_prefix(mut self, prefix: impl Into<String>) -> Self {
+        self.config.key_prefix = prefix.into();
+        self
+    }
+
+    pub fn with_ttl(mut self, ttl: Duration) -> Self {
+        self.config.default_ttl = Some(ttl);
+        self
+    }
+
+    pub fn without_ttl(mut self) -> Self {
+        self.config.default_ttl = None;
+        self
+    }
 
     fn session_key(&self, id: &SessionId) -> String {
-        format!("{}{}", self.key_prefix, id)
+        format!("{}{}", self.config.key_prefix, id)
     }
 
     fn tenant_key(&self, tenant_id: &str) -> String {
-        format!("{}tenant:{}", self.key_prefix, tenant_id)
+        format!("{}tenant:{}", self.config.key_prefix, tenant_id)
     }
 
     fn children_key(&self, parent_id: &SessionId) -> String {
-        format!("{}children:{}", self.key_prefix, parent_id)
+        format!("{}children:{}", self.config.key_prefix, parent_id)
     }
 
     fn summaries_key(&self, session_id: &SessionId) -> String {
-        format!("{}summaries:{}", self.key_prefix, session_id)
+        format!("{}summaries:{}", self.config.key_prefix, session_id)
     }
 
     fn queue_key(&self, session_id: &SessionId) -> String {
-        format!("{}queue:{}", self.key_prefix, session_id)
+        format!("{}queue:{}", self.config.key_prefix, session_id)
     }
 
     async fn get_connection(&self) -> SessionResult<redis::aio::MultiplexedConnection> {
-        self.client
-            .get_multiplexed_async_connection()
-            .await
-            .map_err(|e| SessionError::Storage {
-                message: e.to_string(),
-            })
+        tokio::time::timeout(
+            self.config.connection_timeout,
+            self.client.get_multiplexed_async_connection(),
+        )
+        .await
+        .map_err(|_| SessionError::Storage {
+            message: "Redis connection timeout".into(),
+        })?
+        .map_err(|e| SessionError::Storage {
+            message: e.to_string(),
+        })
     }
 }
 
@@ -86,7 +129,7 @@ impl Persistence for RedisPersistence {
         let ttl_secs = session
             .config
             .ttl_secs
-            .or_else(|| self.default_ttl.map(|d| d.as_secs()));
+            .or_else(|| self.config.default_ttl.map(|d| d.as_secs()));
 
         match ttl_secs {
             Some(ttl) => {
@@ -187,7 +230,7 @@ impl Persistence for RedisPersistence {
                 Ok(ids.into_iter().map(SessionId::from).collect())
             }
             None => {
-                let pattern = format!("{}*", self.key_prefix);
+                let pattern = format!("{}*", self.config.key_prefix);
                 let mut cursor: u64 = 0;
                 let mut all_ids = Vec::new();
 
@@ -205,7 +248,7 @@ impl Persistence for RedisPersistence {
                         })?;
 
                     for key in keys {
-                        if let Some(id) = key.strip_prefix(&self.key_prefix)
+                        if let Some(id) = key.strip_prefix(&self.config.key_prefix)
                             && !id.contains(':')
                         {
                             all_ids.push(SessionId::from(id));
@@ -309,7 +352,7 @@ impl Persistence for RedisPersistence {
 
     async fn cancel_queued(&self, item_id: Uuid) -> SessionResult<bool> {
         let mut conn = self.get_connection().await?;
-        let pattern = format!("{}queue:*", self.key_prefix);
+        let pattern = format!("{}queue:*", self.config.key_prefix);
 
         let mut cursor: u64 = 0;
         loop {

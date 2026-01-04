@@ -1,10 +1,41 @@
-//! PostgreSQL session persistence with multi-table design.
+//! PostgreSQL session persistence with explicit schema management.
+//!
+//! # Schema Management
+//!
+//! This module separates schema management from data access, allowing flexible deployment:
+//!
+//! ```rust,no_run
+//! use claude_agent::session::{PostgresPersistence, PostgresSchema, PostgresConfig};
+//!
+//! # async fn example() -> Result<(), Box<dyn std::error::Error>> {
+//! // Option 1: Auto-migrate (development/simple deployments)
+//! let persistence = PostgresPersistence::connect_and_migrate("postgres://...").await?;
+//!
+//! // Option 2: Connect only, manage schema externally (production)
+//! let persistence = PostgresPersistence::connect("postgres://...").await?;
+//!
+//! // Option 3: Export SQL for external migration tools (Flyway, Diesel, etc.)
+//! let sql = PostgresSchema::sql(&PostgresConfig::default());
+//! println!("{}", sql);
+//!
+//! // Option 4: Verify schema is correct
+//! let issues = persistence.verify_schema().await?;
+//! if !issues.is_empty() {
+//!     for issue in &issues {
+//!         eprintln!("Schema issue: {:?}", issue);
+//!     }
+//! }
+//! # Ok(())
+//! # }
+//! ```
 
 use std::sync::Arc;
+use std::time::Duration;
 
 use async_trait::async_trait;
 use chrono::Utc;
-use sqlx::{PgPool, Row};
+use sqlx::postgres::PgPoolOptions;
+use sqlx::{PgPool, Postgres, Row, Transaction};
 use uuid::Uuid;
 
 use super::persistence::Persistence;
@@ -12,6 +43,57 @@ use super::state::{Session, SessionConfig, SessionId, SessionMessage};
 use super::types::{CompactRecord, Plan, QueueItem, QueueStatus, SummarySnapshot, TodoItem};
 use super::{SessionError, SessionResult};
 
+// ============================================================================
+// Configuration
+// ============================================================================
+
+/// Connection pool configuration for PostgreSQL.
+#[derive(Clone, Debug)]
+pub struct PgPoolConfig {
+    pub max_connections: u32,
+    pub min_connections: u32,
+    pub connect_timeout: Duration,
+    pub idle_timeout: Duration,
+    pub max_lifetime: Duration,
+    pub acquire_timeout: Duration,
+}
+
+impl Default for PgPoolConfig {
+    fn default() -> Self {
+        Self {
+            max_connections: 10,
+            min_connections: 1,
+            connect_timeout: Duration::from_secs(30),
+            idle_timeout: Duration::from_secs(600),
+            max_lifetime: Duration::from_secs(1800),
+            acquire_timeout: Duration::from_secs(30),
+        }
+    }
+}
+
+impl PgPoolConfig {
+    pub fn high_throughput() -> Self {
+        Self {
+            max_connections: 50,
+            min_connections: 5,
+            connect_timeout: Duration::from_secs(10),
+            idle_timeout: Duration::from_secs(300),
+            max_lifetime: Duration::from_secs(900),
+            acquire_timeout: Duration::from_secs(10),
+        }
+    }
+
+    pub(crate) fn apply(&self) -> PgPoolOptions {
+        PgPoolOptions::new()
+            .max_connections(self.max_connections)
+            .min_connections(self.min_connections)
+            .acquire_timeout(self.acquire_timeout)
+            .idle_timeout(Some(self.idle_timeout))
+            .max_lifetime(Some(self.max_lifetime))
+    }
+}
+
+/// PostgreSQL persistence configuration.
 #[derive(Clone, Debug)]
 pub struct PostgresConfig {
     pub sessions_table: String,
@@ -21,6 +103,7 @@ pub struct PostgresConfig {
     pub queue_table: String,
     pub todos_table: String,
     pub plans_table: String,
+    pub pool: PgPoolConfig,
 }
 
 impl Default for PostgresConfig {
@@ -39,199 +122,217 @@ impl PostgresConfig {
             queue_table: format!("{prefix}queue"),
             todos_table: format!("{prefix}todos"),
             plans_table: format!("{prefix}plans"),
+            pool: PgPoolConfig::default(),
+        }
+    }
+
+    pub fn with_pool(mut self, pool: PgPoolConfig) -> Self {
+        self.pool = pool;
+        self
+    }
+
+    /// Get all table names.
+    pub fn table_names(&self) -> Vec<&str> {
+        vec![
+            &self.sessions_table,
+            &self.messages_table,
+            &self.compacts_table,
+            &self.summaries_table,
+            &self.queue_table,
+            &self.todos_table,
+            &self.plans_table,
+        ]
+    }
+}
+
+// ============================================================================
+// Schema Management
+// ============================================================================
+
+/// Schema issue found during verification.
+#[derive(Debug, Clone)]
+pub enum SchemaIssue {
+    MissingTable(String),
+    MissingIndex { table: String, index: String },
+    MissingColumn { table: String, column: String },
+}
+
+impl std::fmt::Display for SchemaIssue {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            SchemaIssue::MissingTable(t) => write!(f, "Missing table: {}", t),
+            SchemaIssue::MissingIndex { table, index } => {
+                write!(f, "Missing index '{}' on table '{}'", index, table)
+            }
+            SchemaIssue::MissingColumn { table, column } => {
+                write!(f, "Missing column '{}' in table '{}'", column, table)
+            }
         }
     }
 }
 
-pub struct PostgresPersistence {
-    pool: Arc<PgPool>,
-    config: PostgresConfig,
-}
+/// Schema manager for PostgreSQL persistence.
+///
+/// Provides utilities for schema creation, migration, and verification.
+pub struct PostgresSchema;
 
-impl PostgresPersistence {
-    pub async fn new(database_url: &str) -> Result<Self, sqlx::Error> {
-        let pool = PgPool::connect(database_url).await?;
-        Self::with_pool(Arc::new(pool)).await
+impl PostgresSchema {
+    /// Generate complete SQL DDL for all tables and indexes.
+    ///
+    /// Use this to integrate with external migration tools (Flyway, Diesel, etc.).
+    pub fn sql(config: &PostgresConfig) -> String {
+        let mut sql = String::new();
+        sql.push_str("-- Claude Agent Session Schema\n");
+        sql.push_str("-- Generated by claude-agent PostgresSchema\n\n");
+
+        for table_sql in Self::table_ddl(config) {
+            sql.push_str(&table_sql);
+            sql.push_str("\n\n");
+        }
+
+        sql.push_str("-- Indexes\n");
+        for index_sql in Self::index_ddl(config) {
+            sql.push_str(&index_sql);
+            sql.push_str(";\n");
+        }
+
+        sql
     }
 
-    pub async fn with_pool(pool: Arc<PgPool>) -> Result<Self, sqlx::Error> {
-        Self::with_config(pool, PostgresConfig::default()).await
+    /// Generate table DDL statements.
+    pub fn table_ddl(config: &PostgresConfig) -> Vec<String> {
+        let c = config;
+        vec![
+            format!(
+                r#"CREATE TABLE IF NOT EXISTS {sessions} (
+    id VARCHAR(255) PRIMARY KEY,
+    parent_id VARCHAR(255),
+    tenant_id VARCHAR(255),
+    session_type VARCHAR(32) NOT NULL DEFAULT 'main',
+    state VARCHAR(32) NOT NULL DEFAULT 'created',
+    mode VARCHAR(32) NOT NULL DEFAULT 'default',
+    config JSONB NOT NULL DEFAULT '{{}}',
+    permission_policy JSONB NOT NULL DEFAULT '{{}}',
+    summary TEXT,
+    total_input_tokens BIGINT DEFAULT 0,
+    total_output_tokens BIGINT DEFAULT 0,
+    total_cost_usd DECIMAL(12, 6) DEFAULT 0,
+    current_leaf_id VARCHAR(255),
+    static_context_hash VARCHAR(64),
+    error TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    expires_at TIMESTAMPTZ,
+    CONSTRAINT fk_{sessions}_parent FOREIGN KEY (parent_id) REFERENCES {sessions}(id) ON DELETE CASCADE
+);"#,
+                sessions = c.sessions_table
+            ),
+            format!(
+                r#"CREATE TABLE IF NOT EXISTS {messages} (
+    id VARCHAR(255) PRIMARY KEY,
+    session_id VARCHAR(255) NOT NULL,
+    parent_id VARCHAR(255),
+    role VARCHAR(16) NOT NULL,
+    content JSONB NOT NULL,
+    is_sidechain BOOLEAN DEFAULT FALSE,
+    is_compact_summary BOOLEAN DEFAULT FALSE,
+    model VARCHAR(64),
+    request_id VARCHAR(255),
+    usage JSONB,
+    metadata JSONB,
+    environment JSONB,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    CONSTRAINT fk_{messages}_session FOREIGN KEY (session_id) REFERENCES {sessions}(id) ON DELETE CASCADE
+);"#,
+                messages = c.messages_table,
+                sessions = c.sessions_table
+            ),
+            format!(
+                r#"CREATE TABLE IF NOT EXISTS {compacts} (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    session_id VARCHAR(255) NOT NULL,
+    trigger VARCHAR(32) NOT NULL,
+    pre_tokens INTEGER NOT NULL,
+    post_tokens INTEGER NOT NULL,
+    saved_tokens INTEGER NOT NULL,
+    summary TEXT NOT NULL,
+    original_count INTEGER NOT NULL,
+    new_count INTEGER NOT NULL,
+    logical_parent_id VARCHAR(255),
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    CONSTRAINT fk_{compacts}_session FOREIGN KEY (session_id) REFERENCES {sessions}(id) ON DELETE CASCADE
+);"#,
+                compacts = c.compacts_table,
+                sessions = c.sessions_table
+            ),
+            format!(
+                r#"CREATE TABLE IF NOT EXISTS {summaries} (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    session_id VARCHAR(255) NOT NULL,
+    summary TEXT NOT NULL,
+    leaf_message_id VARCHAR(255),
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    CONSTRAINT fk_{summaries}_session FOREIGN KEY (session_id) REFERENCES {sessions}(id) ON DELETE CASCADE
+);"#,
+                summaries = c.summaries_table,
+                sessions = c.sessions_table
+            ),
+            format!(
+                r#"CREATE TABLE IF NOT EXISTS {queue} (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    session_id VARCHAR(255) NOT NULL,
+    operation VARCHAR(32) NOT NULL,
+    content TEXT NOT NULL,
+    priority INTEGER DEFAULT 0,
+    status VARCHAR(32) NOT NULL DEFAULT 'pending',
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    processed_at TIMESTAMPTZ,
+    CONSTRAINT fk_{queue}_session FOREIGN KEY (session_id) REFERENCES {sessions}(id) ON DELETE CASCADE
+);"#,
+                queue = c.queue_table,
+                sessions = c.sessions_table
+            ),
+            format!(
+                r#"CREATE TABLE IF NOT EXISTS {todos} (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    session_id VARCHAR(255) NOT NULL,
+    plan_id UUID,
+    content TEXT NOT NULL,
+    active_form TEXT NOT NULL,
+    status VARCHAR(32) NOT NULL DEFAULT 'pending',
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    started_at TIMESTAMPTZ,
+    completed_at TIMESTAMPTZ,
+    CONSTRAINT fk_{todos}_session FOREIGN KEY (session_id) REFERENCES {sessions}(id) ON DELETE CASCADE
+);"#,
+                todos = c.todos_table,
+                sessions = c.sessions_table
+            ),
+            format!(
+                r#"CREATE TABLE IF NOT EXISTS {plans} (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    session_id VARCHAR(255) NOT NULL,
+    name VARCHAR(255),
+    content TEXT NOT NULL,
+    status VARCHAR(32) NOT NULL DEFAULT 'draft',
+    error TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    approved_at TIMESTAMPTZ,
+    started_at TIMESTAMPTZ,
+    completed_at TIMESTAMPTZ,
+    CONSTRAINT fk_{plans}_session FOREIGN KEY (session_id) REFERENCES {sessions}(id) ON DELETE CASCADE
+);"#,
+                plans = c.plans_table,
+                sessions = c.sessions_table
+            ),
+        ]
     }
 
-    pub async fn with_config(
-        pool: Arc<PgPool>,
-        config: PostgresConfig,
-    ) -> Result<Self, sqlx::Error> {
-        let persistence = Self { pool, config };
-        persistence.migrate().await?;
-        Ok(persistence)
-    }
-
-    pub async fn with_prefix(pool: Arc<PgPool>, prefix: &str) -> Result<Self, sqlx::Error> {
-        Self::with_config(pool, PostgresConfig::with_prefix(prefix)).await
-    }
-
-    pub async fn migrate(&self) -> Result<(), sqlx::Error> {
-        let c = &self.config;
-
-        sqlx::query(&format!(
-            r#"
-            CREATE TABLE IF NOT EXISTS {sessions} (
-                id VARCHAR(255) PRIMARY KEY,
-                parent_id VARCHAR(255),
-                tenant_id VARCHAR(255),
-                session_type VARCHAR(32) NOT NULL DEFAULT 'main',
-                state VARCHAR(32) NOT NULL DEFAULT 'created',
-                mode VARCHAR(32) NOT NULL DEFAULT 'default',
-                config JSONB NOT NULL DEFAULT '{{}}',
-                permission_policy JSONB NOT NULL DEFAULT '{{}}',
-                summary TEXT,
-                total_input_tokens BIGINT DEFAULT 0,
-                total_output_tokens BIGINT DEFAULT 0,
-                total_cost_usd DECIMAL(12, 6) DEFAULT 0,
-                current_leaf_id VARCHAR(255),
-                static_context_hash VARCHAR(64),
-                error TEXT,
-                created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-                updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-                expires_at TIMESTAMPTZ,
-                CONSTRAINT fk_{sessions}_parent FOREIGN KEY (parent_id) REFERENCES {sessions}(id) ON DELETE CASCADE
-            )
-            "#,
-            sessions = c.sessions_table
-        ))
-        .execute(self.pool.as_ref())
-        .await?;
-
-        sqlx::query(&format!(
-            r#"
-            CREATE TABLE IF NOT EXISTS {messages} (
-                id VARCHAR(255) PRIMARY KEY,
-                session_id VARCHAR(255) NOT NULL,
-                parent_id VARCHAR(255),
-                role VARCHAR(16) NOT NULL,
-                content JSONB NOT NULL,
-                is_sidechain BOOLEAN DEFAULT FALSE,
-                is_compact_summary BOOLEAN DEFAULT FALSE,
-                model VARCHAR(64),
-                request_id VARCHAR(255),
-                usage JSONB,
-                metadata JSONB,
-                environment JSONB,
-                created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-                CONSTRAINT fk_{messages}_session FOREIGN KEY (session_id) REFERENCES {sessions}(id) ON DELETE CASCADE
-            )
-            "#,
-            messages = c.messages_table,
-            sessions = c.sessions_table
-        ))
-        .execute(self.pool.as_ref())
-        .await?;
-
-        sqlx::query(&format!(
-            r#"
-            CREATE TABLE IF NOT EXISTS {compacts} (
-                id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-                session_id VARCHAR(255) NOT NULL,
-                trigger VARCHAR(32) NOT NULL,
-                pre_tokens INTEGER NOT NULL,
-                post_tokens INTEGER NOT NULL,
-                saved_tokens INTEGER NOT NULL,
-                summary TEXT NOT NULL,
-                original_count INTEGER NOT NULL,
-                new_count INTEGER NOT NULL,
-                logical_parent_id VARCHAR(255),
-                created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-                CONSTRAINT fk_{compacts}_session FOREIGN KEY (session_id) REFERENCES {sessions}(id) ON DELETE CASCADE
-            )
-            "#,
-            compacts = c.compacts_table,
-            sessions = c.sessions_table
-        ))
-        .execute(self.pool.as_ref())
-        .await?;
-
-        sqlx::query(&format!(
-            r#"
-            CREATE TABLE IF NOT EXISTS {summaries} (
-                id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-                session_id VARCHAR(255) NOT NULL,
-                summary TEXT NOT NULL,
-                leaf_message_id VARCHAR(255),
-                created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-                CONSTRAINT fk_{summaries}_session FOREIGN KEY (session_id) REFERENCES {sessions}(id) ON DELETE CASCADE
-            )
-            "#,
-            summaries = c.summaries_table,
-            sessions = c.sessions_table
-        ))
-        .execute(self.pool.as_ref())
-        .await?;
-
-        sqlx::query(&format!(
-            r#"
-            CREATE TABLE IF NOT EXISTS {queue} (
-                id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-                session_id VARCHAR(255) NOT NULL,
-                operation VARCHAR(32) NOT NULL,
-                content TEXT NOT NULL,
-                priority INTEGER DEFAULT 0,
-                status VARCHAR(32) NOT NULL DEFAULT 'pending',
-                created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-                processed_at TIMESTAMPTZ,
-                CONSTRAINT fk_{queue}_session FOREIGN KEY (session_id) REFERENCES {sessions}(id) ON DELETE CASCADE
-            )
-            "#,
-            queue = c.queue_table,
-            sessions = c.sessions_table
-        ))
-        .execute(self.pool.as_ref())
-        .await?;
-
-        sqlx::query(&format!(
-            r#"
-            CREATE TABLE IF NOT EXISTS {todos} (
-                id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-                session_id VARCHAR(255) NOT NULL,
-                plan_id UUID,
-                content TEXT NOT NULL,
-                active_form TEXT NOT NULL,
-                status VARCHAR(32) NOT NULL DEFAULT 'pending',
-                created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-                started_at TIMESTAMPTZ,
-                completed_at TIMESTAMPTZ,
-                CONSTRAINT fk_{todos}_session FOREIGN KEY (session_id) REFERENCES {sessions}(id) ON DELETE CASCADE
-            )
-            "#,
-            todos = c.todos_table,
-            sessions = c.sessions_table
-        ))
-        .execute(self.pool.as_ref())
-        .await?;
-
-        sqlx::query(&format!(
-            r#"
-            CREATE TABLE IF NOT EXISTS {plans} (
-                id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-                session_id VARCHAR(255) NOT NULL,
-                name VARCHAR(255),
-                content TEXT NOT NULL,
-                status VARCHAR(32) NOT NULL DEFAULT 'draft',
-                error TEXT,
-                created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-                approved_at TIMESTAMPTZ,
-                started_at TIMESTAMPTZ,
-                completed_at TIMESTAMPTZ,
-                CONSTRAINT fk_{plans}_session FOREIGN KEY (session_id) REFERENCES {sessions}(id) ON DELETE CASCADE
-            )
-            "#,
-            plans = c.plans_table,
-            sessions = c.sessions_table
-        ))
-        .execute(self.pool.as_ref())
-        .await?;
-
-        let indexes = [
+    /// Generate index DDL statements.
+    pub fn index_ddl(config: &PostgresConfig) -> Vec<String> {
+        let c = config;
+        vec![
+            // Sessions indexes
             format!(
                 "CREATE INDEX IF NOT EXISTS idx_{0}_tenant ON {0}(tenant_id)",
                 c.sessions_table
@@ -248,6 +349,7 @@ impl PostgresPersistence {
                 "CREATE INDEX IF NOT EXISTS idx_{0}_state ON {0}(state)",
                 c.sessions_table
             ),
+            // Messages indexes
             format!(
                 "CREATE INDEX IF NOT EXISTS idx_{0}_session ON {0}(session_id)",
                 c.messages_table
@@ -256,34 +358,218 @@ impl PostgresPersistence {
                 "CREATE INDEX IF NOT EXISTS idx_{0}_created ON {0}(session_id, created_at)",
                 c.messages_table
             ),
+            // Compacts index
             format!(
                 "CREATE INDEX IF NOT EXISTS idx_{0}_session ON {0}(session_id)",
                 c.compacts_table
             ),
+            // Summaries index
             format!(
                 "CREATE INDEX IF NOT EXISTS idx_{0}_session ON {0}(session_id)",
                 c.summaries_table
             ),
+            // Queue indexes
             format!(
                 "CREATE INDEX IF NOT EXISTS idx_{0}_session_status ON {0}(session_id, status)",
                 c.queue_table
             ),
+            // Todos index
             format!(
                 "CREATE INDEX IF NOT EXISTS idx_{0}_session ON {0}(session_id)",
                 c.todos_table
             ),
+            // Plans index
             format!(
                 "CREATE INDEX IF NOT EXISTS idx_{0}_session ON {0}(session_id)",
                 c.plans_table
             ),
-        ];
+        ]
+    }
 
-        for sql in indexes {
-            sqlx::query(&sql).execute(self.pool.as_ref()).await?;
+    /// Get expected indexes as (table_name, index_name) pairs.
+    pub fn expected_indexes(config: &PostgresConfig) -> Vec<(String, String)> {
+        let c = config;
+        vec![
+            (
+                c.sessions_table.clone(),
+                format!("idx_{}_tenant", c.sessions_table),
+            ),
+            (
+                c.sessions_table.clone(),
+                format!("idx_{}_parent", c.sessions_table),
+            ),
+            (
+                c.sessions_table.clone(),
+                format!("idx_{}_expires", c.sessions_table),
+            ),
+            (
+                c.sessions_table.clone(),
+                format!("idx_{}_state", c.sessions_table),
+            ),
+            (
+                c.messages_table.clone(),
+                format!("idx_{}_session", c.messages_table),
+            ),
+            (
+                c.messages_table.clone(),
+                format!("idx_{}_created", c.messages_table),
+            ),
+            (
+                c.compacts_table.clone(),
+                format!("idx_{}_session", c.compacts_table),
+            ),
+            (
+                c.summaries_table.clone(),
+                format!("idx_{}_session", c.summaries_table),
+            ),
+            (
+                c.queue_table.clone(),
+                format!("idx_{}_session_status", c.queue_table),
+            ),
+            (
+                c.todos_table.clone(),
+                format!("idx_{}_session", c.todos_table),
+            ),
+            (
+                c.plans_table.clone(),
+                format!("idx_{}_session", c.plans_table),
+            ),
+        ]
+    }
+
+    /// Run migration to create tables and indexes.
+    pub async fn migrate(pool: &PgPool, config: &PostgresConfig) -> Result<(), sqlx::Error> {
+        for table_ddl in Self::table_ddl(config) {
+            sqlx::query(&table_ddl).execute(pool).await?;
+        }
+
+        for index_ddl in Self::index_ddl(config) {
+            sqlx::query(&index_ddl).execute(pool).await?;
         }
 
         Ok(())
     }
+
+    /// Verify schema integrity - check tables and indexes exist.
+    pub async fn verify(
+        pool: &PgPool,
+        config: &PostgresConfig,
+    ) -> Result<Vec<SchemaIssue>, sqlx::Error> {
+        let mut issues = Vec::new();
+
+        // Check tables
+        for table in config.table_names() {
+            let exists: bool = sqlx::query_scalar(
+                "SELECT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = $1)",
+            )
+            .bind(table)
+            .fetch_one(pool)
+            .await?;
+
+            if !exists {
+                issues.push(SchemaIssue::MissingTable(table.to_string()));
+            }
+        }
+
+        // Check indexes
+        for (table, index) in Self::expected_indexes(config) {
+            let exists: bool = sqlx::query_scalar(
+                "SELECT EXISTS (SELECT 1 FROM pg_indexes WHERE tablename = $1 AND indexname = $2)",
+            )
+            .bind(&table)
+            .bind(&index)
+            .fetch_one(pool)
+            .await?;
+
+            if !exists {
+                issues.push(SchemaIssue::MissingIndex { table, index });
+            }
+        }
+
+        Ok(issues)
+    }
+}
+
+// ============================================================================
+// Persistence Implementation
+// ============================================================================
+
+/// PostgreSQL session persistence.
+pub struct PostgresPersistence {
+    pool: Arc<PgPool>,
+    config: PostgresConfig,
+}
+
+impl PostgresPersistence {
+    /// Connect to database without running migrations.
+    ///
+    /// Use this when managing schema externally (production deployments).
+    pub async fn connect(database_url: &str) -> Result<Self, sqlx::Error> {
+        Self::connect_with_config(database_url, PostgresConfig::default()).await
+    }
+
+    /// Connect with custom configuration, without running migrations.
+    pub async fn connect_with_config(
+        database_url: &str,
+        config: PostgresConfig,
+    ) -> Result<Self, sqlx::Error> {
+        let pool = config.pool.apply().connect(database_url).await?;
+        Ok(Self {
+            pool: Arc::new(pool),
+            config,
+        })
+    }
+
+    /// Connect and run migrations automatically.
+    ///
+    /// Convenient for development and simple deployments.
+    pub async fn connect_and_migrate(database_url: &str) -> Result<Self, sqlx::Error> {
+        Self::connect_and_migrate_with_config(database_url, PostgresConfig::default()).await
+    }
+
+    /// Connect with custom configuration and run migrations.
+    pub async fn connect_and_migrate_with_config(
+        database_url: &str,
+        config: PostgresConfig,
+    ) -> Result<Self, sqlx::Error> {
+        let persistence = Self::connect_with_config(database_url, config).await?;
+        persistence.migrate().await?;
+        Ok(persistence)
+    }
+
+    /// Use an existing pool without running migrations.
+    pub fn with_pool(pool: Arc<PgPool>) -> Self {
+        Self::with_pool_and_config(pool, PostgresConfig::default())
+    }
+
+    /// Use an existing pool with custom configuration.
+    pub fn with_pool_and_config(pool: Arc<PgPool>, config: PostgresConfig) -> Self {
+        Self { pool, config }
+    }
+
+    /// Run schema migration.
+    pub async fn migrate(&self) -> Result<(), sqlx::Error> {
+        PostgresSchema::migrate(&self.pool, &self.config).await
+    }
+
+    /// Verify schema integrity.
+    pub async fn verify_schema(&self) -> Result<Vec<SchemaIssue>, sqlx::Error> {
+        PostgresSchema::verify(&self.pool, &self.config).await
+    }
+
+    /// Get the underlying connection pool.
+    pub fn pool(&self) -> &PgPool {
+        &self.pool
+    }
+
+    /// Get the configuration.
+    pub fn config(&self) -> &PostgresConfig {
+        &self.config
+    }
+
+    // ========================================================================
+    // Internal helpers
+    // ========================================================================
 
     async fn load_session_row(&self, session_id: &SessionId) -> SessionResult<Session> {
         let c = &self.config;
@@ -576,7 +862,12 @@ impl PostgresPersistence {
         }))
     }
 
-    async fn save_todos(&self, session_id: &SessionId, todos: &[TodoItem]) -> SessionResult<()> {
+    async fn save_todos_tx(
+        &self,
+        tx: &mut Transaction<'_, Postgres>,
+        session_id: &SessionId,
+        todos: &[TodoItem],
+    ) -> SessionResult<()> {
         let c = &self.config;
 
         sqlx::query(&format!(
@@ -584,7 +875,7 @@ impl PostgresPersistence {
             todos = c.todos_table
         ))
         .bind(session_id.to_string())
-        .execute(self.pool.as_ref())
+        .execute(&mut **tx)
         .await
         .map_err(|e| SessionError::PersistenceError(e.to_string()))?;
 
@@ -612,7 +903,7 @@ impl PostgresPersistence {
             .bind(todo.created_at)
             .bind(todo.started_at)
             .bind(todo.completed_at)
-            .execute(self.pool.as_ref())
+            .execute(&mut **tx)
             .await
             .map_err(|e| SessionError::PersistenceError(e.to_string()))?;
         }
@@ -620,7 +911,11 @@ impl PostgresPersistence {
         Ok(())
     }
 
-    async fn save_plan(&self, plan: &Plan) -> SessionResult<()> {
+    async fn save_plan_tx(
+        &self,
+        tx: &mut Transaction<'_, Postgres>,
+        plan: &Plan,
+    ) -> SessionResult<()> {
         let c = &self.config;
 
         let status = serde_json::to_string(&plan.status)
@@ -655,27 +950,27 @@ impl PostgresPersistence {
         .bind(plan.approved_at)
         .bind(plan.started_at)
         .bind(plan.completed_at)
-        .execute(self.pool.as_ref())
+        .execute(&mut **tx)
         .await
         .map_err(|e| SessionError::PersistenceError(e.to_string()))?;
 
         Ok(())
     }
 
-    async fn save_compacts(
+    async fn save_compacts_tx(
         &self,
+        tx: &mut Transaction<'_, Postgres>,
         session_id: &SessionId,
         compacts: &[CompactRecord],
     ) -> SessionResult<()> {
         let c = &self.config;
 
-        // Delete existing and re-insert (simple approach for append-only history)
         sqlx::query(&format!(
             "DELETE FROM {compacts} WHERE session_id = $1",
             compacts = c.compacts_table
         ))
         .bind(session_id.to_string())
-        .execute(self.pool.as_ref())
+        .execute(&mut **tx)
         .await
         .map_err(|e| SessionError::PersistenceError(e.to_string()))?;
 
@@ -705,7 +1000,7 @@ impl PostgresPersistence {
             .bind(compact.new_count as i32)
             .bind(compact.logical_parent_id.as_ref().map(|id| id.to_string()))
             .bind(compact.created_at)
-            .execute(self.pool.as_ref())
+            .execute(&mut **tx)
             .await
             .map_err(|e| SessionError::PersistenceError(e.to_string()))?;
         }
@@ -713,21 +1008,20 @@ impl PostgresPersistence {
         Ok(())
     }
 
-    async fn save_messages(
+    async fn save_messages_tx(
         &self,
+        tx: &mut Transaction<'_, Postgres>,
         session_id: &SessionId,
         messages: &[SessionMessage],
     ) -> SessionResult<()> {
         let c = &self.config;
 
-        // Delete existing messages and re-insert
-        // This is used after compact when message list is replaced
         sqlx::query(&format!(
             "DELETE FROM {messages} WHERE session_id = $1",
             messages = c.messages_table
         ))
         .bind(session_id.to_string())
-        .execute(self.pool.as_ref())
+        .execute(&mut **tx)
         .await
         .map_err(|e| SessionError::PersistenceError(e.to_string()))?;
 
@@ -770,7 +1064,7 @@ impl PostgresPersistence {
                     .and_then(|e| serde_json::to_value(e).ok()),
             )
             .bind(message.timestamp)
-            .execute(self.pool.as_ref())
+            .execute(&mut **tx)
             .await
             .map_err(|e| SessionError::PersistenceError(e.to_string()))?;
         }
@@ -787,6 +1081,12 @@ impl Persistence for PostgresPersistence {
 
     async fn save(&self, session: &Session) -> SessionResult<()> {
         let c = &self.config;
+
+        let mut tx = self
+            .pool
+            .begin()
+            .await
+            .map_err(|e| SessionError::PersistenceError(e.to_string()))?;
 
         let session_type = serde_json::to_string(&session.session_type)
             .unwrap_or_else(|_| "\"main\"".to_string())
@@ -853,20 +1153,24 @@ impl Persistence for PostgresPersistence {
         .bind(session.created_at)
         .bind(session.updated_at)
         .bind(session.expires_at)
-        .execute(self.pool.as_ref())
+        .execute(&mut *tx)
         .await
         .map_err(|e| SessionError::PersistenceError(e.to_string()))?;
 
-        // Save related data to separate tables
-        // Always sync to ensure empty collections are reflected in DB
-        self.save_messages(&session.id, &session.messages).await?;
-        self.save_todos(&session.id, &session.todos).await?;
-        self.save_compacts(&session.id, &session.compact_history)
+        self.save_messages_tx(&mut tx, &session.id, &session.messages)
+            .await?;
+        self.save_todos_tx(&mut tx, &session.id, &session.todos)
+            .await?;
+        self.save_compacts_tx(&mut tx, &session.id, &session.compact_history)
             .await?;
 
         if let Some(ref plan) = session.current_plan {
-            self.save_plan(plan).await?;
+            self.save_plan_tx(&mut tx, plan).await?;
         }
+
+        tx.commit()
+            .await
+            .map_err(|e| SessionError::PersistenceError(e.to_string()))?;
 
         Ok(())
     }

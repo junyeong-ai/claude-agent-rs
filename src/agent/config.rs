@@ -6,6 +6,7 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::time::Duration;
 
+use crate::client::messages::DEFAULT_MAX_TOKENS;
 use crate::output_style::OutputStyle;
 use crate::permissions::PermissionPolicy;
 use crate::tools::ToolAccess;
@@ -26,7 +27,7 @@ impl Default for AgentModelConfig {
         Self {
             primary: crate::client::DEFAULT_MODEL.to_string(),
             small: crate::client::DEFAULT_SMALL_MODEL.to_string(),
-            max_tokens: 8192,
+            max_tokens: DEFAULT_MAX_TOKENS,
         }
     }
 }

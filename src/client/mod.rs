@@ -25,8 +25,9 @@ pub use files::{File, FileData, FileDownload, FileListResponse, FilesClient, Upl
 pub use gateway::GatewayConfig;
 pub use messages::{
     ClearConfig, ClearTrigger, ContextEdit, ContextManagement, CountTokensContextManagement,
-    CountTokensRequest, CountTokensResponse, CreateMessageRequest, EffortLevel, KeepConfig,
-    KeepThinkingConfig, OutputConfig, OutputFormat, ThinkingConfig, ThinkingType, ToolChoice,
+    CountTokensRequest, CountTokensResponse, CreateMessageRequest, DEFAULT_MAX_TOKENS, EffortLevel,
+    KeepConfig, KeepThinkingConfig, MAX_TOKENS_128K, MIN_MAX_TOKENS, MIN_THINKING_BUDGET,
+    OutputConfig, OutputFormat, ThinkingConfig, ThinkingType, TokenValidationError, ToolChoice,
 };
 pub use network::{ClientCertConfig, NetworkConfig, PoolConfig, ProxyConfig};
 pub use recovery::StreamRecoveryState;
@@ -111,12 +112,15 @@ impl Client {
         let model = self.adapter.model(model_type).to_string();
         let request = CreateMessageRequest::new(&model, vec![crate::types::Message::user(prompt)])
             .with_max_tokens(self.adapter.config().max_tokens);
+        request.validate()?;
 
         let response = self.adapter.send(&self.http, request).await?;
         Ok(response.text())
     }
 
     pub async fn send(&self, request: CreateMessageRequest) -> Result<crate::types::ApiResponse> {
+        request.validate()?;
+
         let fallback = match &self.fallback_config {
             Some(f) => f,
             None => return self.adapter.send(&self.http, request).await,
@@ -166,6 +170,7 @@ impl Client {
         &self,
         request: CreateMessageRequest,
     ) -> Result<crate::types::ApiResponse> {
+        request.validate()?;
         self.adapter.send(&self.http, request).await
     }
 
@@ -180,6 +185,7 @@ impl Client {
         let model = self.adapter.model(ModelType::Primary).to_string();
         let request = CreateMessageRequest::new(&model, vec![crate::types::Message::user(prompt)])
             .with_max_tokens(self.adapter.config().max_tokens);
+        request.validate()?;
 
         let response = self.adapter.send_stream(&self.http, request).await?;
         let stream = StreamParser::new(response.bytes_stream());
@@ -200,6 +206,7 @@ impl Client {
         &self,
         request: CreateMessageRequest,
     ) -> Result<impl futures::Stream<Item = Result<StreamItem>> + Send + 'static + use<>> {
+        request.validate()?;
         let response = self.adapter.send_stream(&self.http, request).await?;
         Ok(StreamParser::new(response.bytes_stream()))
     }
@@ -215,6 +222,7 @@ impl Client {
             + use<>,
         >,
     > {
+        request.validate()?;
         let response = self.adapter.send_stream(&self.http, request).await?;
         Ok(RecoverableStream::new(response.bytes_stream()))
     }
@@ -287,6 +295,7 @@ impl Client {
         &self,
         request: CreateMessageRequest,
     ) -> Result<reqwest::Response> {
+        request.validate()?;
         self.adapter.ensure_fresh_credentials().await?;
 
         match self.adapter.send_stream(&self.http, request.clone()).await {

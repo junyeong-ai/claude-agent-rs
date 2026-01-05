@@ -94,10 +94,11 @@ pub use budget::{
 pub use client::{
     AnthropicAdapter, BetaConfig, BetaFeature, CircuitBreaker, CircuitConfig, CircuitState, Client,
     ClientBuilder, ClientCertConfig, CloudProvider, CountTokensRequest, CountTokensResponse,
-    EffortLevel, ExponentialBackoff, FallbackConfig, FallbackTrigger, File, FileData, FileDownload,
-    FileListResponse, FilesClient, GatewayConfig, ModelConfig, ModelType, NetworkConfig,
-    OutputConfig, ProviderAdapter, ProviderConfig, ProxyConfig, Resilience, ResilienceConfig,
-    RetryConfig, UploadFileRequest, strict_schema, transform_for_strict,
+    DEFAULT_MAX_TOKENS, EffortLevel, ExponentialBackoff, FallbackConfig, FallbackTrigger, File,
+    FileData, FileDownload, FileListResponse, FilesClient, GatewayConfig, MAX_TOKENS_128K,
+    MIN_MAX_TOKENS, MIN_THINKING_BUDGET, ModelConfig, ModelType, NetworkConfig, OutputConfig,
+    ProviderAdapter, ProviderConfig, ProxyConfig, Resilience, ResilienceConfig, RetryConfig,
+    TokenValidationError, UploadFileRequest, strict_schema, transform_for_strict,
 };
 pub use common::{Named, Provider, SourceType, ToolRestricted};
 pub use context::{
@@ -217,6 +218,10 @@ pub enum Error {
     #[error("Operation timed out after {:.1}s", .0.as_secs_f64())]
     Timeout(std::time::Duration),
 
+    /// Token configuration validation failed.
+    #[error("Token validation failed: {0}")]
+    TokenValidation(#[from] client::messages::TokenValidationError),
+
     /// Request parameters are invalid.
     #[error("Invalid request: {0}")]
     InvalidRequest(String),
@@ -304,9 +309,11 @@ impl Error {
                 ErrorCategory::Authorization
             }
 
-            Error::Config(_) | Error::Parse(_) | Error::Env(_) | Error::InvalidRequest(_) => {
-                ErrorCategory::Configuration
-            }
+            Error::Config(_)
+            | Error::Parse(_)
+            | Error::Env(_)
+            | Error::InvalidRequest(_)
+            | Error::TokenValidation(_) => ErrorCategory::Configuration,
 
             Error::Network(_) | Error::RateLimit { .. } | Error::ModelOverloaded { .. } => {
                 ErrorCategory::Transient

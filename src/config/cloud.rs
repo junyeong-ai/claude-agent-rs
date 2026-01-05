@@ -3,6 +3,8 @@
 use std::collections::HashMap;
 use std::env;
 
+use crate::client::messages::{DEFAULT_MAX_TOKENS, MIN_THINKING_BUDGET};
+
 #[derive(Clone, Debug, Default)]
 pub struct CloudConfig {
     pub provider: ProviderSelection,
@@ -27,8 +29,8 @@ pub struct TokenLimits {
 impl Default for TokenLimits {
     fn default() -> Self {
         Self {
-            max_output: 8192,
-            max_thinking: 1024,
+            max_output: DEFAULT_MAX_TOKENS,
+            max_thinking: MIN_THINKING_BUDGET,
         }
     }
 }
@@ -123,8 +125,10 @@ impl ProviderSelection {
 impl TokenLimits {
     pub fn from_env() -> Self {
         Self {
-            max_output: parse_env("CLAUDE_CODE_MAX_OUTPUT_TOKENS").unwrap_or(8192),
-            max_thinking: parse_env("MAX_THINKING_TOKENS").unwrap_or(1024),
+            max_output: parse_env("CLAUDE_CODE_MAX_OUTPUT_TOKENS").unwrap_or(DEFAULT_MAX_TOKENS),
+            max_thinking: parse_env("MAX_THINKING_TOKENS")
+                .unwrap_or(MIN_THINKING_BUDGET)
+                .max(MIN_THINKING_BUDGET),
         }
     }
 }
@@ -271,7 +275,15 @@ mod tests {
         assert!(!config.provider.use_bedrock);
         assert!(!config.provider.use_vertex);
         assert!(!config.provider.use_foundry);
-        assert_eq!(config.tokens.max_output, 8192);
+        assert_eq!(config.tokens.max_output, DEFAULT_MAX_TOKENS);
+        assert_eq!(config.tokens.max_thinking, MIN_THINKING_BUDGET);
+    }
+
+    #[test]
+    fn test_token_limits_default() {
+        let limits = TokenLimits::default();
+        assert_eq!(limits.max_output, DEFAULT_MAX_TOKENS);
+        assert_eq!(limits.max_thinking, MIN_THINKING_BUDGET);
     }
 
     #[test]

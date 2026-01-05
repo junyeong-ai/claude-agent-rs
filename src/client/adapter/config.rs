@@ -3,6 +3,8 @@
 use std::collections::{HashMap, HashSet};
 use std::env;
 
+use crate::client::messages::{DEFAULT_MAX_TOKENS, MIN_THINKING_BUDGET};
+
 // Anthropic API models
 pub const DEFAULT_MODEL: &str = "claude-sonnet-4-5-20250929";
 pub const DEFAULT_SMALL_MODEL: &str = "claude-haiku-4-5-20251001";
@@ -307,7 +309,7 @@ impl ProviderConfig {
     pub fn new(models: ModelConfig) -> Self {
         Self {
             models,
-            max_tokens: 8192,
+            max_tokens: DEFAULT_MAX_TOKENS,
             thinking_budget: None,
             enable_caching: !env::var("DISABLE_PROMPT_CACHING")
                 .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
@@ -320,11 +322,15 @@ impl ProviderConfig {
 
     pub fn with_max_tokens(mut self, tokens: u32) -> Self {
         self.max_tokens = tokens;
+        if tokens > DEFAULT_MAX_TOKENS {
+            self.beta.add(BetaFeature::MaxTokens128k);
+        }
         self
     }
 
     pub fn with_thinking(mut self, budget: u32) -> Self {
-        self.thinking_budget = Some(budget);
+        self.thinking_budget = Some(budget.max(MIN_THINKING_BUDGET));
+        self.beta.add(BetaFeature::InterleavedThinking);
         self
     }
 
@@ -352,6 +358,10 @@ impl ProviderConfig {
         self.extra_headers.insert(key.into(), value.into());
         self
     }
+
+    pub fn requires_128k_beta(&self) -> bool {
+        self.max_tokens > DEFAULT_MAX_TOKENS
+    }
 }
 
 impl Default for ProviderConfig {
@@ -373,6 +383,13 @@ mod tests {
     }
 
     #[test]
+    fn test_provider_config_default_max_tokens() {
+        let config = ProviderConfig::default();
+        assert_eq!(config.max_tokens, DEFAULT_MAX_TOKENS);
+        assert!(!config.requires_128k_beta());
+    }
+
+    #[test]
     fn test_provider_config_builder() {
         let config = ProviderConfig::new(ModelConfig::anthropic())
             .with_max_tokens(16384)
@@ -382,6 +399,31 @@ mod tests {
         assert_eq!(config.max_tokens, 16384);
         assert_eq!(config.thinking_budget, Some(10000));
         assert!(!config.enable_caching);
+        assert!(config.requires_128k_beta());
+        assert!(config.beta.has(BetaFeature::MaxTokens128k));
+        assert!(config.beta.has(BetaFeature::InterleavedThinking));
+    }
+
+    #[test]
+    fn test_provider_config_auto_128k_beta() {
+        let config = ProviderConfig::default().with_max_tokens(DEFAULT_MAX_TOKENS);
+        assert!(!config.beta.has(BetaFeature::MaxTokens128k));
+
+        let config = ProviderConfig::default().with_max_tokens(DEFAULT_MAX_TOKENS + 1);
+        assert!(config.beta.has(BetaFeature::MaxTokens128k));
+    }
+
+    #[test]
+    fn test_provider_config_thinking_auto_beta() {
+        let config = ProviderConfig::default().with_thinking(5000);
+        assert!(config.beta.has(BetaFeature::InterleavedThinking));
+        assert_eq!(config.thinking_budget, Some(5000));
+    }
+
+    #[test]
+    fn test_provider_config_thinking_min_budget() {
+        let config = ProviderConfig::default().with_thinking(500);
+        assert_eq!(config.thinking_budget, Some(MIN_THINKING_BUDGET));
     }
 
     #[test]
@@ -389,6 +431,10 @@ mod tests {
         assert_eq!(
             BetaFeature::InterleavedThinking.header_value(),
             "interleaved-thinking-2025-05-14"
+        );
+        assert_eq!(
+            BetaFeature::MaxTokens128k.header_value(),
+            "max-tokens-3-5-sonnet-2024-07-15"
         );
     }
 

@@ -2,6 +2,39 @@
 
 use serde::{Deserialize, Serialize};
 
+pub const MIN_THINKING_BUDGET: u32 = 1024;
+pub const DEFAULT_MAX_TOKENS: u32 = 8192;
+pub const MAX_TOKENS_128K: u32 = 128_000;
+pub const MIN_MAX_TOKENS: u32 = 1;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum TokenValidationError {
+    ThinkingBudgetExceedsMaxTokens { budget: u32, max_tokens: u32 },
+    MaxTokensTooLow { min: u32, actual: u32 },
+    MaxTokensTooHigh { max: u32, actual: u32 },
+}
+
+impl std::fmt::Display for TokenValidationError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::ThinkingBudgetExceedsMaxTokens { budget, max_tokens } => {
+                write!(
+                    f,
+                    "thinking budget_tokens ({budget}) must be < max_tokens ({max_tokens})"
+                )
+            }
+            Self::MaxTokensTooLow { min, actual } => {
+                write!(f, "max_tokens ({actual}) must be >= {min}")
+            }
+            Self::MaxTokensTooHigh { max, actual } => {
+                write!(f, "max_tokens ({actual}) exceeds maximum allowed ({max})")
+            }
+        }
+    }
+}
+
+impl std::error::Error for TokenValidationError {}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum EffortLevel {
@@ -58,7 +91,7 @@ impl ThinkingConfig {
     pub fn enabled(budget_tokens: u32) -> Self {
         Self {
             thinking_type: ThinkingType::Enabled,
-            budget_tokens: Some(budget_tokens),
+            budget_tokens: Some(budget_tokens.max(MIN_THINKING_BUDGET)),
         }
     }
 
@@ -67,6 +100,26 @@ impl ThinkingConfig {
             thinking_type: ThinkingType::Disabled,
             budget_tokens: None,
         }
+    }
+
+    pub fn is_enabled(&self) -> bool {
+        self.thinking_type == ThinkingType::Enabled
+    }
+
+    pub fn budget(&self) -> Option<u32> {
+        self.budget_tokens
+    }
+
+    pub fn validate_against_max_tokens(&self, max_tokens: u32) -> Result<(), TokenValidationError> {
+        if let Some(budget) = self.budget_tokens
+            && budget >= max_tokens
+        {
+            return Err(TokenValidationError::ThinkingBudgetExceedsMaxTokens {
+                budget,
+                max_tokens,
+            });
+        }
+        Ok(())
     }
 }
 
@@ -108,14 +161,34 @@ mod tests {
     fn test_thinking_config_enabled() {
         let config = ThinkingConfig::enabled(10000);
         assert_eq!(config.thinking_type, ThinkingType::Enabled);
-        assert_eq!(config.budget_tokens, Some(10000));
+        assert_eq!(config.budget(), Some(10000));
+        assert!(config.is_enabled());
+    }
+
+    #[test]
+    fn test_thinking_config_enabled_auto_clamp() {
+        let config = ThinkingConfig::enabled(500);
+        assert!(config.is_enabled());
+        assert_eq!(config.budget(), Some(MIN_THINKING_BUDGET));
+
+        let config = ThinkingConfig::enabled(MIN_THINKING_BUDGET);
+        assert_eq!(config.budget(), Some(MIN_THINKING_BUDGET));
     }
 
     #[test]
     fn test_thinking_config_disabled() {
         let config = ThinkingConfig::disabled();
         assert_eq!(config.thinking_type, ThinkingType::Disabled);
-        assert_eq!(config.budget_tokens, None);
+        assert_eq!(config.budget(), None);
+        assert!(!config.is_enabled());
+    }
+
+    #[test]
+    fn test_thinking_config_validate_against_max_tokens() {
+        let config = ThinkingConfig::enabled(2000);
+        assert!(config.validate_against_max_tokens(4000).is_ok());
+        assert!(config.validate_against_max_tokens(2000).is_err());
+        assert!(config.validate_against_max_tokens(1000).is_err());
     }
 
     #[test]
@@ -124,6 +197,30 @@ mod tests {
         let json = serde_json::to_string(&config).unwrap();
         assert!(json.contains("\"type\":\"enabled\""));
         assert!(json.contains("\"budget_tokens\":5000"));
+    }
+
+    #[test]
+    fn test_token_validation_error_display() {
+        let err = TokenValidationError::ThinkingBudgetExceedsMaxTokens {
+            budget: 5000,
+            max_tokens: 4000,
+        };
+        assert_eq!(
+            err.to_string(),
+            "thinking budget_tokens (5000) must be < max_tokens (4000)"
+        );
+
+        let err = TokenValidationError::MaxTokensTooLow { min: 1, actual: 0 };
+        assert_eq!(err.to_string(), "max_tokens (0) must be >= 1");
+
+        let err = TokenValidationError::MaxTokensTooHigh {
+            max: 128_000,
+            actual: 200_000,
+        };
+        assert_eq!(
+            err.to_string(),
+            "max_tokens (200000) exceeds maximum allowed (128000)"
+        );
     }
 
     #[test]
@@ -150,17 +247,15 @@ mod tests {
 
     #[test]
     fn test_effort_level_serialization() {
-        let effort = EffortLevel::Low;
-        let json = serde_json::to_string(&effort).unwrap();
-        assert_eq!(json, "\"low\"");
-
-        let effort = EffortLevel::Medium;
-        let json = serde_json::to_string(&effort).unwrap();
-        assert_eq!(json, "\"medium\"");
-
-        let effort = EffortLevel::High;
-        let json = serde_json::to_string(&effort).unwrap();
-        assert_eq!(json, "\"high\"");
+        assert_eq!(serde_json::to_string(&EffortLevel::Low).unwrap(), "\"low\"");
+        assert_eq!(
+            serde_json::to_string(&EffortLevel::Medium).unwrap(),
+            "\"medium\""
+        );
+        assert_eq!(
+            serde_json::to_string(&EffortLevel::High).unwrap(),
+            "\"high\""
+        );
     }
 
     #[test]
@@ -171,30 +266,31 @@ mod tests {
     }
 
     #[test]
-    fn test_tool_choice_auto() {
-        let choice = ToolChoice::Auto;
-        let json = serde_json::to_string(&choice).unwrap();
-        assert_eq!(json, r#"{"type":"auto"}"#);
+    fn test_tool_choice_serialization() {
+        assert_eq!(
+            serde_json::to_string(&ToolChoice::Auto).unwrap(),
+            r#"{"type":"auto"}"#
+        );
+        assert_eq!(
+            serde_json::to_string(&ToolChoice::Any).unwrap(),
+            r#"{"type":"any"}"#
+        );
+        assert_eq!(
+            serde_json::to_string(&ToolChoice::None).unwrap(),
+            r#"{"type":"none"}"#
+        );
+        assert_eq!(
+            serde_json::to_string(&ToolChoice::tool("Bash")).unwrap(),
+            r#"{"type":"tool","name":"Bash"}"#
+        );
     }
 
     #[test]
-    fn test_tool_choice_any() {
-        let choice = ToolChoice::Any;
-        let json = serde_json::to_string(&choice).unwrap();
-        assert_eq!(json, r#"{"type":"any"}"#);
-    }
-
-    #[test]
-    fn test_tool_choice_none() {
-        let choice = ToolChoice::None;
-        let json = serde_json::to_string(&choice).unwrap();
-        assert_eq!(json, r#"{"type":"none"}"#);
-    }
-
-    #[test]
-    fn test_tool_choice_tool() {
-        let choice = ToolChoice::tool("Bash");
-        let json = serde_json::to_string(&choice).unwrap();
-        assert_eq!(json, r#"{"type":"tool","name":"Bash"}"#);
+    fn test_token_constants() {
+        assert_eq!(MIN_THINKING_BUDGET, 1024);
+        assert_eq!(DEFAULT_MAX_TOKENS, 8192);
+        assert_eq!(MAX_TOKENS_128K, 128_000);
+        assert_eq!(MIN_MAX_TOKENS, 1);
+        assert!(MIN_THINKING_BUDGET < DEFAULT_MAX_TOKENS);
     }
 }

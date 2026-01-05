@@ -274,6 +274,8 @@ impl AgentBuilder {
             .take()
             .unwrap_or_else(|| ProviderConfig::new(models));
 
+        config = config.with_max_tokens(self.config.model.max_tokens);
+
         if self.supports_server_tools() {
             config.beta.add(crate::client::BetaFeature::WebSearch);
             config.beta.add(crate::client::BetaFeature::WebFetch);

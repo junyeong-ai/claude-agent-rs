@@ -2,7 +2,10 @@
 
 use serde::{Deserialize, Serialize};
 
-use super::config::{EffortLevel, OutputConfig, OutputFormat, ThinkingConfig, ToolChoice};
+use super::config::{
+    DEFAULT_MAX_TOKENS, EffortLevel, MAX_TOKENS_128K, MIN_MAX_TOKENS, OutputConfig, OutputFormat,
+    ThinkingConfig, TokenValidationError, ToolChoice,
+};
 use super::context::ContextManagement;
 use super::types::{ApiTool, RequestMetadata};
 use crate::types::{Message, SystemPrompt, ToolDefinition, WebFetchTool, WebSearchTool};
@@ -44,7 +47,7 @@ impl CreateMessageRequest {
     pub fn new(model: impl Into<String>, messages: Vec<Message>) -> Self {
         Self {
             model: model.into(),
-            max_tokens: 8192,
+            max_tokens: DEFAULT_MAX_TOKENS,
             messages,
             system: None,
             tools: None,
@@ -60,6 +63,29 @@ impl CreateMessageRequest {
             context_management: None,
             output_config: None,
         }
+    }
+
+    pub fn validate(&self) -> Result<(), TokenValidationError> {
+        if self.max_tokens < MIN_MAX_TOKENS {
+            return Err(TokenValidationError::MaxTokensTooLow {
+                min: MIN_MAX_TOKENS,
+                actual: self.max_tokens,
+            });
+        }
+        if self.max_tokens > MAX_TOKENS_128K {
+            return Err(TokenValidationError::MaxTokensTooHigh {
+                max: MAX_TOKENS_128K,
+                actual: self.max_tokens,
+            });
+        }
+        if let Some(thinking) = &self.thinking {
+            thinking.validate_against_max_tokens(self.max_tokens)?;
+        }
+        Ok(())
+    }
+
+    pub fn requires_128k_beta(&self) -> bool {
+        self.max_tokens > DEFAULT_MAX_TOKENS
     }
 
     pub fn with_metadata(mut self, metadata: RequestMetadata) -> Self {
@@ -274,7 +300,14 @@ pub struct CountTokensContextManagement {
 
 #[cfg(test)]
 mod tests {
+    use super::super::config::MIN_THINKING_BUDGET;
     use super::*;
+
+    #[test]
+    fn test_create_request_default_max_tokens() {
+        let request = CreateMessageRequest::new("claude-sonnet-4-5", vec![Message::user("Hello")]);
+        assert_eq!(request.max_tokens, DEFAULT_MAX_TOKENS);
+    }
 
     #[test]
     fn test_create_request() {
@@ -285,6 +318,64 @@ mod tests {
         assert_eq!(request.model, "claude-sonnet-4-5");
         assert_eq!(request.max_tokens, 1000);
         assert_eq!(request.temperature, Some(0.7));
+    }
+
+    #[test]
+    fn test_request_validate_valid() {
+        let request = CreateMessageRequest::new("claude-sonnet-4-5", vec![Message::user("Hi")])
+            .with_max_tokens(4000)
+            .with_extended_thinking(2000);
+        assert!(request.validate().is_ok());
+    }
+
+    #[test]
+    fn test_request_validate_max_tokens_too_high() {
+        let request = CreateMessageRequest::new("claude-sonnet-4-5", vec![Message::user("Hi")])
+            .with_max_tokens(MAX_TOKENS_128K + 1);
+        let err = request.validate().unwrap_err();
+        assert!(matches!(err, TokenValidationError::MaxTokensTooHigh { .. }));
+    }
+
+    #[test]
+    fn test_request_validate_thinking_auto_clamp() {
+        let request = CreateMessageRequest::new("claude-sonnet-4-5", vec![Message::user("Hi")])
+            .with_extended_thinking(500);
+        assert_eq!(
+            request.thinking.as_ref().unwrap().budget(),
+            Some(MIN_THINKING_BUDGET)
+        );
+        assert!(request.validate().is_ok());
+    }
+
+    #[test]
+    fn test_request_validate_thinking_exceeds_max() {
+        let request = CreateMessageRequest::new("claude-sonnet-4-5", vec![Message::user("Hi")])
+            .with_max_tokens(2000)
+            .with_extended_thinking(MIN_THINKING_BUDGET);
+        assert!(request.validate().is_ok());
+
+        let request = CreateMessageRequest::new("claude-sonnet-4-5", vec![Message::user("Hi")])
+            .with_max_tokens(MIN_THINKING_BUDGET)
+            .with_extended_thinking(MIN_THINKING_BUDGET);
+        let err = request.validate().unwrap_err();
+        assert!(matches!(
+            err,
+            TokenValidationError::ThinkingBudgetExceedsMaxTokens { .. }
+        ));
+    }
+
+    #[test]
+    fn test_request_requires_128k_beta() {
+        let request = CreateMessageRequest::new("claude-sonnet-4-5", vec![Message::user("Hi")]);
+        assert!(!request.requires_128k_beta());
+
+        let request = CreateMessageRequest::new("claude-sonnet-4-5", vec![Message::user("Hi")])
+            .with_max_tokens(DEFAULT_MAX_TOKENS + 1);
+        assert!(request.requires_128k_beta());
+
+        let request = CreateMessageRequest::new("claude-sonnet-4-5", vec![Message::user("Hi")])
+            .with_max_tokens(MAX_TOKENS_128K);
+        assert!(request.requires_128k_beta());
     }
 
     #[test]

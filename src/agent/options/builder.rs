@@ -231,7 +231,10 @@ impl AgentBuilder {
 
     /// Sets the maximum tokens per response.
     ///
-    /// Default: `8192`
+    /// Default: [`DEFAULT_MAX_TOKENS`] (8192)
+    ///
+    /// Note: Values exceeding 8192 require the 128k beta feature, which is
+    /// automatically enabled when using `ProviderConfig::with_max_tokens`.
     pub fn max_tokens(mut self, tokens: u32) -> Self {
         self.config.model.max_tokens = tokens;
         self
@@ -655,6 +658,7 @@ impl AgentBuilder {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::client::DEFAULT_MAX_TOKENS;
 
     #[test]
     fn test_tool_access() {
@@ -664,5 +668,17 @@ mod tests {
         assert!(!ToolAccess::only(["Read", "Write"]).is_allowed("Bash"));
         assert!(!ToolAccess::except(["Bash"]).is_allowed("Bash"));
         assert!(ToolAccess::except(["Bash"]).is_allowed("Read"));
+    }
+
+    #[test]
+    fn test_max_tokens_default() {
+        let builder = AgentBuilder::new();
+        assert_eq!(builder.config.model.max_tokens, DEFAULT_MAX_TOKENS);
+    }
+
+    #[test]
+    fn test_max_tokens_custom() {
+        let builder = AgentBuilder::new().max_tokens(16384);
+        assert_eq!(builder.config.model.max_tokens, 16384);
     }
 }

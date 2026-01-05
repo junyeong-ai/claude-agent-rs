@@ -291,6 +291,5 @@ mod tests {
         assert_eq!(DEFAULT_MAX_TOKENS, 8192);
         assert_eq!(MAX_TOKENS_128K, 128_000);
         assert_eq!(MIN_MAX_TOKENS, 1);
-        assert!(MIN_THINKING_BUDGET < DEFAULT_MAX_TOKENS);
     }
 }

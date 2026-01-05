@@ -231,10 +231,8 @@ impl AgentBuilder {
 
     /// Sets the maximum tokens per response.
     ///
-    /// Default: [`DEFAULT_MAX_TOKENS`] (8192)
-    ///
-    /// Note: Values exceeding 8192 require the 128k beta feature, which is
-    /// automatically enabled when using `ProviderConfig::with_max_tokens`.
+    /// Default: 8192. Values exceeding this require the 128k beta feature,
+    /// which is automatically enabled when using `ProviderConfig::with_max_tokens`.
     pub fn max_tokens(mut self, tokens: u32) -> Self {
         self.config.model.max_tokens = tokens;
         self

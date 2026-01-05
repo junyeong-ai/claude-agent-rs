@@ -1,24 +1,28 @@
 //! Chain credential provider.
 
+use std::sync::Arc;
+
 use async_trait::async_trait;
+use tokio::sync::RwLock;
 
 use crate::auth::{ClaudeCliProvider, Credential, CredentialProvider, EnvironmentProvider};
 use crate::{Error, Result};
 
-/// Chain provider that tries multiple providers in order.
 pub struct ChainProvider {
-    providers: Vec<Box<dyn CredentialProvider>>,
+    providers: Vec<Arc<dyn CredentialProvider>>,
+    last_successful: RwLock<Option<Arc<dyn CredentialProvider>>>,
 }
 
 impl ChainProvider {
-    /// Create with specified providers.
     pub fn new(providers: Vec<Box<dyn CredentialProvider>>) -> Self {
-        Self { providers }
+        Self {
+            providers: providers.into_iter().map(Arc::from).collect(),
+            last_successful: RwLock::new(None),
+        }
     }
 
-    /// Add a provider to the chain.
     pub fn with<P: CredentialProvider + 'static>(mut self, provider: P) -> Self {
-        self.providers.push(Box::new(provider));
+        self.providers.push(Arc::new(provider));
         self
     }
 }
@@ -27,9 +31,10 @@ impl Default for ChainProvider {
     fn default() -> Self {
         Self {
             providers: vec![
-                Box::new(EnvironmentProvider::new()),
-                Box::new(ClaudeCliProvider::new()),
+                Arc::new(EnvironmentProvider::new()),
+                Arc::new(ClaudeCliProvider::new()),
             ],
+            last_successful: RwLock::new(None),
         }
     }
 }
@@ -47,6 +52,7 @@ impl CredentialProvider for ChainProvider {
             match provider.resolve().await {
                 Ok(cred) => {
                     tracing::debug!("Credential resolved from: {}", provider.name());
+                    *self.last_successful.write().await = Some(Arc::clone(provider));
                     return Ok(cred);
                 }
                 Err(e) => {
@@ -60,6 +66,21 @@ impl CredentialProvider for ChainProvider {
             "No credentials found. Tried: {}",
             errors.join(", ")
         )))
+    }
+
+    async fn refresh(&self) -> Result<Credential> {
+        let provider = self.last_successful.read().await;
+        match provider.as_ref() {
+            Some(p) if p.supports_refresh() => p.refresh().await,
+            Some(_) => Err(Error::auth(
+                "Last successful provider does not support refresh",
+            )),
+            None => Err(Error::auth("No provider has successfully resolved yet")),
+        }
+    }
+
+    fn supports_refresh(&self) -> bool {
+        false
     }
 }
 
@@ -95,5 +116,18 @@ mod tests {
             .with(EnvironmentProvider::with_var("NONEXISTENT_VAR_2"));
 
         assert!(chain.resolve().await.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_chain_tracks_last_successful() {
+        let chain = ChainProvider::new(vec![])
+            .with(EnvironmentProvider::with_var("NONEXISTENT_VAR"))
+            .with(ExplicitProvider::api_key("fallback"));
+
+        let _ = chain.resolve().await.unwrap();
+
+        let last = chain.last_successful.read().await;
+        assert!(last.is_some());
+        assert_eq!(last.as_ref().unwrap().name(), "explicit");
     }
 }

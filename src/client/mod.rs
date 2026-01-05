@@ -266,17 +266,16 @@ impl Client {
         self.adapter.refresh_credentials().await
     }
 
-    /// Send a request with automatic auth retry on 401 errors.
-    ///
-    /// Attempts to refresh credentials and retry once if authentication fails.
     pub async fn send_with_auth_retry(
         &self,
         request: CreateMessageRequest,
     ) -> Result<crate::types::ApiResponse> {
+        self.adapter.ensure_fresh_credentials().await?;
+
         match self.send(request.clone()).await {
             Ok(resp) => Ok(resp),
-            Err(e) if e.is_unauthorized() => {
-                tracing::debug!("Received 401, attempting credential refresh");
+            Err(e) if e.is_unauthorized() && self.adapter.supports_credential_refresh() => {
+                tracing::debug!("Received 401, refreshing credentials");
                 self.refresh_credentials().await?;
                 self.send(request).await
             }
@@ -284,17 +283,16 @@ impl Client {
         }
     }
 
-    /// Send a streaming request with automatic auth retry on 401 errors.
-    ///
-    /// Attempts to refresh credentials and retry once if authentication fails.
     pub async fn send_stream_with_auth_retry(
         &self,
         request: CreateMessageRequest,
     ) -> Result<reqwest::Response> {
+        self.adapter.ensure_fresh_credentials().await?;
+
         match self.adapter.send_stream(&self.http, request.clone()).await {
             Ok(resp) => Ok(resp),
-            Err(e) if e.is_unauthorized() => {
-                tracing::debug!("Received 401, attempting credential refresh for stream");
+            Err(e) if e.is_unauthorized() && self.adapter.supports_credential_refresh() => {
+                tracing::debug!("Received 401, refreshing credentials");
                 self.refresh_credentials().await?;
                 self.adapter.send_stream(&self.http, request).await
             }
@@ -306,7 +304,16 @@ impl Client {
         &self,
         request: messages::CountTokensRequest,
     ) -> Result<messages::CountTokensResponse> {
-        self.adapter.count_tokens(&self.http, request).await
+        self.adapter.ensure_fresh_credentials().await?;
+
+        match self.adapter.count_tokens(&self.http, request.clone()).await {
+            Ok(resp) => Ok(resp),
+            Err(e) if e.is_unauthorized() && self.adapter.supports_credential_refresh() => {
+                self.refresh_credentials().await?;
+                self.adapter.count_tokens(&self.http, request).await
+            }
+            Err(e) => Err(e),
+        }
     }
 
     pub async fn count_tokens_for_request(
@@ -330,6 +337,7 @@ impl std::fmt::Debug for Client {
 pub struct ClientBuilder {
     provider: Option<CloudProvider>,
     credential: Option<Credential>,
+    credential_provider: Option<Arc<dyn crate::auth::CredentialProvider>>,
     oauth_config: Option<OAuthConfig>,
     config: Option<ProviderConfig>,
     models: Option<ModelConfig>,
@@ -353,6 +361,7 @@ impl ClientBuilder {
     /// Configure authentication for the client.
     ///
     /// Accepts `Auth` enum or any type that converts to it (e.g., API key string).
+    /// For `Auth::ClaudeCli`, the credential provider is preserved for automatic token refresh.
     pub async fn auth(mut self, auth: impl Into<Auth>) -> Result<Self> {
         let auth = auth.into();
 
@@ -379,10 +388,11 @@ impl ClientBuilder {
             }
         }
 
-        let credential = auth.resolve().await?;
+        let (credential, provider) = auth.resolve_with_provider().await?;
         if !credential.is_default() {
             self.credential = Some(credential);
         }
+        self.credential_provider = provider;
 
         Ok(self)
     }
@@ -474,7 +484,16 @@ impl ClientBuilder {
         let adapter: Box<dyn ProviderAdapter> = match provider {
             CloudProvider::Anthropic => {
                 let adapter = if let Some(cred) = self.credential {
-                    let mut a = AnthropicAdapter::from_credential(config, cred, self.oauth_config);
+                    let mut a = if let Some(cred_provider) = self.credential_provider {
+                        AnthropicAdapter::from_credential_provider(
+                            config,
+                            cred,
+                            self.oauth_config,
+                            cred_provider,
+                        )
+                    } else {
+                        AnthropicAdapter::from_credential(config, cred, self.oauth_config)
+                    };
                     if let Some(ref gw) = self.gateway
                         && let Some(ref url) = gw.base_url
                     {

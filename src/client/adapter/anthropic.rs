@@ -23,25 +23,25 @@ enum AuthMethod {
 }
 
 impl AuthMethod {
-    fn from_credential(credential: Credential, oauth_config: Option<OAuthConfig>) -> Self {
+    fn from_credential(credential: &Credential, oauth_config: Option<OAuthConfig>) -> Self {
         match credential {
-            Credential::ApiKey(key) => Self::ApiKey(key),
+            Credential::ApiKey(key) => Self::ApiKey(key.clone()),
             Credential::OAuth(oauth) => Self::OAuth {
-                token: oauth.access_token,
+                token: oauth.access_token.clone(),
                 config: oauth_config.unwrap_or_default(),
             },
         }
     }
 
-    fn update_token(&mut self, credential: Credential) {
+    fn update_token(&mut self, credential: &Credential) {
         match credential {
-            Credential::ApiKey(key) => *self = Self::ApiKey(key),
+            Credential::ApiKey(key) => *self = Self::ApiKey(key.clone()),
             Credential::OAuth(oauth) => {
                 if let Self::OAuth { token, .. } = self {
-                    *token = oauth.access_token;
+                    *token = oauth.access_token.clone();
                 } else {
                     *self = Self::OAuth {
-                        token: oauth.access_token,
+                        token: oauth.access_token.clone(),
                         config: OAuthConfig::default(),
                     };
                 }
@@ -92,7 +92,7 @@ impl AnthropicAdapter {
         Self {
             config,
             base_url: Self::base_url_from_env(),
-            auth: RwLock::new(AuthMethod::from_credential(credential, oauth_config)),
+            auth: RwLock::new(AuthMethod::from_credential(&credential, oauth_config)),
             credential_provider: None,
         }
     }
@@ -106,7 +106,7 @@ impl AnthropicAdapter {
         Self {
             config,
             base_url: Self::base_url_from_env(),
-            auth: RwLock::new(AuthMethod::from_credential(credential, oauth_config)),
+            auth: RwLock::new(AuthMethod::from_credential(&credential, oauth_config)),
             credential_provider: Some(provider),
         }
     }
@@ -158,14 +158,6 @@ impl AnthropicAdapter {
         r
     }
 
-    /// Prepares the system prompt for OAuth users following Claude Code format.
-    ///
-    /// For OAuth authentication (CLI OAuth), the API requires system prompts as blocks:
-    /// - First block MUST be the CLI identity prompt
-    /// - Additional blocks can contain custom instructions (replace/append)
-    ///
-    /// Based on CLI binary analysis, the API validates that the first block
-    /// is one of the allowed prompts.
     fn prepare_request_with_auth(
         &self,
         mut request: CreateMessageRequest,
@@ -174,12 +166,10 @@ impl AnthropicAdapter {
         if let AuthMethod::OAuth { .. } = auth {
             use crate::prompts::CLI_IDENTITY;
 
-            // Build blocks array: CLI identity first, then any existing prompts
             let mut blocks = vec![crate::types::SystemBlock::uncached(CLI_IDENTITY)];
 
             match &request.system {
                 Some(crate::types::SystemPrompt::Text(existing)) if !existing.is_empty() => {
-                    // Don't duplicate if existing already starts with CLI identity
                     if !existing.starts_with(CLI_IDENTITY) {
                         blocks.push(crate::types::SystemBlock::uncached(existing));
                     }
@@ -187,7 +177,6 @@ impl AnthropicAdapter {
                 Some(crate::types::SystemPrompt::Blocks(existing_blocks))
                     if !existing_blocks.is_empty() =>
                 {
-                    // Filter out any blocks that match the CLI identity to avoid duplication
                     for block in existing_blocks {
                         if block.text != CLI_IDENTITY {
                             blocks.push(block.clone());
@@ -202,16 +191,16 @@ impl AnthropicAdapter {
         request
     }
 
-    async fn try_refresh_on_401(&self) -> Result<bool> {
-        if let Some(ref provider) = self.credential_provider
-            && provider.supports_refresh()
-        {
+    async fn do_refresh(&self) -> Result<()> {
+        if let Some(ref provider) = self.credential_provider {
             let new_credential = provider.refresh().await?;
-            let mut auth = self.auth.write().await;
-            auth.update_token(new_credential);
-            return Ok(true);
+            self.auth.write().await.update_token(&new_credential);
         }
-        Ok(false)
+        Ok(())
+    }
+
+    pub fn credential_provider(&self) -> Option<&Arc<dyn CredentialProvider>> {
+        self.credential_provider.as_ref()
     }
 }
 
@@ -253,41 +242,19 @@ impl ProviderAdapter for AnthropicAdapter {
         let (url, body) = {
             let auth = self.auth.read().await;
             let url = self.build_endpoint_url(&auth, "/v1/messages");
-            let prepared = self.prepare_request_with_auth(request.clone(), &auth);
-            (
-                url,
-                serde_json::to_value(&prepared)
-                    .map_err(|e| Error::InvalidRequest(e.to_string()))?,
-            )
+            let prepared = self.prepare_request_with_auth(request, &auth);
+            (url, serde_json::to_value(&prepared)?)
         };
 
-        let req = self.apply_auth_headers(http.post(&url)).await.json(&body);
-
-        let response = req.send().await?;
+        let response = self
+            .apply_auth_headers(http.post(&url))
+            .await
+            .json(&body)
+            .send()
+            .await?;
 
         if !response.status().is_success() {
             let status = response.status().as_u16();
-            if status == 401 && self.try_refresh_on_401().await? {
-                let (url, body) = {
-                    let auth = self.auth.read().await;
-                    let url = self.build_endpoint_url(&auth, "/v1/messages");
-                    let prepared = self.prepare_request_with_auth(request, &auth);
-                    (
-                        url,
-                        serde_json::to_value(&prepared)
-                            .map_err(|e| Error::InvalidRequest(e.to_string()))?,
-                    )
-                };
-                let req = self.apply_auth_headers(http.post(&url)).await.json(&body);
-                let response = req.send().await?;
-                if !response.status().is_success() {
-                    let status = response.status().as_u16();
-                    let error: ErrorResponse = response.json().await?;
-                    return Err(error.into_error(status));
-                }
-                let json: serde_json::Value = response.json().await?;
-                return self.transform_response(json);
-            }
             let error: ErrorResponse = response.json().await?;
             return Err(error.into_error(status));
         }
@@ -306,40 +273,19 @@ impl ProviderAdapter for AnthropicAdapter {
         let (url, body) = {
             let auth = self.auth.read().await;
             let url = self.build_endpoint_url(&auth, "/v1/messages");
-            let prepared = self.prepare_request_with_auth(request.clone(), &auth);
-            (
-                url,
-                serde_json::to_value(&prepared)
-                    .map_err(|e| Error::InvalidRequest(e.to_string()))?,
-            )
+            let prepared = self.prepare_request_with_auth(request, &auth);
+            (url, serde_json::to_value(&prepared)?)
         };
 
-        let req = self.apply_auth_headers(http.post(&url)).await.json(&body);
-
-        let response = req.send().await?;
+        let response = self
+            .apply_auth_headers(http.post(&url))
+            .await
+            .json(&body)
+            .send()
+            .await?;
 
         if !response.status().is_success() {
             let status = response.status().as_u16();
-            if status == 401 && self.try_refresh_on_401().await? {
-                let (url, body) = {
-                    let auth = self.auth.read().await;
-                    let url = self.build_endpoint_url(&auth, "/v1/messages");
-                    let prepared = self.prepare_request_with_auth(request, &auth);
-                    (
-                        url,
-                        serde_json::to_value(&prepared)
-                            .map_err(|e| Error::InvalidRequest(e.to_string()))?,
-                    )
-                };
-                let req = self.apply_auth_headers(http.post(&url)).await.json(&body);
-                let response = req.send().await?;
-                if !response.status().is_success() {
-                    let status = response.status().as_u16();
-                    let error: ErrorResponse = response.json().await?;
-                    return Err(error.into_error(status));
-                }
-                return Ok(response);
-            }
             let error: ErrorResponse = response.json().await?;
             return Err(error.into_error(status));
         }
@@ -347,9 +293,25 @@ impl ProviderAdapter for AnthropicAdapter {
         Ok(response)
     }
 
-    async fn refresh_credentials(&self) -> Result<()> {
-        self.try_refresh_on_401().await?;
+    fn supports_credential_refresh(&self) -> bool {
+        self.credential_provider
+            .as_ref()
+            .is_some_and(|p| p.supports_refresh())
+    }
+
+    async fn ensure_fresh_credentials(&self) -> Result<()> {
+        if let Some(ref provider) = self.credential_provider {
+            let current = provider.resolve().await?;
+            if current.needs_refresh() && provider.supports_refresh() {
+                let new_cred = provider.refresh().await?;
+                self.auth.write().await.update_token(&new_cred);
+            }
+        }
         Ok(())
+    }
+
+    async fn refresh_credentials(&self) -> Result<()> {
+        self.do_refresh().await
     }
 
     async fn count_tokens(
@@ -357,33 +319,21 @@ impl ProviderAdapter for AnthropicAdapter {
         http: &reqwest::Client,
         request: CountTokensRequest,
     ) -> Result<CountTokensResponse> {
-        const ENDPOINT: &str = "/v1/messages/count_tokens";
         let (url, body) = {
             let auth = self.auth.read().await;
-            let url = self.build_endpoint_url(&auth, ENDPOINT);
+            let url = self.build_endpoint_url(&auth, "/v1/messages/count_tokens");
             (url, serde_json::to_value(&request)?)
         };
 
-        let req = self.apply_auth_headers(http.post(&url)).await.json(&body);
-
-        let response = req.send().await?;
+        let response = self
+            .apply_auth_headers(http.post(&url))
+            .await
+            .json(&body)
+            .send()
+            .await?;
 
         if !response.status().is_success() {
             let status = response.status().as_u16();
-            if status == 401 && self.try_refresh_on_401().await? {
-                let req = {
-                    let auth = self.auth.read().await;
-                    let url = self.build_endpoint_url(&auth, ENDPOINT);
-                    self.build_headers(http.post(&url), &auth).json(&body)
-                };
-                let response = req.send().await?;
-                if !response.status().is_success() {
-                    let status = response.status().as_u16();
-                    let error: ErrorResponse = response.json().await?;
-                    return Err(error.into_error(status));
-                }
-                return Ok(response.json().await?);
-            }
             let error: ErrorResponse = response.json().await?;
             return Err(error.into_error(status));
         }

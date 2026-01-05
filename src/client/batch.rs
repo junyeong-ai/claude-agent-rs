@@ -122,6 +122,10 @@ impl<'a> BatchClient<'a> {
     }
 
     async fn build_request(&self, method: reqwest::Method, url: &str) -> reqwest::RequestBuilder {
+        if let Err(e) = self.client.adapter().ensure_fresh_credentials().await {
+            tracing::debug!("Proactive credential refresh failed: {}", e);
+        }
+
         let mut request = self
             .client
             .http()
@@ -138,26 +142,13 @@ impl<'a> BatchClient<'a> {
         request
     }
 
-    async fn send_with_retry(
-        &self,
-        request: reqwest::RequestBuilder,
-    ) -> crate::Result<reqwest::Response> {
-        let response = request.send().await?;
-
-        if response.status().as_u16() == 401 {
-            self.client.refresh_credentials().await?;
-        }
-
-        Ok(response)
-    }
-
     pub async fn create(&self, request: CreateBatchRequest) -> crate::Result<MessageBatch> {
         let url = self.build_url("");
         let request = self
             .build_request(reqwest::Method::POST, &url)
             .await
             .json(&request);
-        let response = self.send_with_retry(request).await?;
+        let response = request.send().await?;
 
         if !response.status().is_success() {
             let status = response.status().as_u16();
@@ -170,8 +161,11 @@ impl<'a> BatchClient<'a> {
 
     pub async fn get(&self, batch_id: &str) -> crate::Result<MessageBatch> {
         let url = self.build_url(&format!("/{}", batch_id));
-        let request = self.build_request(reqwest::Method::GET, &url).await;
-        let response = self.send_with_retry(request).await?;
+        let response = self
+            .build_request(reqwest::Method::GET, &url)
+            .await
+            .send()
+            .await?;
 
         if !response.status().is_success() {
             let status = response.status().as_u16();
@@ -184,8 +178,11 @@ impl<'a> BatchClient<'a> {
 
     pub async fn cancel(&self, batch_id: &str) -> crate::Result<MessageBatch> {
         let url = self.build_url(&format!("/{}/cancel", batch_id));
-        let request = self.build_request(reqwest::Method::POST, &url).await;
-        let response = self.send_with_retry(request).await?;
+        let response = self
+            .build_request(reqwest::Method::POST, &url)
+            .await
+            .send()
+            .await?;
 
         if !response.status().is_success() {
             let status = response.status().as_u16();
@@ -217,8 +214,11 @@ impl<'a> BatchClient<'a> {
             url = format!("{}?{}", url, encoded);
         }
 
-        let request = self.build_request(reqwest::Method::GET, &url).await;
-        let response = self.send_with_retry(request).await?;
+        let response = self
+            .build_request(reqwest::Method::GET, &url)
+            .await
+            .send()
+            .await?;
 
         if !response.status().is_success() {
             let status = response.status().as_u16();

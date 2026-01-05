@@ -13,6 +13,8 @@ mod providers;
 #[cfg(feature = "cli-integration")]
 mod storage;
 
+use std::sync::Arc;
+
 pub use cache::CachedProvider;
 pub use config::{CLAUDE_CODE_BETA, OAuthConfig, OAuthConfigBuilder};
 pub use credential::{Credential, OAuthCredential};
@@ -127,6 +129,37 @@ impl Auth {
             Self::Vertex { .. } => Ok(Credential::default()),
             #[cfg(feature = "azure")]
             Self::Foundry { .. } => Ok(Credential::default()),
+        }
+    }
+
+    /// Resolve authentication and return both credential and provider.
+    ///
+    /// Returns the credential provider for auth methods that support token refresh.
+    /// This enables automatic 401 retry with credential refresh.
+    pub async fn resolve_with_provider(
+        &self,
+    ) -> Result<(Credential, Option<Arc<dyn CredentialProvider>>)> {
+        match self {
+            Self::ApiKey(key) => Ok((Credential::api_key(key), None)),
+            Self::FromEnv => {
+                let provider = EnvironmentProvider::new();
+                let credential = provider.resolve().await?;
+                Ok((credential, None))
+            }
+            #[cfg(feature = "cli-integration")]
+            Self::ClaudeCli => {
+                let provider = Arc::new(ClaudeCliProvider::new());
+                let credential = provider.resolve().await?;
+                Ok((credential, Some(provider)))
+            }
+            Self::OAuth { token } => Ok((Credential::oauth(token), None)),
+            Self::Resolved(credential) => Ok((credential.clone(), None)),
+            #[cfg(feature = "aws")]
+            Self::Bedrock { .. } => Ok((Credential::default(), None)),
+            #[cfg(feature = "gcp")]
+            Self::Vertex { .. } => Ok((Credential::default(), None)),
+            #[cfg(feature = "azure")]
+            Self::Foundry { .. } => Ok((Credential::default(), None)),
         }
     }
 

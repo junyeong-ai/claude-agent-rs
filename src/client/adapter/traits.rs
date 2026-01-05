@@ -45,6 +45,14 @@ pub trait ProviderAdapter: Send + Sync + Debug {
         request: CreateMessageRequest,
     ) -> Result<reqwest::Response>;
 
+    fn supports_credential_refresh(&self) -> bool {
+        false
+    }
+
+    async fn ensure_fresh_credentials(&self) -> Result<()> {
+        Ok(())
+    }
+
     async fn refresh_credentials(&self) -> Result<()> {
         Ok(())
     }

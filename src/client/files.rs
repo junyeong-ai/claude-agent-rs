@@ -111,6 +111,10 @@ impl<'a> FilesClient<'a> {
     }
 
     async fn build_request(&self, method: reqwest::Method, url: &str) -> reqwest::RequestBuilder {
+        if let Err(e) = self.client.adapter().ensure_fresh_credentials().await {
+            tracing::debug!("Proactive credential refresh failed: {}", e);
+        }
+
         let req = self.client.http().request(method, url);
         self.client
             .adapter()
@@ -118,16 +122,6 @@ impl<'a> FilesClient<'a> {
             .await
             .header("anthropic-version", self.api_version())
             .header("anthropic-beta", FILES_API_BETA)
-    }
-
-    async fn send_with_retry(&self, req: reqwest::RequestBuilder) -> Result<reqwest::Response> {
-        let response = req.send().await.map_err(Error::Network)?;
-
-        if response.status().as_u16() == 401 {
-            self.client.refresh_credentials().await?;
-        }
-
-        Ok(response)
     }
 
     pub async fn upload(&self, request: UploadFileRequest) -> Result<File> {
@@ -161,26 +155,36 @@ impl<'a> FilesClient<'a> {
 
         let form = reqwest::multipart::Form::new().part("file", part);
 
-        let req = self
+        let response = self
             .build_request(reqwest::Method::POST, &url)
             .await
-            .multipart(form);
+            .multipart(form)
+            .send()
+            .await
+            .map_err(Error::Network)?;
 
-        let response = self.send_with_retry(req).await?;
         self.handle_response(response).await
     }
 
     pub async fn get(&self, file_id: &str) -> Result<File> {
         let url = self.build_url(&format!("/{}", file_id));
-        let req = self.build_request(reqwest::Method::GET, &url).await;
-        let response = self.send_with_retry(req).await?;
+        let response = self
+            .build_request(reqwest::Method::GET, &url)
+            .await
+            .send()
+            .await
+            .map_err(Error::Network)?;
         self.handle_response(response).await
     }
 
     pub async fn download(&self, file_id: &str) -> Result<FileDownload> {
         let url = self.build_url(&format!("/{}/content", file_id));
-        let req = self.build_request(reqwest::Method::GET, &url).await;
-        let response = self.send_with_retry(req).await?;
+        let response = self
+            .build_request(reqwest::Method::GET, &url)
+            .await
+            .send()
+            .await
+            .map_err(Error::Network)?;
 
         if !response.status().is_success() {
             let status = response.status().as_u16();
@@ -216,8 +220,12 @@ impl<'a> FilesClient<'a> {
 
     pub async fn delete(&self, file_id: &str) -> Result<()> {
         let url = self.build_url(&format!("/{}", file_id));
-        let req = self.build_request(reqwest::Method::DELETE, &url).await;
-        let response = self.send_with_retry(req).await?;
+        let response = self
+            .build_request(reqwest::Method::DELETE, &url)
+            .await
+            .send()
+            .await
+            .map_err(Error::Network)?;
 
         if !response.status().is_success() {
             let status = response.status().as_u16();
@@ -249,8 +257,12 @@ impl<'a> FilesClient<'a> {
             url = format!("{}?{}", url, encoded);
         }
 
-        let req = self.build_request(reqwest::Method::GET, &url).await;
-        let response = self.send_with_retry(req).await?;
+        let response = self
+            .build_request(reqwest::Method::GET, &url)
+            .await
+            .send()
+            .await
+            .map_err(Error::Network)?;
         self.handle_response(response).await
     }
 

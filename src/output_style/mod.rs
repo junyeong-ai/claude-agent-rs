@@ -39,6 +39,10 @@ pub struct OutputStyle {
 }
 
 impl OutputStyle {
+    /// Create a new output style with the given name, description, and prompt.
+    ///
+    /// By default, `keep_coding_instructions` is `true` to match the behavior
+    /// of the default style and `CompactStrategy::default()`.
     pub fn new(
         name: impl Into<String>,
         description: impl Into<String>,
@@ -49,7 +53,7 @@ impl OutputStyle {
             description: description.into(),
             prompt: prompt.into(),
             source_type: OutputStyleSourceType::default(),
-            keep_coding_instructions: false,
+            keep_coding_instructions: true,
         }
     }
 
@@ -140,7 +144,8 @@ mod tests {
         assert_eq!(style.description, "A test style");
         assert_eq!(style.prompt, "Test prompt");
         assert_eq!(style.source_type, OutputStyleSourceType::User);
-        assert!(!style.keep_coding_instructions);
+        // Default is now true for consistency with CompactStrategy
+        assert!(style.keep_coding_instructions);
     }
 
     #[test]

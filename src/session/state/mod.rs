@@ -18,7 +18,7 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
 use crate::session::types::{CompactRecord, Plan, TodoItem, TodoStatus};
-use crate::types::{CacheControl, ContentBlock, Message, Role, TokenUsage, Usage};
+use crate::types::{CacheControl, CacheTtl, ContentBlock, Message, Role, TokenUsage, Usage};
 
 const MAX_COMPACT_HISTORY_SIZE: usize = 50;
 
@@ -165,11 +165,16 @@ impl Session {
         result
     }
 
+    /// Convert session messages to API format with default caching (5m TTL).
     pub fn to_api_messages(&self) -> Vec<Message> {
-        self.to_api_messages_with_cache(true)
+        self.to_api_messages_with_cache(Some(CacheTtl::FiveMinutes))
     }
 
-    pub fn to_api_messages_with_cache(&self, cache_enabled: bool) -> Vec<Message> {
+    /// Convert session messages to API format with optional caching.
+    ///
+    /// Per Anthropic best practices, caches the last user message with the specified TTL.
+    /// Pass `None` to disable caching.
+    pub fn to_api_messages_with_cache(&self, ttl: Option<CacheTtl>) -> Vec<Message> {
         let branch = self.get_current_branch();
         if branch.is_empty() {
             return Vec::new();
@@ -177,14 +182,19 @@ impl Session {
 
         let mut messages: Vec<Message> = branch.iter().map(|m| m.to_api_message()).collect();
 
-        if cache_enabled {
-            self.apply_cache_breakpoint(&mut messages);
+        if let Some(ttl) = ttl {
+            self.apply_cache_breakpoint(&mut messages, ttl);
         }
 
         messages
     }
 
-    fn apply_cache_breakpoint(&self, messages: &mut [Message]) {
+    /// Apply cache breakpoint to the last user message.
+    ///
+    /// Per Anthropic best practices for multi-turn conversations,
+    /// only the last user message needs cache_control to enable
+    /// caching of the entire conversation history before it.
+    fn apply_cache_breakpoint(&self, messages: &mut [Message], ttl: CacheTtl) {
         let last_user_idx = messages
             .iter()
             .enumerate()
@@ -193,7 +203,7 @@ impl Session {
             .map(|(i, _)| i);
 
         if let Some(idx) = last_user_idx {
-            messages[idx].set_cache_on_last_block(CacheControl::ephemeral());
+            messages[idx].set_cache_on_last_block(CacheControl::ephemeral().with_ttl(ttl));
         }
     }
 
@@ -546,7 +556,8 @@ mod tests {
 
         session.add_user_message("Question");
 
-        let messages = session.to_api_messages_with_cache(false);
+        // Pass None to disable caching
+        let messages = session.to_api_messages_with_cache(None);
 
         assert_eq!(messages.len(), 1);
         assert!(!messages[0].has_cache_control());

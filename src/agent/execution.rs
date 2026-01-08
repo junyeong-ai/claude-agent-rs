@@ -220,10 +220,11 @@ impl Agent {
 
             debug!(iteration = metrics.iterations, "Starting iteration");
 
-            let cache_messages = self.config.cache.enabled && self.config.cache.message_cache;
             let messages = self
                 .state
-                .with_session(|session| session.to_api_messages_with_cache(cache_messages))
+                .with_session(|session| {
+                    session.to_api_messages_with_cache(self.config.cache.message_ttl_option())
+                })
                 .await;
 
             let api_start = Instant::now();

@@ -88,6 +88,10 @@ impl AgentMetrics {
         self.cache_creation_tokens += usage.cache_creation_input_tokens.unwrap_or(0);
     }
 
+    /// Calculate cache hit rate as a proportion of input tokens.
+    ///
+    /// Returns the ratio of cache_read_tokens to input_tokens.
+    /// A higher value means more tokens were served from cache.
     pub fn cache_hit_rate(&self) -> f64 {
         if self.input_tokens == 0 {
             return 0.0;
@@ -95,8 +99,49 @@ impl AgentMetrics {
         self.cache_read_tokens as f64 / self.input_tokens as f64
     }
 
+    /// Calculate cache efficiency (reads vs total cache operations).
+    ///
+    /// Returns 1.0 for perfect cache reuse (all reads, no writes),
+    /// and 0.0 when there's no cache activity.
+    ///
+    /// Per Anthropic pricing:
+    /// - Cache reads cost 10% of input tokens
+    /// - Cache writes cost 125% of input tokens
+    ///
+    /// Higher efficiency = better cost savings.
+    pub fn cache_efficiency(&self) -> f64 {
+        let total = self.cache_read_tokens + self.cache_creation_tokens;
+        if total == 0 {
+            return 0.0;
+        }
+        self.cache_read_tokens as f64 / total as f64
+    }
+
+    /// Estimate tokens saved through caching.
+    ///
+    /// Cache reads are billed at 10%, so 90% of read tokens are "saved".
     pub fn cache_tokens_saved(&self) -> u32 {
         (self.cache_read_tokens as f64 * 0.9) as u32
+    }
+
+    /// Calculate estimated cost savings from caching in USD.
+    ///
+    /// Per Anthropic pricing:
+    /// - Normal input: full price
+    /// - Cache read: 10% of normal price (90% savings)
+    /// - Cache write: 125% of normal price (25% overhead)
+    ///
+    /// Net savings = (cache_read * 0.9 * price) - (cache_write * 0.25 * price)
+    pub fn cache_cost_savings(&self, input_price_per_mtok: f64) -> f64 {
+        let read_tokens = self.cache_read_tokens as f64 / 1_000_000.0;
+        let write_tokens = self.cache_creation_tokens as f64 / 1_000_000.0;
+
+        // Savings from reading cached content (90% discount)
+        let read_savings = read_tokens * input_price_per_mtok * 0.9;
+        // Overhead from writing to cache (25% extra cost)
+        let write_overhead = write_tokens * input_price_per_mtok * 0.25;
+
+        read_savings - write_overhead
     }
 
     pub fn add_cost(&mut self, cost: f64) {
@@ -231,5 +276,64 @@ mod tests {
         metrics.record_tool("tu_1", "Read", 100, false);
         metrics.record_tool("tu_2", "Write", 200, false);
         assert!((metrics.avg_tool_time_ms() - 150.0).abs() < 0.1);
+    }
+
+    #[test]
+    fn test_cache_efficiency_no_activity() {
+        let metrics = AgentMetrics::default();
+        assert_eq!(metrics.cache_efficiency(), 0.0);
+    }
+
+    #[test]
+    fn test_cache_efficiency_all_reads() {
+        let mut metrics = AgentMetrics::default();
+        metrics.cache_read_tokens = 1000;
+        metrics.cache_creation_tokens = 0;
+
+        assert!((metrics.cache_efficiency() - 1.0).abs() < 0.001);
+    }
+
+    #[test]
+    fn test_cache_efficiency_mixed() {
+        let mut metrics = AgentMetrics::default();
+        metrics.cache_read_tokens = 900;
+        metrics.cache_creation_tokens = 100;
+
+        // 900 / (900 + 100) = 0.9
+        assert!((metrics.cache_efficiency() - 0.9).abs() < 0.001);
+    }
+
+    #[test]
+    fn test_cache_cost_savings() {
+        let mut metrics = AgentMetrics::default();
+        metrics.cache_read_tokens = 1_000_000; // 1M tokens
+        metrics.cache_creation_tokens = 100_000; // 100K tokens
+
+        let price_per_mtok = 3.0; // $3 per MTok
+
+        // Read savings: 1.0 * 3.0 * 0.9 = $2.70
+        // Write overhead: 0.1 * 3.0 * 0.25 = $0.075
+        // Net savings: $2.70 - $0.075 = $2.625
+        let savings = metrics.cache_cost_savings(price_per_mtok);
+        assert!((savings - 2.625).abs() < 0.001);
+    }
+
+    #[test]
+    fn test_cache_hit_rate() {
+        let mut metrics = AgentMetrics::default();
+        metrics.input_tokens = 1000;
+        metrics.cache_read_tokens = 800;
+
+        // 800 / 1000 = 0.8
+        assert!((metrics.cache_hit_rate() - 0.8).abs() < 0.001);
+    }
+
+    #[test]
+    fn test_cache_tokens_saved() {
+        let mut metrics = AgentMetrics::default();
+        metrics.cache_read_tokens = 1000;
+
+        // 1000 * 0.9 = 900
+        assert_eq!(metrics.cache_tokens_saved(), 900);
     }
 }

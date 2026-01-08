@@ -156,17 +156,37 @@ impl CommandLoader {
         Self::default()
     }
 
-    pub async fn load_all(&mut self, project_dir: &Path) -> Result<()> {
-        let project_commands = project_dir.join(".claude").join("commands");
-        if project_commands.exists() {
-            self.load_directory(&project_commands, "").await?;
+    /// Loads commands from all levels (enterprise + user + project).
+    /// Priority: project > user > enterprise (later overrides earlier).
+    pub async fn load(&mut self, project_dir: &Path) -> Result<()> {
+        // 1. Enterprise level (lowest priority)
+        if let Some(enterprise_path) = crate::context::enterprise_base_path() {
+            self.load_from(&enterprise_path).await?;
         }
 
+        // 2. User level
         if let Some(home) = crate::common::home_dir() {
-            let user_commands = home.join(".claude").join("commands");
-            if user_commands.exists() {
-                self.load_directory(&user_commands, "").await?;
-            }
+            self.load_from(&home.join(".claude")).await?;
+        }
+
+        // 3. Project level (highest priority)
+        self.load_from(project_dir).await?;
+
+        Ok(())
+    }
+
+    /// Loads commands from a single base directory.
+    /// Use this for loading from a specific resource level.
+    pub async fn load_from(&mut self, base_dir: &Path) -> Result<()> {
+        let commands_dir = base_dir.join(".claude").join("commands");
+        if commands_dir.exists() {
+            self.load_directory(&commands_dir, "").await?;
+        }
+
+        // Also check direct commands directory (for enterprise/user paths)
+        let direct_commands = base_dir.join("commands");
+        if direct_commands.exists() {
+            self.load_directory(&direct_commands, "").await?;
         }
 
         Ok(())

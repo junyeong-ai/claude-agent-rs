@@ -3,7 +3,7 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use crate::agent::config::{AgentConfig, ServerToolsConfig, SystemPromptMode};
+use crate::agent::config::{AgentConfig, CacheConfig, ServerToolsConfig, SystemPromptMode};
 use crate::client::messages::CreateMessageRequest;
 use crate::output_style::{OutputStyle, SystemPromptGenerator};
 use crate::tools::ToolRegistry;
@@ -18,7 +18,7 @@ pub struct RequestBuilder {
     system_prompt_mode: SystemPromptMode,
     custom_system_prompt: Option<String>,
     base_system_prompt: String,
-    cache_enabled: bool,
+    cache_config: CacheConfig,
 }
 
 impl RequestBuilder {
@@ -38,7 +38,7 @@ impl RequestBuilder {
             system_prompt_mode: config.prompt.system_prompt_mode,
             custom_system_prompt: config.prompt.system_prompt.clone(),
             base_system_prompt,
-            cache_enabled: config.cache.enabled && config.cache.system_prompt_cache,
+            cache_config: config.cache.clone(),
         }
     }
 
@@ -85,14 +85,16 @@ impl RequestBuilder {
             }
         };
 
+        // Per Anthropic best practices: static content with longer TTL first
         if !static_prompt.is_empty() {
-            blocks.push(if self.cache_enabled {
-                SystemBlock::cached(&static_prompt)
+            blocks.push(if self.cache_config.strategy.cache_system() {
+                SystemBlock::cached_with_ttl(&static_prompt, self.cache_config.static_ttl)
             } else {
                 SystemBlock::uncached(&static_prompt)
             });
         }
 
+        // Dynamic rules are never cached (they change frequently)
         if !dynamic_rules.is_empty() {
             blocks.push(SystemBlock::uncached(dynamic_rules));
         }

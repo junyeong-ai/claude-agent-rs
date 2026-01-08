@@ -204,12 +204,25 @@ pub struct SystemBlock {
 }
 
 impl SystemBlock {
-    /// Create a new system block with caching enabled.
+    /// Create a new system block with caching enabled (default TTL).
     pub fn cached(text: impl Into<String>) -> Self {
         Self {
             block_type: "text".to_string(),
             text: text.into(),
             cache_control: Some(CacheControl::ephemeral()),
+        }
+    }
+
+    /// Create a new system block with caching and specific TTL.
+    ///
+    /// Per Anthropic best practices:
+    /// - Use OneHour for static content (system prompts, tools)
+    /// - Use FiveMinutes for dynamic content (messages)
+    pub fn cached_with_ttl(text: impl Into<String>, ttl: CacheTtl) -> Self {
+        Self {
+            block_type: "text".to_string(),
+            text: text.into(),
+            cache_control: Some(CacheControl::ephemeral().with_ttl(ttl)),
         }
     }
 

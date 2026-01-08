@@ -243,11 +243,12 @@ impl StreamState {
             }))));
         }
 
-        let cache_messages = self.cfg.config.cache.enabled && self.cfg.config.cache.message_cache;
         let messages = self
             .cfg
             .tool_state
-            .with_session(|session| session.to_api_messages_with_cache(cache_messages))
+            .with_session(|session| {
+                session.to_api_messages_with_cache(self.cfg.config.cache.message_ttl_option())
+            })
             .await;
 
         let stream_request = self

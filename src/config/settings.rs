@@ -234,27 +234,26 @@ impl SettingsLoader {
         Self::default()
     }
 
-    /// Load settings from all sources for a project.
-    /// Priority (lowest to highest): User → Project → Local
-    /// Managed settings are loaded separately and lock keys.
+    /// Loads settings from all levels (enterprise + user + project + local).
+    /// Priority (lowest to highest): Enterprise → User → Project → Local.
+    /// Enterprise settings lock keys and cannot be overridden by lower levels.
     pub async fn load(&mut self, project_dir: &Path) -> ConfigResult<&Settings> {
-        // 1. User settings (lowest priority)
-        if let Some(home) = crate::common::home_dir() {
-            let user_settings = home.join(".claude").join("settings.json");
-            if user_settings.exists() {
-                self.merge_file(&user_settings, SettingsSource::User)
-                    .await?;
-            }
+        // 1. Enterprise settings (lowest priority, but locks keys)
+        if let Some(enterprise_path) = crate::context::enterprise_base_path() {
+            self.load_enterprise(&enterprise_path).await?;
         }
 
-        // 2. Project settings
-        let project_settings = project_dir.join(".claude").join("settings.json");
-        if project_settings.exists() {
-            self.merge_file(&project_settings, SettingsSource::Project)
+        // 2. User settings
+        if let Some(home) = crate::common::home_dir() {
+            self.load_from_dir(&home.join(".claude"), SettingsSource::User)
                 .await?;
         }
 
-        // 3. Local settings (highest non-managed priority)
+        // 3. Project settings
+        self.load_from_dir(&project_dir.join(".claude"), SettingsSource::Project)
+            .await?;
+
+        // 4. Local settings (highest priority)
         let local_settings = project_dir.join(".claude").join("settings.local.json");
         if local_settings.exists() {
             self.merge_file(&local_settings, SettingsSource::Local)
@@ -264,13 +263,39 @@ impl SettingsLoader {
         Ok(&self.settings)
     }
 
-    /// Load managed settings (organization policy) - these lock keys and cannot be overridden.
-    pub async fn load_managed(&mut self, path: &Path) -> ConfigResult<()> {
-        if path.exists() {
-            let content = tokio::fs::read_to_string(path).await?;
+    /// Loads settings from a single base directory.
+    /// Use this for loading from a specific resource level.
+    pub async fn load_from(&mut self, base_dir: &Path) -> ConfigResult<&Settings> {
+        // Check for settings.json directly in base_dir
+        let direct_path = base_dir.join("settings.json");
+        if direct_path.exists() {
+            self.merge_file(&direct_path, SettingsSource::Project)
+                .await?;
+        } else {
+            // Check for .claude/settings.json
+            self.load_from_dir(&base_dir.join(".claude"), SettingsSource::Project)
+                .await?;
+        }
+        Ok(&self.settings)
+    }
+
+    /// Loads only local settings (settings.local.json).
+    pub async fn load_local(&mut self, project_dir: &Path) -> ConfigResult<&Settings> {
+        let local_path = project_dir.join(".claude").join("settings.local.json");
+        if local_path.exists() {
+            self.merge_file(&local_path, SettingsSource::Local).await?;
+        }
+        Ok(&self.settings)
+    }
+
+    /// Internal: Load enterprise settings with key locking.
+    async fn load_enterprise(&mut self, enterprise_dir: &Path) -> ConfigResult<()> {
+        let settings_path = enterprise_dir.join("settings.json");
+        if settings_path.exists() {
+            let content = tokio::fs::read_to_string(&settings_path).await?;
             let managed: Settings = serde_json::from_str(&content)?;
 
-            // Lock all non-empty fields from managed settings
+            // Lock non-empty fields from enterprise settings
             if !managed.permissions.deny.is_empty() {
                 self.locked_keys.insert("permissions.deny".to_string());
             }
@@ -282,6 +307,19 @@ impl SettingsLoader {
             }
 
             self.merge_settings(managed, true);
+        }
+        Ok(())
+    }
+
+    /// Internal: Load from a .claude directory.
+    async fn load_from_dir(
+        &mut self,
+        claude_dir: &Path,
+        source: SettingsSource,
+    ) -> ConfigResult<()> {
+        let settings_path = claude_dir.join("settings.json");
+        if settings_path.exists() {
+            self.merge_file(&settings_path, source).await?;
         }
         Ok(())
     }
@@ -384,31 +422,12 @@ impl SettingsLoader {
         }
     }
 
-    pub async fn load_from_directory(dir: &Path) -> ConfigResult<Settings> {
-        let mut loader = Self::new();
-        let settings_path = dir.join(".claude").join("settings.json");
-        if settings_path.exists() {
-            loader
-                .merge_file(&settings_path, SettingsSource::Project)
-                .await?;
-        }
-        let local_path = dir.join(".claude").join("settings.local.json");
-        if local_path.exists() {
-            loader
-                .merge_file(&local_path, SettingsSource::Local)
-                .await?;
-        }
-        Ok(loader.settings)
-    }
-
-    pub async fn load_merged(project_dir: &Path) -> ConfigResult<Settings> {
-        let mut loader = Self::new();
-        loader.load(project_dir).await?;
-        Ok(loader.settings)
-    }
-
     pub fn settings(&self) -> &Settings {
         &self.settings
+    }
+
+    pub fn into_settings(self) -> Settings {
+        self.settings
     }
 }
 

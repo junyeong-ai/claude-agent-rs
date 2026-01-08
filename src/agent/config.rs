@@ -254,49 +254,119 @@ impl PromptConfig {
     }
 }
 
+/// Cache strategy determining which content types to cache.
+///
+/// Anthropic best practices recommend caching static content (system prompts,
+/// tools) with longer TTLs and dynamic content (messages) with shorter TTLs.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum CacheStrategy {
+    /// No caching - all content sent without cache_control
+    Disabled,
+    /// Cache system prompt only (static content with long TTL)
+    SystemOnly,
+    /// Cache messages only (last user turn with short TTL)
+    MessagesOnly,
+    /// Cache both system and messages (recommended)
+    #[default]
+    Full,
+}
+
+impl CacheStrategy {
+    /// Returns true if system prompt caching is enabled
+    pub fn cache_system(&self) -> bool {
+        matches!(self, Self::SystemOnly | Self::Full)
+    }
+
+    /// Returns true if message caching is enabled
+    pub fn cache_messages(&self) -> bool {
+        matches!(self, Self::MessagesOnly | Self::Full)
+    }
+
+    /// Returns true if any caching is enabled
+    pub fn is_enabled(&self) -> bool {
+        !matches!(self, Self::Disabled)
+    }
+}
+
 /// Cache configuration for prompt caching.
+///
+/// Implements Anthropic's prompt caching best practices:
+/// - Static content (system prompt, CLAUDE.md) uses longer TTL (1 hour default)
+/// - Dynamic content (messages) uses shorter TTL (5 minutes default)
+/// - Long TTL content must come before short TTL content in requests
 #[derive(Debug, Clone)]
 pub struct CacheConfig {
-    pub enabled: bool,
-    pub system_prompt_cache: bool,
-    pub message_cache: bool,
+    /// Cache strategy determining which content types to cache
+    pub strategy: CacheStrategy,
+    /// TTL for static content (system prompt, tools, CLAUDE.md)
+    pub static_ttl: crate::types::CacheTtl,
+    /// TTL for message content (last user turn)
+    pub message_ttl: crate::types::CacheTtl,
 }
 
 impl Default for CacheConfig {
     fn default() -> Self {
         Self {
-            enabled: true,
-            system_prompt_cache: true,
-            message_cache: true,
+            strategy: CacheStrategy::Full,
+            static_ttl: crate::types::CacheTtl::OneHour,
+            message_ttl: crate::types::CacheTtl::FiveMinutes,
         }
     }
 }
 
 impl CacheConfig {
+    /// Create a disabled cache configuration
     pub fn disabled() -> Self {
         Self {
-            enabled: false,
-            system_prompt_cache: false,
-            message_cache: false,
+            strategy: CacheStrategy::Disabled,
+            ..Default::default()
         }
     }
 
+    /// Create a system-only cache configuration
     pub fn system_only() -> Self {
         Self {
-            enabled: true,
-            system_prompt_cache: true,
-            message_cache: false,
+            strategy: CacheStrategy::SystemOnly,
+            ..Default::default()
         }
     }
 
-    pub fn with_system_cache(mut self, enabled: bool) -> Self {
-        self.system_prompt_cache = enabled;
+    /// Create a messages-only cache configuration
+    pub fn messages_only() -> Self {
+        Self {
+            strategy: CacheStrategy::MessagesOnly,
+            ..Default::default()
+        }
+    }
+
+    /// Set the cache strategy
+    pub fn with_strategy(mut self, strategy: CacheStrategy) -> Self {
+        self.strategy = strategy;
         self
     }
 
-    pub fn with_message_cache(mut self, enabled: bool) -> Self {
-        self.message_cache = enabled;
+    /// Set the TTL for static content
+    pub fn with_static_ttl(mut self, ttl: crate::types::CacheTtl) -> Self {
+        self.static_ttl = ttl;
         self
+    }
+
+    /// Set the TTL for message content
+    pub fn with_message_ttl(mut self, ttl: crate::types::CacheTtl) -> Self {
+        self.message_ttl = ttl;
+        self
+    }
+
+    /// Get message TTL if message caching is enabled, None otherwise.
+    ///
+    /// This is a convenience method to avoid duplicating the cache_messages() check
+    /// at every call site.
+    pub fn message_ttl_option(&self) -> Option<crate::types::CacheTtl> {
+        if self.strategy.cache_messages() {
+            Some(self.message_ttl)
+        } else {
+            None
+        }
     }
 }
 
@@ -464,5 +534,58 @@ mod tests {
         assert_eq!(config.model.primary, "claude-opus-4");
         assert_eq!(config.budget.max_cost_usd, Some(5.0));
         assert_eq!(config.working_dir, Some(PathBuf::from("/project")));
+    }
+
+    #[test]
+    fn test_cache_strategy_default_is_full() {
+        let config = CacheConfig::default();
+        assert_eq!(config.strategy, CacheStrategy::Full);
+        assert_eq!(config.static_ttl, crate::types::CacheTtl::OneHour);
+        assert_eq!(config.message_ttl, crate::types::CacheTtl::FiveMinutes);
+    }
+
+    #[test]
+    fn test_cache_strategy_disabled() {
+        let config = CacheConfig::disabled();
+        assert_eq!(config.strategy, CacheStrategy::Disabled);
+        assert!(!config.strategy.is_enabled());
+        assert!(!config.strategy.cache_system());
+        assert!(!config.strategy.cache_messages());
+    }
+
+    #[test]
+    fn test_cache_strategy_system_only() {
+        let config = CacheConfig::system_only();
+        assert_eq!(config.strategy, CacheStrategy::SystemOnly);
+        assert!(config.strategy.is_enabled());
+        assert!(config.strategy.cache_system());
+        assert!(!config.strategy.cache_messages());
+    }
+
+    #[test]
+    fn test_cache_strategy_messages_only() {
+        let config = CacheConfig::messages_only();
+        assert_eq!(config.strategy, CacheStrategy::MessagesOnly);
+        assert!(config.strategy.is_enabled());
+        assert!(!config.strategy.cache_system());
+        assert!(config.strategy.cache_messages());
+    }
+
+    #[test]
+    fn test_cache_strategy_full() {
+        let config = CacheConfig::default();
+        assert!(config.strategy.is_enabled());
+        assert!(config.strategy.cache_system());
+        assert!(config.strategy.cache_messages());
+    }
+
+    #[test]
+    fn test_cache_config_with_ttl() {
+        let config = CacheConfig::default()
+            .with_static_ttl(crate::types::CacheTtl::FiveMinutes)
+            .with_message_ttl(crate::types::CacheTtl::OneHour);
+
+        assert_eq!(config.static_ttl, crate::types::CacheTtl::FiveMinutes);
+        assert_eq!(config.message_ttl, crate::types::CacheTtl::OneHour);
     }
 }

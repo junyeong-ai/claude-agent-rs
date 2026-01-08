@@ -69,6 +69,10 @@ impl SkillExecutor {
         &mut self.registry
     }
 
+    pub fn into_registry(self) -> SkillRegistry {
+        self.registry
+    }
+
     pub async fn execute(&self, name: &str, args: Option<&str>) -> SkillResult {
         let skill = match self.registry.get(name) {
             Some(s) => s,
@@ -235,5 +239,16 @@ mod tests {
 
         let no_args = executor.extract_args("/test", &skill);
         assert!(no_args.is_none());
+    }
+
+    #[test]
+    fn test_into_registry() {
+        let mut registry = SkillRegistry::new();
+        registry.register(SkillDefinition::new("test", "Test", "Content"));
+
+        let executor = SkillExecutor::new(registry);
+        let recovered = executor.into_registry();
+
+        assert!(recovered.get("test").is_some());
     }
 }

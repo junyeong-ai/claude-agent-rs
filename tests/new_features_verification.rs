@@ -1,10 +1,9 @@
 //! Comprehensive verification tests for newly implemented features.
 //!
 //! Tests:
-//! - CLAUDE.md recursive loading
-//! - CLAUDE.local.md support
+//! - CLAUDE.md project-level loading
 //! - @import syntax
-//! - .claude/rules/ directory loading
+//! - .claude/rules/ recursive directory loading
 //! - Cloud provider enum
 //!
 //! Run: cargo test --test new_features_verification -- --nocapture
@@ -120,7 +119,7 @@ mod memory_loader_tests {
             .unwrap();
 
         let mut loader = MemoryLoader::new();
-        let content = loader.load_all(dir.path()).await.unwrap();
+        let content = loader.load(dir.path()).await.unwrap();
 
         assert_eq!(content.claude_md.len(), 1);
         assert!(content.claude_md[0].contains("Test content"));
@@ -137,24 +136,10 @@ mod memory_loader_tests {
             .unwrap();
 
         let mut loader = MemoryLoader::new();
-        let content = loader.load_all(dir.path()).await.unwrap();
+        let content = loader.load(dir.path()).await.unwrap();
 
         assert_eq!(content.claude_md.len(), 1);
         assert!(content.claude_md[0].contains(".claude dir"));
-    }
-
-    #[tokio::test]
-    async fn test_load_claude_local_md() {
-        let dir = tempdir().unwrap();
-        fs::write(dir.path().join("CLAUDE.local.md"), "Local private settings")
-            .await
-            .unwrap();
-
-        let mut loader = MemoryLoader::new();
-        let content = loader.load_all(dir.path()).await.unwrap();
-
-        assert_eq!(content.local_md.len(), 1);
-        assert!(content.local_md[0].contains("Local private"));
     }
 
     #[tokio::test]
@@ -180,7 +165,7 @@ mod memory_loader_tests {
         .unwrap();
 
         let mut loader = MemoryLoader::new();
-        let content = loader.load_all(dir.path()).await.unwrap();
+        let content = loader.load(dir.path()).await.unwrap();
 
         assert_eq!(content.rule_indices.len(), 3);
 
@@ -217,7 +202,7 @@ mod memory_loader_tests {
         .unwrap();
 
         let mut loader = MemoryLoader::new();
-        let content = loader.load_all(dir.path()).await.unwrap();
+        let content = loader.load(dir.path()).await.unwrap();
 
         let combined = content.combined_claude_md();
         assert!(combined.contains("# Project"));
@@ -246,7 +231,7 @@ mod memory_loader_tests {
             .unwrap();
 
         let mut loader = MemoryLoader::new();
-        let content = loader.load_all(dir.path()).await.unwrap();
+        let content = loader.load(dir.path()).await.unwrap();
 
         let combined = content.combined_claude_md();
         assert!(combined.contains("Top"));
@@ -270,7 +255,7 @@ mod memory_loader_tests {
             .unwrap();
 
         let mut loader = MemoryLoader::new();
-        let result = loader.load_all(dir.path()).await;
+        let result = loader.load(dir.path()).await;
 
         // Should not hang or crash
         assert!(result.is_ok());
@@ -288,7 +273,7 @@ mod memory_loader_tests {
         .unwrap();
 
         let mut loader = MemoryLoader::new();
-        let content = loader.load_all(dir.path()).await.unwrap();
+        let content = loader.load(dir.path()).await.unwrap();
 
         let combined = content.combined_claude_md();
         assert!(combined.contains("Content"));
@@ -305,19 +290,15 @@ mod memory_loader_tests {
         fs::write(dir.path().join("CLAUDE.md"), "Main content")
             .await
             .unwrap();
-        fs::write(dir.path().join("CLAUDE.local.md"), "Local content")
-            .await
-            .unwrap();
         fs::write(rules_dir.join("test.md"), "Rule content")
             .await
             .unwrap();
 
         let mut loader = MemoryLoader::new();
-        let content = loader.load_all(dir.path()).await.unwrap();
+        let content = loader.load(dir.path()).await.unwrap();
 
         let combined = content.combined_claude_md();
         assert!(combined.contains("Main content"));
-        assert!(combined.contains("Local content"));
 
         // Rules are now loaded as indices, not directly in combined content
         assert!(!content.rule_indices.is_empty());
@@ -338,7 +319,7 @@ mod memory_loader_tests {
         .unwrap();
 
         let mut loader = MemoryLoader::new();
-        let content = loader.load_all(dir.path()).await.unwrap();
+        let content = loader.load(dir.path()).await.unwrap();
 
         let combined = content.combined_claude_md();
         assert!(combined.contains("@@user@example.com"));
@@ -380,10 +361,7 @@ mod context_builder_tests {
         let rules_dir = dir.path().join(".claude").join("rules");
         fs::create_dir_all(&rules_dir).await.unwrap();
 
-        fs::write(dir.path().join("CLAUDE.md"), "Main")
-            .await
-            .unwrap();
-        fs::write(dir.path().join("CLAUDE.local.md"), "Local")
+        fs::write(dir.path().join("CLAUDE.md"), "Main content")
             .await
             .unwrap();
         fs::write(rules_dir.join("rule1.md"), "Rule 1 content")
@@ -397,8 +375,7 @@ mod context_builder_tests {
             .unwrap();
 
         let md = &context.static_context().claude_md;
-        assert!(md.contains("Main"));
-        assert!(md.contains("Local"));
+        assert!(md.contains("Main content"));
 
         // Rules are loaded as indices in RulesEngine, not in claude_md
         let summary = context.build_rules_summary();
@@ -707,7 +684,7 @@ mod home_dir_tests {
         .unwrap();
 
         let mut loader = MemoryLoader::new();
-        let content = loader.load_all(dir.path()).await.unwrap();
+        let content = loader.load(dir.path()).await.unwrap();
 
         // Should gracefully handle missing home dir files
         let combined = content.combined_claude_md();
@@ -728,10 +705,9 @@ fn test_all_new_features_summary() {
     println!("========================================================================");
     println!(" Features tested:                                                       ");
     println!(" - Cloud provider auto-resolution                                       ");
-    println!(" - CLAUDE.md recursive loading                                          ");
-    println!(" - CLAUDE.local.md support                                              ");
+    println!(" - CLAUDE.md project-level loading                                      ");
     println!(" - @import syntax with home directory (~) expansion                     ");
-    println!(" - .claude/rules/ directory loading                                     ");
+    println!(" - .claude/rules/ recursive directory loading                           ");
     println!(" - Slash commands (.claude/commands/)                                   ");
     println!(" - $ARGUMENTS template substitution                                     ");
     println!(" - settings.json and settings.local.json loading                        ");

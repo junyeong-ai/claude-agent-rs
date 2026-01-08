@@ -153,7 +153,7 @@ Steps:
         .unwrap();
 
         let mut loader = CommandLoader::new();
-        loader.load_all(dir.path()).await.unwrap();
+        loader.load(dir.path()).await.unwrap();
 
         // Commands should be loaded
         assert!(loader.exists("deploy"));

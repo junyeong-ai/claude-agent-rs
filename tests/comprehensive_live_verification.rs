@@ -103,14 +103,6 @@ async fn test_3_claude_md_recursive_loading() {
     .await
     .unwrap();
 
-    // CLAUDE.local.md (private settings)
-    fs::write(
-        dir.path().join("CLAUDE.local.md"),
-        "# Local Settings\n\nAPI_KEY: use-env-variable",
-    )
-    .await
-    .unwrap();
-
     // Rules directory
     let rules_dir = dir.path().join(".claude").join("rules");
     fs::create_dir_all(&rules_dir).await.unwrap();
@@ -129,10 +121,9 @@ async fn test_3_claude_md_recursive_loading() {
 
     // Load all memory
     let mut loader = MemoryLoader::new();
-    let content = loader.load_all(dir.path()).await.unwrap();
+    let content = loader.load(dir.path()).await.unwrap();
 
     println!("CLAUDE.md files: {}", content.claude_md.len());
-    println!("Local files: {}", content.local_md.len());
     println!("Rules: {}", content.rule_indices.len());
 
     let combined = content.combined_claude_md();
@@ -148,10 +139,6 @@ async fn test_3_claude_md_recursive_loading() {
     assert!(
         combined.contains("API Documentation"),
         "Should import docs/api.md"
-    );
-    assert!(
-        combined.contains("Local Settings"),
-        "Should load CLAUDE.local.md"
     );
     assert!(combined.contains("Rust Rules"), "Should load rules");
     assert_eq!(content.rule_indices.len(), 2, "Should load 2 rules");
@@ -195,7 +182,7 @@ End of file"#,
         .unwrap();
 
     let mut loader = MemoryLoader::new();
-    let content = loader.load_all(dir.path()).await.unwrap();
+    let content = loader.load(dir.path()).await.unwrap();
     let combined = content.combined_claude_md();
 
     println!("Content:\n{}", combined);
@@ -374,7 +361,7 @@ Deploy to $ARGUMENTS environment:
 
     // Load commands
     let mut loader = CommandLoader::new();
-    loader.load_all(dir.path()).await.unwrap();
+    loader.load(dir.path()).await.unwrap();
 
     println!("Loaded commands:");
     for cmd in loader.list() {
@@ -423,12 +410,6 @@ async fn test_8_context_builder_integration() {
     .await
     .unwrap();
     fs::write(
-        dir.path().join("CLAUDE.local.md"),
-        "# Local\nPrivate settings.",
-    )
-    .await
-    .unwrap();
-    fs::write(
         rules_dir.join("coding.md"),
         "# Coding Standards\nFollow best practices.",
     )
@@ -451,7 +432,6 @@ async fn test_8_context_builder_integration() {
     );
 
     assert!(static_ctx.claude_md.contains("Main Project"));
-    assert!(static_ctx.claude_md.contains("Local"));
     assert!(static_ctx.claude_md.contains("Coding Standards"));
 
     println!(
@@ -603,10 +583,9 @@ async fn test_99_comprehensive_summary() {
     println!("    - Cloud provider selection");
     println!();
     println!("  Memory System:");
-    println!("    - CLAUDE.md recursive loading");
-    println!("    - CLAUDE.local.md support");
+    println!("    - CLAUDE.md project-level loading");
     println!("    - @import syntax with home directory expansion");
-    println!("    - .claude/rules/ directory loading");
+    println!("    - .claude/rules/ recursive directory loading");
     println!();
     println!("  Skills & Progressive Disclosure:");
     println!("    - Skill registration and execution");

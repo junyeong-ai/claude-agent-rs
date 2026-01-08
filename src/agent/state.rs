@@ -286,18 +286,22 @@ mod tests {
 
     #[test]
     fn test_cache_efficiency_all_reads() {
-        let mut metrics = AgentMetrics::default();
-        metrics.cache_read_tokens = 1000;
-        metrics.cache_creation_tokens = 0;
+        let metrics = AgentMetrics {
+            cache_read_tokens: 1000,
+            cache_creation_tokens: 0,
+            ..Default::default()
+        };
 
         assert!((metrics.cache_efficiency() - 1.0).abs() < 0.001);
     }
 
     #[test]
     fn test_cache_efficiency_mixed() {
-        let mut metrics = AgentMetrics::default();
-        metrics.cache_read_tokens = 900;
-        metrics.cache_creation_tokens = 100;
+        let metrics = AgentMetrics {
+            cache_read_tokens: 900,
+            cache_creation_tokens: 100,
+            ..Default::default()
+        };
 
         // 900 / (900 + 100) = 0.9
         assert!((metrics.cache_efficiency() - 0.9).abs() < 0.001);
@@ -305,9 +309,11 @@ mod tests {
 
     #[test]
     fn test_cache_cost_savings() {
-        let mut metrics = AgentMetrics::default();
-        metrics.cache_read_tokens = 1_000_000; // 1M tokens
-        metrics.cache_creation_tokens = 100_000; // 100K tokens
+        let metrics = AgentMetrics {
+            cache_read_tokens: 1_000_000,   // 1M tokens
+            cache_creation_tokens: 100_000, // 100K tokens
+            ..Default::default()
+        };
 
         let price_per_mtok = 3.0; // $3 per MTok
 
@@ -320,9 +326,11 @@ mod tests {
 
     #[test]
     fn test_cache_hit_rate() {
-        let mut metrics = AgentMetrics::default();
-        metrics.input_tokens = 1000;
-        metrics.cache_read_tokens = 800;
+        let metrics = AgentMetrics {
+            input_tokens: 1000,
+            cache_read_tokens: 800,
+            ..Default::default()
+        };
 
         // 800 / 1000 = 0.8
         assert!((metrics.cache_hit_rate() - 0.8).abs() < 0.001);
@@ -330,8 +338,10 @@ mod tests {
 
     #[test]
     fn test_cache_tokens_saved() {
-        let mut metrics = AgentMetrics::default();
-        metrics.cache_read_tokens = 1000;
+        let metrics = AgentMetrics {
+            cache_read_tokens: 1000,
+            ..Default::default()
+        };
 
         // 1000 * 0.9 = 900
         assert_eq!(metrics.cache_tokens_saved(), 900);

@@ -525,7 +525,7 @@ mod progressive_disclosure_tests {
 
         // Load actual rule files
         let mut loader = MemoryLoader::new();
-        let content = loader.load_all(dir.path()).await.unwrap();
+        let content = loader.load(dir.path()).await.unwrap();
 
         assert_eq!(content.rule_indices.len(), 2);
         let rule_names: Vec<_> = content
@@ -668,7 +668,7 @@ Deploy to $ARGUMENTS environment:
             .unwrap();
 
         let mut loader = CommandLoader::new();
-        loader.load_all(dir.path()).await.unwrap();
+        loader.load(dir.path()).await.unwrap();
 
         // Verify commands loaded
         assert!(loader.exists("deploy"));
@@ -780,13 +780,6 @@ mod memory_system_tests {
         .await
         .unwrap();
 
-        fs::write(
-            dir.path().join("CLAUDE.local.md"),
-            "# Local Settings\n\nPrivate config.",
-        )
-        .await
-        .unwrap();
-
         let docs_dir = dir.path().join("docs");
         fs::create_dir_all(&docs_dir).await.unwrap();
         fs::write(docs_dir.join("api.md"), "## API\n\nEndpoints: /api/v1/*")
@@ -794,19 +787,16 @@ mod memory_system_tests {
             .unwrap();
 
         let mut loader = MemoryLoader::new();
-        let content = loader.load_all(dir.path()).await.unwrap();
+        let content = loader.load(dir.path()).await.unwrap();
 
         println!("CLAUDE.md files: {}", content.claude_md.len());
-        println!("Local files: {}", content.local_md.len());
 
         let combined = content.combined_claude_md();
         assert!(combined.contains("Root Project"));
         assert!(combined.contains("API")); // @import worked
-        assert!(combined.contains("Local Settings"));
 
         println!("✓ CLAUDE.md loaded");
         println!("✓ @import syntax processed");
-        println!("✓ CLAUDE.local.md loaded");
         println!("✅ CLAUDE.md loading: PASSED\n");
     }
 
@@ -834,7 +824,7 @@ mod memory_system_tests {
         .unwrap();
 
         let mut loader = MemoryLoader::new();
-        let content = loader.load_all(dir.path()).await.unwrap();
+        let content = loader.load(dir.path()).await.unwrap();
 
         assert_eq!(content.rule_indices.len(), 2);
 
@@ -1226,10 +1216,9 @@ fn test_summary() {
     println!("║    ✓ TokenUsage with cache_read/cache_creation fields                  ║");
     println!("║                                                                        ║");
     println!("║  SECTION 6: Memory System                                              ║");
-    println!("║    ✓ CLAUDE.md recursive loading                                       ║");
-    println!("║    ✓ CLAUDE.local.md support                                           ║");
+    println!("║    ✓ CLAUDE.md project-level loading                                   ║");
     println!("║    ✓ @import syntax with home directory expansion                      ║");
-    println!("║    ✓ .claude/rules/ directory loading                                  ║");
+    println!("║    ✓ .claude/rules/ recursive directory loading                        ║");
     println!("║    ✓ settings.json / settings.local.json merging                       ║");
     println!("║    ✓ ContextBuilder integration                                        ║");
     println!("║                                                                        ║");

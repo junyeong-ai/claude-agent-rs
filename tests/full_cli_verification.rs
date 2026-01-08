@@ -521,7 +521,7 @@ Steps:
             .unwrap();
 
         let mut loader = claude_agent::skills::CommandLoader::new();
-        loader.load_all(dir.path()).await.unwrap();
+        loader.load(dir.path()).await.unwrap();
 
         assert!(loader.exists("build"), "build command should exist");
         assert!(loader.exists("aws:deploy"), "aws:deploy should exist");

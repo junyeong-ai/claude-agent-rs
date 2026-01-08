@@ -573,24 +573,10 @@ mod memory_tests {
             .unwrap();
 
         let mut loader = MemoryLoader::new();
-        let content = loader.load_all(dir.path()).await.unwrap();
+        let content = loader.load(dir.path()).await.unwrap();
 
         assert_eq!(content.claude_md.len(), 1);
         assert!(content.claude_md[0].contains("Main content"));
-    }
-
-    #[tokio::test]
-    async fn test_claude_local_md() {
-        let dir = tempdir().unwrap();
-        fs::write(dir.path().join("CLAUDE.local.md"), "# Local\n\nPrivate")
-            .await
-            .unwrap();
-
-        let mut loader = MemoryLoader::new();
-        let content = loader.load_all(dir.path()).await.unwrap();
-
-        assert_eq!(content.local_md.len(), 1);
-        assert!(content.local_md[0].contains("Private"));
     }
 
     #[tokio::test]
@@ -607,7 +593,7 @@ mod memory_tests {
             .unwrap();
 
         let mut loader = MemoryLoader::new();
-        let content = loader.load_all(dir.path()).await.unwrap();
+        let content = loader.load(dir.path()).await.unwrap();
 
         let combined = content.combined_claude_md();
         assert!(combined.contains("Main"));
@@ -628,7 +614,7 @@ mod memory_tests {
             .unwrap();
 
         let mut loader = MemoryLoader::new();
-        let content = loader.load_all(dir.path()).await.unwrap();
+        let content = loader.load(dir.path()).await.unwrap();
 
         assert_eq!(content.rule_indices.len(), 2);
     }
@@ -727,7 +713,7 @@ Deploy: $ARGUMENTS"#,
         .unwrap();
 
         let mut loader = CommandLoader::new();
-        loader.load_all(dir.path()).await.unwrap();
+        loader.load(dir.path()).await.unwrap();
 
         assert!(loader.exists("deploy"));
 

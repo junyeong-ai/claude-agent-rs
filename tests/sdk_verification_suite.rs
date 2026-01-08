@@ -769,7 +769,7 @@ mod memory_system_tests {
         .unwrap();
 
         let mut loader = MemoryLoader::new();
-        let content = loader.load_all(dir.path()).await;
+        let content = loader.load(dir.path()).await;
 
         let success = content.is_ok();
         if let Ok(ref c) = content {
@@ -803,7 +803,7 @@ mod memory_system_tests {
             .unwrap();
 
         let mut loader = MemoryLoader::new();
-        let content = loader.load_all(dir.path()).await;
+        let content = loader.load(dir.path()).await;
 
         let success = content.is_ok();
         if let Ok(ref c) = content {
@@ -844,7 +844,7 @@ mod memory_system_tests {
         .unwrap();
 
         let mut loader = MemoryLoader::new();
-        let content = loader.load_all(dir.path()).await;
+        let content = loader.load(dir.path()).await;
 
         let success = content.is_ok();
         if let Ok(ref c) = content {
@@ -1092,7 +1092,7 @@ mod progressive_disclosure_tests {
 
         // Load rules
         let mut loader = MemoryLoader::new();
-        let content = loader.load_all(dir.path()).await.unwrap();
+        let content = loader.load(dir.path()).await.unwrap();
 
         // Check rule matching
         let rs_path = std::path::Path::new("main.rs");

@@ -596,7 +596,7 @@ mod memory_system_tests {
         .unwrap();
 
         let mut loader = MemoryLoader::new();
-        let content = loader.load_all(dir.path()).await.unwrap();
+        let content = loader.load(dir.path()).await.unwrap();
 
         assert!(!content.claude_md.is_empty());
         assert!(content.combined_claude_md().contains("test project"));
@@ -623,7 +623,7 @@ mod memory_system_tests {
         .unwrap();
 
         let mut loader = MemoryLoader::new();
-        let content = loader.load_all(dir.path()).await.unwrap();
+        let content = loader.load(dir.path()).await.unwrap();
 
         let combined = content.combined_claude_md();
         assert!(combined.contains("Main"));
@@ -651,7 +651,7 @@ mod memory_system_tests {
             .unwrap();
 
         let mut loader = MemoryLoader::new();
-        let content = loader.load_all(dir.path()).await.unwrap();
+        let content = loader.load(dir.path()).await.unwrap();
 
         assert_eq!(content.rule_indices.len(), 2);
         println!("✓ Rules directory verified");

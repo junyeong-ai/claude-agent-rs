@@ -77,8 +77,8 @@ pub mod types;
 // Re-exports for convenience
 pub use agent::{
     Agent, AgentBuilder, AgentConfig, AgentEvent, AgentMetrics, AgentModelConfig, AgentResult,
-    AgentState, BudgetConfig, CacheConfig, DEFAULT_COMPACT_KEEP_MESSAGES, ExecutionConfig,
-    PromptConfig, SecurityConfig, SystemPromptMode, ToolStats,
+    AgentState, BudgetConfig, CacheConfig, CacheStrategy, DEFAULT_COMPACT_KEEP_MESSAGES,
+    ExecutionConfig, PromptConfig, SecurityConfig, SystemPromptMode, ToolStats,
 };
 #[cfg(feature = "cli-integration")]
 pub use auth::ClaudeCliProvider;
@@ -103,8 +103,8 @@ pub use client::{
 pub use common::{Named, Provider, SourceType, ToolRestricted};
 pub use context::{
     ContextBuilder, FileMemoryProvider, InMemoryProvider, LeveledMemoryProvider, MemoryContent,
-    MemoryLevel, MemoryLoader, MemoryProvider, PromptOrchestrator, RoutingStrategy, RuleIndex,
-    SkillIndex, StaticContext,
+    MemoryLoader, MemoryProvider, PromptOrchestrator, RoutingStrategy, RuleIndex, SkillIndex,
+    StaticContext,
 };
 pub use hooks::{CommandHook, Hook, HookContext, HookEvent, HookInput, HookManager, HookOutput};
 pub use observability::{

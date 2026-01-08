@@ -1,9 +1,10 @@
 //! Static Context for Prompt Caching
 //!
 //! Content that is always loaded and cached for the entire session.
+//! Per Anthropic best practices, static content uses 1-hour TTL.
 
 use crate::mcp::make_mcp_name;
-use crate::types::{SystemBlock, ToolDefinition};
+use crate::types::{CacheTtl, SystemBlock, ToolDefinition};
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Debug, Default)]
@@ -58,27 +59,33 @@ impl StaticContext {
         self
     }
 
+    /// Convert static context to system blocks with 1-hour TTL caching.
+    ///
+    /// Per Anthropic best practices:
+    /// - Static content uses longer TTL (1 hour)
+    /// - Long TTL content must come before short TTL content
     pub fn to_system_blocks(&self) -> Vec<SystemBlock> {
         let mut blocks = Vec::new();
+        let ttl = CacheTtl::OneHour;
 
         if !self.system_prompt.is_empty() {
-            blocks.push(SystemBlock::cached(&self.system_prompt));
+            blocks.push(SystemBlock::cached_with_ttl(&self.system_prompt, ttl));
         }
 
         if !self.claude_md.is_empty() {
-            blocks.push(SystemBlock::cached(&self.claude_md));
+            blocks.push(SystemBlock::cached_with_ttl(&self.claude_md, ttl));
         }
 
         if !self.skill_index_summary.is_empty() {
-            blocks.push(SystemBlock::cached(&self.skill_index_summary));
+            blocks.push(SystemBlock::cached_with_ttl(&self.skill_index_summary, ttl));
         }
 
         if !self.rules_summary.is_empty() {
-            blocks.push(SystemBlock::cached(&self.rules_summary));
+            blocks.push(SystemBlock::cached_with_ttl(&self.rules_summary, ttl));
         }
 
         if !self.mcp_tool_metadata.is_empty() {
-            blocks.push(SystemBlock::cached(self.format_mcp_summary()));
+            blocks.push(SystemBlock::cached_with_ttl(self.format_mcp_summary(), ttl));
         }
 
         blocks
@@ -139,11 +146,12 @@ mod tests {
     use crate::types::CacheType;
 
     #[test]
-    fn test_system_block_cached() {
-        let block = SystemBlock::cached("Hello");
+    fn test_system_block_cached_with_ttl() {
+        let block = SystemBlock::cached_with_ttl("Hello", CacheTtl::OneHour);
         assert!(block.cache_control.is_some());
         let cache_ctrl = block.cache_control.unwrap();
         assert_eq!(cache_ctrl.cache_type, CacheType::Ephemeral);
+        assert_eq!(cache_ctrl.ttl, Some(CacheTtl::OneHour));
         assert_eq!(block.block_type, "text");
     }
 

@@ -12,7 +12,7 @@ pub mod static_context;
 
 pub use crate::types::TokenUsage;
 pub use builder::ContextBuilder;
-pub use level::{LeveledMemoryProvider, MemoryLevel};
+pub use level::{LeveledMemoryProvider, enterprise_base_path, user_base_path};
 pub use memory_loader::MemoryContent;
 pub use memory_loader::MemoryLoader;
 pub use orchestrator::PromptOrchestrator;

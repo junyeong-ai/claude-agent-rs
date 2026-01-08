@@ -11,6 +11,10 @@ use super::builder::AgentBuilder;
 
 impl AgentBuilder {
     pub async fn build(mut self) -> crate::Result<crate::agent::Agent> {
+        // Load resources in fixed order (regardless of chaining order)
+        // Order: Enterprise → User → Project → Local (later overrides earlier)
+        self.load_resources_by_level().await;
+
         self.resolve_output_style().await?;
         self.resolve_model_aliases();
         self.connect_mcp_servers().await?;
@@ -151,6 +155,40 @@ impl AgentBuilder {
 
         self.mcp_manager = Some(manager);
         Ok(())
+    }
+
+    /// Loads resources from enabled levels in fixed order.
+    ///
+    /// The order is always: Enterprise → User → Project → Local
+    /// regardless of the order `with_*_resources()` methods were called.
+    /// This ensures consistent override behavior where later levels
+    /// override settings from earlier levels.
+    #[cfg(feature = "cli-integration")]
+    async fn load_resources_by_level(&mut self) {
+        // 1. Enterprise (lowest priority)
+        if self.load_enterprise {
+            self.load_enterprise_resources().await;
+        }
+
+        // 2. User
+        if self.load_user {
+            self.load_user_resources().await;
+        }
+
+        // 3. Project
+        if self.load_project {
+            self.load_project_resources().await;
+        }
+
+        // 4. Local (highest priority, overrides all)
+        if self.load_local {
+            self.load_local_resources().await;
+        }
+    }
+
+    #[cfg(not(feature = "cli-integration"))]
+    async fn load_resources_by_level(&mut self) {
+        // No-op when cli-integration is disabled
     }
 
     async fn build_orchestrator(&mut self) -> PromptOrchestrator {

@@ -40,6 +40,11 @@ impl InMemoryProvider {
         self
     }
 
+    pub fn with_local_md(mut self, content: impl Into<String>) -> Self {
+        self.local_md.push(content.into());
+        self
+    }
+
     pub fn with_priority(mut self, priority: i32) -> Self {
         self.priority = priority;
         self
@@ -97,7 +102,7 @@ impl MemoryProvider for FileMemoryProvider {
 
     async fn load(&self) -> ContextResult<MemoryContent> {
         let mut loader = super::MemoryLoader::new();
-        loader.load_all(&self.path).await
+        loader.load(&self.path).await
     }
 
     fn priority(&self) -> i32 {

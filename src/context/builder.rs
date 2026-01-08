@@ -82,7 +82,7 @@ impl ContextBuilder {
         let dir = dir.as_ref();
         let mut loader = MemoryLoader::new();
 
-        if let Ok(content) = loader.load_all(dir).await {
+        if let Ok(content) = loader.load(dir).await {
             let combined = content.combined_claude_md();
             if !combined.is_empty() {
                 self.claude_md = Some(match self.claude_md {

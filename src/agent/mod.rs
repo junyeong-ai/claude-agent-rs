@@ -18,8 +18,8 @@ mod task_registry;
 mod tests;
 
 pub use config::{
-    AgentConfig, AgentModelConfig, BudgetConfig, CacheConfig, ExecutionConfig, PromptConfig,
-    SecurityConfig, SystemPromptMode,
+    AgentConfig, AgentModelConfig, BudgetConfig, CacheConfig, CacheStrategy, ExecutionConfig,
+    PromptConfig, SecurityConfig, SystemPromptMode,
 };
 pub use events::{AgentEvent, AgentResult};
 pub use executor::Agent;

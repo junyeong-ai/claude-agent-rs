@@ -30,7 +30,7 @@ use std::time::Duration;
 use crate::auth::{Credential, OAuthConfig};
 use crate::budget::TenantBudgetManager;
 use crate::client::{CloudProvider, FallbackConfig, ModelConfig, ProviderConfig};
-use crate::context::{LeveledMemoryProvider, MemoryLevel, RuleIndex, SkillIndex};
+use crate::context::{LeveledMemoryProvider, RuleIndex, SkillIndex};
 use crate::hooks::{Hook, HookManager};
 use crate::output_style::OutputStyle;
 use crate::permissions::{PermissionMode, PermissionPolicy, PermissionRule};
@@ -72,6 +72,13 @@ pub struct AgentBuilder {
     pub(super) mcp_configs: std::collections::HashMap<String, crate::mcp::McpServerConfig>,
     pub(super) mcp_manager: Option<std::sync::Arc<crate::mcp::McpManager>>,
     pub(super) session_manager: Option<crate::session::SessionManager>,
+
+    // Resource level flags - loaded in fixed order during build()
+    // Order: Enterprise → User → Project → Local (later overrides earlier)
+    pub(super) load_enterprise: bool,
+    pub(super) load_user: bool,
+    pub(super) load_project: bool,
+    pub(super) load_local: bool,
 
     #[cfg(feature = "aws")]
     pub(super) aws_region: Option<String>,
@@ -615,12 +622,19 @@ impl AgentBuilder {
         self
     }
 
-    /// Adds memory content at a specific level.
-    pub fn memory_content(mut self, level: MemoryLevel, content: impl Into<String>) -> Self {
-        let provider = self
-            .memory_provider
-            .get_or_insert_with(LeveledMemoryProvider::new);
-        provider.add_content(level, content);
+    /// Adds memory content (CLAUDE.md style).
+    pub fn memory_content(mut self, content: impl Into<String>) -> Self {
+        self.memory_provider
+            .get_or_insert_with(LeveledMemoryProvider::new)
+            .add_content(content);
+        self
+    }
+
+    /// Adds local memory content (CLAUDE.local.md style).
+    pub fn local_memory_content(mut self, content: impl Into<String>) -> Self {
+        self.memory_provider
+            .get_or_insert_with(LeveledMemoryProvider::new)
+            .add_local_content(content);
         self
     }
 

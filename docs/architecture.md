@@ -117,6 +117,7 @@ Memory and rules management.
 - `memory_loader.rs`: CLAUDE.md loading with `@import`
 - `rule_index.rs`: Path-based rule matching
 - `orchestrator.rs`: Context assembly
+- `level.rs`: LeveledMemoryProvider for multi-level resource aggregation
 
 ### Session (`src/session/`)
 

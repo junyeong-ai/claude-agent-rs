@@ -314,7 +314,7 @@ let mut mcp_manager = McpManager::new();
 mcp_manager.add_server("filesystem", config).await?;
 
 let agent = Agent::builder()
-    .from_claude_code()
+    .from_claude_code(".").await?
     .mcp_manager(mcp_manager)
     .build()
     .await?;

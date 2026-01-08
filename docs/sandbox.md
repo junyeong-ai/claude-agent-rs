@@ -286,7 +286,7 @@ let sandbox_config = SandboxConfig::new(project_dir.to_path_buf())
     .with_allowed_paths(vec![deps_dir]);
 
 let agent = Agent::builder()
-    .from_claude_code()
+    .from_claude_code(".").await?
     .sandbox(sandbox_config)
     .build()
     .await?;

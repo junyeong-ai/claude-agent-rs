@@ -159,7 +159,8 @@ Fetch and process URL content.
 
 ```rust
 let agent = Agent::builder()
-    .with_web_fetch()  // Enable
+    .auth(Auth::from_env()).await?
+    .with_web_fetch()
     .build().await?;
 ```
 
@@ -176,7 +177,8 @@ Web search via Anthropic's search API.
 
 ```rust
 let agent = Agent::builder()
-    .with_web_search()  // Enable
+    .auth(Auth::from_env()).await?
+    .with_web_search()
     .build().await?;
 ```
 

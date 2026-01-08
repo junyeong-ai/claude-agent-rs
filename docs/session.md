@@ -166,11 +166,14 @@ Automatic caching based on Anthropic best practices for cost reduction in multi-
 │                       Prompt Caching Strategy                            │
 ├─────────────────────────────────────────────────────────────────────────┤
 │                                                                          │
+│   [System: 1h TTL] [User₁] ... [User_n: 5m TTL]                         │
+│         ↑                           ↑                                    │
+│   Static content              Last user turn                             │
+│   (long cache)                (short cache)                              │
+│                                                                          │
 │   Turn 1: [System] [User₁]                    → cache_creation           │
 │   Turn 2: [System] [User₁] [Asst₁] [User₂]   → cache_read + creation    │
-│   Turn 3: [System] [User₁] [Asst₁] [User₂] [Asst₂] [User₃] → cache_read │
-│                                        ↑                                 │
-│                              cache_control on last user                  │
+│   Turn 3: [System] ... [User₃]                → cache_read               │
 │                                                                          │
 └─────────────────────────────────────────────────────────────────────────┘
 ```
@@ -178,57 +181,77 @@ Automatic caching based on Anthropic best practices for cost reduction in multi-
 ### Configuration
 
 ```rust
-use claude_agent::CacheConfig;
+use claude_agent::{CacheConfig, CacheStrategy, CacheTtl};
 
-// Default: both enabled
+// Default: Full caching (system: 1h, messages: 5m)
 let config = CacheConfig::default();
 
-// System prompt only
+// System prompt only (1h TTL)
 let config = CacheConfig::system_only();
+
+// Messages only (5m TTL)
+let config = CacheConfig::messages_only();
 
 // Disabled
 let config = CacheConfig::disabled();
 
-// Custom
-let config = CacheConfig {
-    enabled: true,
-    system_prompt_cache: true,
-    message_cache: true,
-};
+// Custom TTL
+let config = CacheConfig::default()
+    .with_static_ttl(CacheTtl::OneHour)
+    .with_message_ttl(CacheTtl::FiveMinutes);
+
+// Custom strategy
+let config = CacheConfig::default()
+    .with_strategy(CacheStrategy::SystemOnly);
 
 Agent::builder()
+    .auth(Auth::from_env()).await?
     .cache(config)
     .build()
     .await?
 ```
 
+### Cache Strategy
+
+| Strategy | System Prompt | Messages | Use Case |
+|----------|---------------|----------|----------|
+| `Full` (default) | 1h TTL | 5m TTL | Multi-turn conversations |
+| `SystemOnly` | 1h TTL | No | Short conversations |
+| `MessagesOnly` | No | 5m TTL | Dynamic system prompts |
+| `Disabled` | No | No | Testing / debugging |
+
 ### How It Works
 
-1. **System prompt caching**: Static context (CLAUDE.md, tools, skills) cached automatically
-2. **Message history caching**: Last user message marked with `cache_control: ephemeral`
-3. **Cache TTL**: 5 minutes by default (Anthropic API)
+1. **System prompt caching**: Static context (CLAUDE.md, tools, skills) cached with 1-hour TTL
+2. **Message history caching**: Last user message marked with `cache_control: ephemeral` and 5-minute TTL
+3. **TTL ordering**: Long TTL content must come before short TTL content (Anthropic requirement)
 
 ### Cost Impact
 
-| Token Type | Cost Multiplier |
-|------------|-----------------|
-| `cache_creation` | 1.25x input cost |
-| `cache_read` | 0.1x input cost |
-| Regular input | 1.0x |
+| Token Type | Cost Multiplier | TTL |
+|------------|-----------------|-----|
+| `cache_creation` (5m) | 1.25x input cost | 5 minutes |
+| `cache_creation` (1h) | 2.0x input cost | 1 hour |
+| `cache_read` | 0.1x input cost | - |
+| Regular input | 1.0x | - |
 
-### Tracking
+### Metrics
 
 ```rust
-// TokenUsage includes cache fields
-pub struct TokenUsage {
-    pub input_tokens: u64,
-    pub output_tokens: u64,
-    pub cache_read_input_tokens: u64,
-    pub cache_creation_input_tokens: u64,
+// AgentMetrics cache fields
+pub struct AgentMetrics {
+    pub cache_read_tokens: u32,
+    pub cache_creation_tokens: u32,
+    // ...
 }
 
-// Cache hit rate
-let hit_rate = usage.cache_hit_rate();  // cache_read / input
+// Cache metrics
+let hit_rate = metrics.cache_hit_rate();      // cache_read / input
+let efficiency = metrics.cache_efficiency();  // reads / (reads + writes)
+let saved = metrics.cache_tokens_saved();     // cache_read * 0.9
+
+// Cost savings calculation
+let savings = metrics.cache_cost_savings(3.0);  // $3/MTok
 ```
 
 ## Error Handling

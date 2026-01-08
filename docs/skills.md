@@ -9,22 +9,22 @@ Skills are specialized workflows that activate on-demand for context optimizatio
 │                    Skill Sources                         │
 ├─────────────────────────────────────────────────────────┤
 │                                                          │
-│  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐   │
-│  │   Builtin    │  │    User      │  │   Project    │   │
-│  │   (SDK)      │  │ ~/.claude/   │  │  .claude/    │   │
-│  │              │  │   skills/    │  │   skills/    │   │
-│  └──────┬───────┘  └──────┬───────┘  └──────┬───────┘   │
-│         │                 │                 │            │
-│         └─────────────────┼─────────────────┘            │
-│                           ▼                              │
-│                  ┌────────────────┐                      │
-│                  │ SkillRegistry  │                      │
-│                  └───────┬────────┘                      │
-│                          │                               │
-│              ┌───────────┼───────────┐                   │
-│              ▼           ▼           ▼                   │
-│         Explicit    Trigger      Slash                   │
-│          Call       Match       Command                  │
+│  ┌────────────┐ ┌────────────┐ ┌────────────┐           │
+│  │ Enterprise │ │    User    │ │  Project   │           │
+│  │ /Library/..│ │ ~/.claude/ │ │ .claude/   │           │
+│  │ skills/    │ │  skills/   │ │  skills/   │           │
+│  └─────┬──────┘ └─────┬──────┘ └─────┬──────┘           │
+│        │              │              │                   │
+│        └──────────────┼──────────────┘                   │
+│                       ▼                                  │
+│              ┌────────────────┐                          │
+│              │ SkillRegistry  │                          │
+│              └───────┬────────┘                          │
+│                      │                                   │
+│          ┌───────────┼───────────┐                       │
+│          ▼           ▼           ▼                       │
+│     Explicit    Trigger      Slash                       │
+│      Call       Match       Command                      │
 │                                                          │
 └─────────────────────────────────────────────────────────┘
 ```
@@ -206,8 +206,9 @@ let skill = SkillDefinition::new("architect", "Design", "...")
 
 ```rust
 let agent = Agent::builder()
-    .from_claude_code()
-    .skill(deploy_skill)
+    .from_claude_code(path).await?
+    .with_project_resources()         // Loads skills from .claude/skills/
+    .skill(deploy_skill)              // Add programmatic skills
     .skill(review_skill)
     .build()
     .await?;

@@ -78,10 +78,9 @@ use std::pin::pin;
 #[tokio::main]
 async fn main() -> claude_agent::Result<()> {
     let agent = Agent::builder()
-        .from_claude_code()              // Claude Code CLI OAuth 재사용
-        .tools(ToolAccess::all())        // 12개 내장 도구
-        .with_web_search()               // + 서버 도구
-        .working_dir("./my-project")
+        .from_claude_code("./my-project").await?  // Auth + working_dir
+        .tools(ToolAccess::all())                 // 12개 내장 도구
+        .with_web_search()                        // + 서버 도구
         .build()
         .await?;
 
@@ -110,7 +109,7 @@ async fn main() -> claude_agent::Result<()> {
 
 ```rust
 Agent::builder()
-    .from_claude_code()  // ~/.claude/credentials.json 사용
+    .from_claude_code(".").await?  // ~/.claude/credentials.json 사용
     .build()
     .await?
 ```
@@ -144,6 +143,17 @@ Agent::builder()
 // Azure AI Foundry
 Agent::builder()
     .auth(Auth::foundry("resource-name")).await?
+    .build().await?
+```
+
+### 혼합: 임의 인증 + Claude Code 리소스
+
+```rust
+// Bedrock 인증 + .claude/ 프로젝트 리소스 사용
+Agent::builder()
+    .auth(Auth::bedrock("us-east-1")).await?
+    .working_dir("./my-project")
+    .with_project_resources()  // OAuth 없이 .claude/ 로드
     .build().await?
 ```
 
@@ -193,16 +203,17 @@ ToolAccess::except(["Bash", "Write"])       // 도구 제외
 
 Anthropic 베스트 프랙티스 기반 자동 캐싱:
 
-- **시스템 프롬프트 캐싱**: 정적 컨텍스트 자동 캐싱
-- **메시지 히스토리 캐싱**: 멀티턴 효율을 위해 마지막 user 턴 캐싱
+- **시스템 프롬프트 캐싱**: 정적 컨텍스트 1시간 TTL로 캐싱
+- **메시지 히스토리 캐싱**: 마지막 user 턴 5분 TTL로 캐싱
 
 ```rust
-use claude_agent::CacheConfig;
+use claude_agent::{CacheConfig, CacheStrategy};
 
 Agent::builder()
-    .cache(CacheConfig::default())  // 둘 다 기본 활성화
-    // .cache(CacheConfig::system_only())  // 시스템 프롬프트만
-    // .cache(CacheConfig::disabled())     // 캐싱 비활성화
+    .cache(CacheConfig::default())        // 전체 캐싱 (권장)
+    // .cache(CacheConfig::system_only()) // 시스템 프롬프트만 (1시간 TTL)
+    // .cache(CacheConfig::messages_only()) // 메시지만 (5분 TTL)
+    // .cache(CacheConfig::disabled())    // 캐싱 비활성화
 ```
 
 ### 3개 내장 서브에이전트

@@ -216,7 +216,7 @@ if result.is_allowed() {
 
 ```rust
 let agent = Agent::builder()
-    .from_claude_code()
+    .from_claude_code(".").await?
     .permission_policy(policy)
     .build()
     .await?;

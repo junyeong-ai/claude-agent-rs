@@ -6,42 +6,59 @@ The memory system provides project context through CLAUDE.md files and rules.
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│                    Memory Loading                            │
+│                    Resource Levels                           │
 ├─────────────────────────────────────────────────────────────┤
 │                                                              │
-│  ~/.claude/CLAUDE.md     (global)                            │
-│       │                                                      │
-│       ▼                                                      │
-│  /project/CLAUDE.md      (project root)                      │
-│       │                                                      │
-│       ▼                                                      │
-│  /project/src/CLAUDE.md  (subdirectory)                      │
-│       │                                                      │
-│       ▼                                                      │
-│  ┌────────────────────────────────────────────────────────┐ │
-│  │                  Combined Context                       │ │
-│  │                                                         │ │
-│  │  + CLAUDE.local.md (same hierarchy, gitignored)        │ │
-│  │  + .claude/rules/ (indexed, loaded on demand)          │ │
-│  │  + @import files (max 5 hops)                          │ │
-│  └────────────────────────────────────────────────────────┘ │
+│  Enterprise  /Library/Application Support/ClaudeCode/        │
+│      ↓                                                       │
+│  User        ~/.claude/                                      │
+│      ↓                                                       │
+│  Project     {project}/.claude/                              │
+│      ↓                                                       │
+│  Local       {project}/CLAUDE.local.md (gitignored)         │
+│                                                              │
+│  Later levels override earlier levels.                       │
 │                                                              │
 └─────────────────────────────────────────────────────────────┘
 ```
+
+## Usage
+
+```rust
+Agent::builder()
+    .from_claude_code(path).await?    // Auth + working_dir
+    .with_enterprise_resources()      // Enable enterprise level
+    .with_user_resources()            // Enable user level
+    .with_project_resources()         // Enable project level
+    .with_local_resources()           // Enable local level
+    .build()
+    .await?;
+```
+
+**Important**: The `with_*_resources()` methods only enable loading from specific levels.
+Actual loading happens during `build()` in a **fixed order** regardless of chaining order:
+
+```
+Enterprise → User → Project → Local
+```
+
+This ensures consistent override behavior:
+- Chaining order does not affect override priority
+- Later levels always override earlier levels
+- Safe to call methods in any order
 
 ## CLAUDE.md
 
 Project-level instructions loaded automatically.
 
-### Search Locations
+### Locations per Level
 
-Priority order (all loaded and combined):
-
-1. `~/.claude/CLAUDE.md` - Global settings
-2. `~/.claude/.claude/CLAUDE.md` - Nested global
-3. `/project/CLAUDE.md` - Project root
-4. `/project/.claude/CLAUDE.md` - Hidden project
-5. `/project/subdir/CLAUDE.md` - Subdirectories
+| Level | CLAUDE.md Path |
+|-------|----------------|
+| Enterprise | `/Library/Application Support/ClaudeCode/CLAUDE.md` |
+| User | `~/.claude/CLAUDE.md` |
+| Project | `{project}/CLAUDE.md`, `{project}/.claude/CLAUDE.md` |
+| Local | `{project}/CLAUDE.local.md`, `{project}/.claude/CLAUDE.local.md` |
 
 ### Example
 
@@ -99,13 +116,18 @@ Rules provide path-specific context loaded on demand.
 
 ### Directory Structure
 
+Rules are loaded recursively from `.claude/rules/`:
+
 ```
 .claude/
 └── rules/
     ├── rust.md
     ├── security.md
-    └── api/
-        └── endpoints.md
+    ├── api/
+    │   └── endpoints.md
+    └── frontend/
+        ├── react.md
+        └── styles.md
 ```
 
 ### Rule Format
@@ -140,66 +162,75 @@ Rules implement progressive disclosure:
 2. **On match**: Full content loaded when path matches
 3. **Context efficiency**: Only relevant rules consume tokens
 
-```
-System has rules: rust.md, security.md, api/endpoints.md
-
-User: "Edit src/main.rs"
-  → Match: **/*.rs
-  → Load: rust.md content
-
-User: "Edit src/api/handlers.rs"
-  → Match: **/*.rs, api/**
-  → Load: rust.md, api/endpoints.md
-```
-
 ## MemoryLoader API
 
 ```rust
 use claude_agent::context::MemoryLoader;
 
 let mut loader = MemoryLoader::new();
-let content = loader.load_all(&project_dir).await?;
+
+// Load everything (CLAUDE.md + CLAUDE.local.md + rules)
+let content = loader.load(&project_dir).await?;
+
+// Or load selectively:
+// load_shared(): CLAUDE.md + rules (for any level: enterprise/user/project)
+// load_local(): CLAUDE.local.md only (project-level private config)
+let shared = loader.load_shared(&project_dir).await?;
+let local = loader.load_local(&project_dir).await?;
 
 // Access components
 let claude_md = content.combined_claude_md();
 let rules = content.rule_indices;
 ```
 
+### Method Summary
+
+| Method | Loads | Use Case |
+|--------|-------|----------|
+| `load()` | All (shared + local + rules) | Full content from single directory |
+| `load_shared()` | CLAUDE.md + rules | Any level (enterprise/user/project) |
+| `load_local()` | CLAUDE.local.md | Project-level private config |
+
+## LeveledMemoryProvider
+
+For multi-level resource aggregation:
+
+```rust
+use claude_agent::LeveledMemoryProvider;
+
+let mut provider = LeveledMemoryProvider::new();
+provider.add_content("# Enterprise Rules");
+provider.add_content("# User Preferences");
+provider.add_content("# Project Guidelines");
+
+// Content is merged in order added (later overrides earlier)
+let content = provider.load().await?;
+```
+
 ## MemoryContent Structure
 
 ```rust
 pub struct MemoryContent {
-    pub claude_md: Vec<String>,      // All CLAUDE.md contents
-    pub local_md: Vec<String>,       // All CLAUDE.local.md contents
-    pub rule_indices: Vec<RuleIndex>, // Rule metadata (not full content)
+    pub claude_md: Vec<String>,       // CLAUDE.md contents
+    pub local_md: Vec<String>,        // CLAUDE.local.md contents
+    pub rule_indices: Vec<RuleIndex>, // Rule metadata
 }
 ```
 
-## RuleIndex Structure
+## Settings Cascade
 
-```rust
-pub struct RuleIndex {
-    pub name: String,           // Filename without extension
-    pub path: PathBuf,          // Full path to rule file
-    pub paths: Option<String>,  // Glob pattern
-    pub priority: u32,          // Loading priority
-}
+Settings follow the same level order:
+
 ```
-
-## Context Orchestrator
-
-Coordinates context assembly:
-
-```rust
-use claude_agent::context::ContextOrchestrator;
-
-let orchestrator = ContextOrchestrator::new(project_dir);
-let context = orchestrator.build_context(&current_file).await?;
-
-// Context includes:
-// - Combined CLAUDE.md
-// - Matching rules for current_file
-// - Any @imported content
+Enterprise settings.json
+    ↓ (overridden by)
+User ~/.claude/settings.json
+    ↓ (overridden by)
+Project .claude/settings.json
+    ↓ (overridden by)
+Local .claude/settings.local.json
+    ↓ (overridden by)
+Explicit code configuration
 ```
 
 ## Best Practices
@@ -224,3 +255,4 @@ let context = orchestrator.build_context(&current_file).await?;
 2. Set appropriate priorities
 3. Keep rules focused
 4. Use for file-type specific guidance
+5. Organize in subdirectories for complex projects

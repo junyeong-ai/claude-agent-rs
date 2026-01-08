@@ -13,7 +13,7 @@ claude-agent-rs supports multiple authentication methods with automatic credenti
 │       │                                                         │
 │       ▼                                                         │
 │  ┌─────────────────────┐                                        │
-│  │ ClaudeCliProvider   │ ~/.claude/credentials.json             │
+│  │ ClaudeCliProvider   │ ~/.claude/.credentials.json            │
 │  │  ├── Load OAuth     │                                        │
 │  │  ├── Check expiry   │                                        │
 │  │  └── Auto refresh   │ ← `claude auth refresh`                │
@@ -42,14 +42,16 @@ claude-agent-rs supports multiple authentication methods with automatic credenti
 Uses existing Claude Code CLI OAuth tokens with automatic refresh.
 
 ```rust
-// Client
-let client = Client::builder()
-    .from_claude_code()
-    .build()?;
-
-// Agent
+// Agent (with working directory)
 let agent = Agent::builder()
-    .from_claude_code()
+    .from_claude_code(".").await?  // Auth + working_dir
+    .build()
+    .await?;
+
+// Or with explicit auth
+use claude_agent::Auth;
+let agent = Agent::builder()
+    .auth(Auth::claude_cli()).await?
     .build()
     .await?;
 ```
@@ -63,6 +65,31 @@ let agent = Agent::builder()
 - Automatic token refresh when expired
 
 **Credential location**: `~/.claude/.credentials.json` (also macOS Keychain)
+
+### Separating Auth from Resources
+
+`from_claude_code()` combines OAuth auth + working_dir + resource loading. You can separate these to use different auth methods while still loading `.claude/` resources:
+
+```rust
+// Use API Key with .claude/ resources
+Agent::builder()
+    .auth(Auth::api_key("sk-...")).await?
+    .working_dir("./my-project")
+    .with_project_resources()  // Loads .claude/ (skills, rules, CLAUDE.md)
+    .build()
+    .await?
+
+// Use Bedrock with .claude/ resources
+Agent::builder()
+    .auth(Auth::bedrock("us-east-1")).await?
+    .working_dir("./my-project")
+    .with_project_resources()
+    .with_user_resources()     // Also load ~/.claude/
+    .build()
+    .await?
+```
+
+This allows using Claude Code's project configuration with any authentication method.
 
 ### Token File Structure
 

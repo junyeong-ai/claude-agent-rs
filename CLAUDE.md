@@ -1,6 +1,6 @@
 # claude-agent-rs
 
-Rust SDK for Claude API. 1000+ tests, 46k lines, 197 files.
+Rust SDK for Claude API. 1000+ tests, 47k lines, 197 files.
 
 ## Architecture
 
@@ -69,19 +69,27 @@ Task, TaskOutput, TodoWrite, Plan, Skill
 
 ## Prompt Caching
 
-Anthropic best practices: cache last user turn for multi-turn efficiency.
+Anthropic best practices: static content with long TTL, dynamic content with short TTL.
 
 ```rust
+// CacheStrategy (agent/config.rs)
+pub enum CacheStrategy {
+    Disabled,      // No caching
+    SystemOnly,    // System prompt only (1h TTL)
+    MessagesOnly,  // Last user message only (5m TTL)
+    Full,          // Both (default, recommended)
+}
+
 // CacheConfig (agent/config.rs)
 pub struct CacheConfig {
-    pub enabled: bool,           // Master switch
-    pub system_prompt_cache: bool, // Static context
-    pub message_cache: bool,     // Last user message
+    pub strategy: CacheStrategy,
+    pub static_ttl: CacheTtl,   // Default: 1 hour
+    pub message_ttl: CacheTtl,  // Default: 5 minutes
 }
 
 // Applied in session/state/mod.rs
-fn apply_cache_breakpoint(&self, messages: &mut [Message]) {
-    // Sets cache_control on last user message
+fn apply_cache_breakpoint(&self, messages: &mut [Message], ttl: CacheTtl) {
+    // Sets cache_control with TTL on last user message
 }
 ```
 
@@ -131,11 +139,17 @@ impl SchemaTool for MyTool {
     async fn handle(&self, input: Self::Input, ctx: &ExecutionContext) -> ToolResult;
 }
 
-// Agent builder
+// Agent builder with resource levels
+// Note: with_*_resources() are sync methods that set flags only
+// Actual loading happens in build() with fixed order:
+// Enterprise → User → Project → Local
 Agent::builder()
-    .from_claude_code()         // CLI OAuth
+    .from_claude_code(path).await?    // Auth + working_dir
+    .with_enterprise_resources()      // /Library/.../ClaudeCode or /etc/claude-code
+    .with_user_resources()            // ~/.claude/
+    .with_project_resources()         // {path}/.claude/
+    .with_local_resources()           // CLAUDE.local.md, settings.local.json
     .tools(ToolAccess::all())
-    .with_web_search()
     .build()
     .await?;
 ```

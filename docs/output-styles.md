@@ -236,7 +236,7 @@ if let Some(style) = loader.find("concise").await? {
 
 ```rust
 let agent = Agent::builder()
-    .from_claude_code()
+    .from_claude_code(".").await?
     .output_style(style)
     .build()
     .await?;

@@ -218,7 +218,7 @@ registry.register(code_reviewer);
 registry.register(security_auditor);
 
 let agent = Agent::builder()
-    .from_claude_code()
+    .from_claude_code(".").await?
     .subagent_registry(registry)
     .build()
     .await?;

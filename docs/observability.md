@@ -174,6 +174,7 @@ let registry = config.build_registry();
 
 ```rust
 let agent = Agent::builder()
+    .auth(Auth::from_env()).await?
     .observability(ObservabilityConfig::new()
         .with_service_name("my-agent"))
     .build()

@@ -78,10 +78,9 @@ use std::pin::pin;
 #[tokio::main]
 async fn main() -> claude_agent::Result<()> {
     let agent = Agent::builder()
-        .from_claude_code()              // Reuse Claude Code CLI OAuth
-        .tools(ToolAccess::all())        // 12 built-in tools
-        .with_web_search()               // + Server tools
-        .working_dir("./my-project")
+        .from_claude_code("./my-project").await?  // Auth + working_dir
+        .tools(ToolAccess::all())                 // 12 built-in tools
+        .with_web_search()                        // + Server tools
         .build()
         .await?;
 
@@ -110,7 +109,7 @@ async fn main() -> claude_agent::Result<()> {
 
 ```rust
 Agent::builder()
-    .from_claude_code()  // Uses ~/.claude/credentials.json
+    .from_claude_code(".").await?  // Uses ~/.claude/credentials.json
     .build()
     .await?
 ```
@@ -144,6 +143,17 @@ Agent::builder()
 // Azure AI Foundry
 Agent::builder()
     .auth(Auth::foundry("resource-name")).await?
+    .build().await?
+```
+
+### Mixed: Any Auth + Claude Code Resources
+
+```rust
+// Use Bedrock auth with .claude/ project resources
+Agent::builder()
+    .auth(Auth::bedrock("us-east-1")).await?
+    .working_dir("./my-project")
+    .with_project_resources()  // Load .claude/ without OAuth
     .build().await?
 ```
 
@@ -193,16 +203,17 @@ See: [Tools Guide](docs/tools.md)
 
 Automatic caching based on Anthropic best practices:
 
-- **System prompt caching**: Static context cached automatically
-- **Message history caching**: Last user turn cached for multi-turn efficiency
+- **System prompt caching**: Static context cached with 1-hour TTL
+- **Message history caching**: Last user turn cached with 5-minute TTL
 
 ```rust
-use claude_agent::CacheConfig;
+use claude_agent::{CacheConfig, CacheStrategy};
 
 Agent::builder()
-    .cache(CacheConfig::default())  // Both enabled by default
-    // .cache(CacheConfig::system_only())  // System prompt only
-    // .cache(CacheConfig::disabled())     // No caching
+    .cache(CacheConfig::default())        // Full caching (recommended)
+    // .cache(CacheConfig::system_only()) // System prompt only (1h TTL)
+    // .cache(CacheConfig::messages_only()) // Messages only (5m TTL)
+    // .cache(CacheConfig::disabled())    // No caching
 ```
 
 ### 3 Built-in Subagents

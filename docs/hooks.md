@@ -378,7 +378,7 @@ hook_manager.register(SecurityHook::new());
 hook_manager.register(LoggingHook);
 
 let agent = Agent::builder()
-    .from_claude_code()
+    .from_claude_code(".").await?
     .with_hooks(hook_manager)
     .build()
     .await?;

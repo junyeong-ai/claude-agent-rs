@@ -86,6 +86,7 @@ if let Some(model) = tracker.should_fallback() { /* switch model */ }
 use claude_agent::{Agent, BudgetConfig};
 
 let agent = Agent::builder()
+    .auth(Auth::from_env()).await?
     .budget(BudgetConfig {
         max_cost_usd: Some(10.0),
         on_exceed: OnExceed::StopBeforeNext,

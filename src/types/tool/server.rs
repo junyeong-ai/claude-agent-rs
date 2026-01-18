@@ -165,9 +165,53 @@ impl WebFetchTool {
     }
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "type")]
+pub enum ToolSearchTool {
+    #[serde(rename = "tool_search_tool_regex_20251119")]
+    Regex { name: String },
+    #[serde(rename = "tool_search_tool_bm25_20251119")]
+    Bm25 { name: String },
+}
+
+impl ToolSearchTool {
+    pub fn regex() -> Self {
+        Self::Regex {
+            name: "tool_search_tool_regex".to_string(),
+        }
+    }
+
+    pub fn bm25() -> Self {
+        Self::Bm25 {
+            name: "tool_search_tool_bm25".to_string(),
+        }
+    }
+
+    pub fn name(&self) -> &str {
+        match self {
+            Self::Regex { name } | Self::Bm25 { name } => name,
+        }
+    }
+
+    pub fn is_regex(&self) -> bool {
+        matches!(self, Self::Regex { .. })
+    }
+
+    pub fn is_bm25(&self) -> bool {
+        matches!(self, Self::Bm25 { .. })
+    }
+}
+
+impl Default for ToolSearchTool {
+    fn default() -> Self {
+        Self::regex()
+    }
+}
+
 #[derive(Debug, Clone, Serialize)]
 #[serde(untagged)]
 pub enum ServerTool {
     WebSearch(WebSearchTool),
     WebFetch(WebFetchTool),
+    ToolSearch(ToolSearchTool),
 }

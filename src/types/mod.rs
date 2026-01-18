@@ -30,6 +30,7 @@ pub use response::{
 };
 pub use search::{SearchResultBlock, SearchResultContentBlock};
 pub use tool::{
-    ServerTool, ToolDefinition, ToolError, ToolInput, ToolOutput, ToolOutputBlock, ToolResult,
-    UserLocation, WebFetchTool, WebSearchTool,
+    ServerTool, ToolDefinition, ToolError, ToolInput, ToolOutput, ToolOutputBlock, ToolReference,
+    ToolResult, ToolSearchErrorCode, ToolSearchResult, ToolSearchResultContent, ToolSearchTool,
+    ToolSearchToolResult, UserLocation, WebFetchTool, WebSearchTool,
 };

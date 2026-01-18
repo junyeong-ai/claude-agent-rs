@@ -157,6 +157,8 @@ pub enum BetaFeature {
     Effort,
     /// 1M token context window (for Sonnet 4 and 4.5 on Bedrock/Vertex).
     Context1M,
+    /// Tool search for progressive disclosure of MCP tools.
+    AdvancedToolUse,
 }
 
 impl BetaFeature {
@@ -175,6 +177,7 @@ impl BetaFeature {
             Self::FilesApi => "files-api-2025-04-14",
             Self::Effort => "effort-2025-11-24",
             Self::Context1M => "context-1m-2025-08-07",
+            Self::AdvancedToolUse => "advanced-tool-use-2025-11-20",
         }
     }
 
@@ -193,6 +196,7 @@ impl BetaFeature {
             "files-api-2025-04-14" => Some(Self::FilesApi),
             "effort-2025-11-24" => Some(Self::Effort),
             "context-1m-2025-08-07" => Some(Self::Context1M),
+            "advanced-tool-use-2025-11-20" => Some(Self::AdvancedToolUse),
             _ => None,
         }
     }
@@ -212,6 +216,7 @@ impl BetaFeature {
             Self::FilesApi,
             Self::Effort,
             Self::Context1M,
+            Self::AdvancedToolUse,
         ]
     }
 }

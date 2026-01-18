@@ -468,15 +468,10 @@ impl BashAnalyzer {
             }
         }
 
-        self.extract_redirect_paths(tree, source, analysis);
+        self.extract_redirect_paths(source, analysis);
     }
 
-    fn extract_redirect_paths(
-        &self,
-        _tree: &tree_sitter::Tree,
-        source: &str,
-        analysis: &mut BashAnalysis,
-    ) {
+    fn extract_redirect_paths(&self, source: &str, analysis: &mut BashAnalysis) {
         static REDIRECT_RE: LazyLock<Regex> =
             LazyLock::new(|| Regex::new(r"[<>]&?\s*(/[^\s;&|]+)").unwrap());
 

@@ -1,6 +1,6 @@
 [package]
 name = "claude-agent"
-version = "0.2.15"
+version = "0.2.16"
 edition = "2024"
 rust-version = "1.92"
 license = "MIT"
@@ -13,7 +13,7 @@ categories = ["api-bindings", "asynchronous"]
 
 [dependencies]
 # Async runtime
-tokio = { version = "^1.40", features = ["rt-multi-thread", "macros", "sync", "time", "io-util", "process", "signal"] }
+tokio = { version = "^1.49", features = ["rt-multi-thread", "macros", "sync", "time", "io-util", "process", "signal"] }
 
 # HTTP client
 reqwest = { version = "0.13", default-features = false, features = [

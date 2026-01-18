@@ -265,7 +265,7 @@ impl CommandLoader {
             let frontmatter_str = after_first[..end_pos].trim();
             let body = after_first[end_pos + 3..].trim().to_string();
 
-            let frontmatter: CommandFrontmatter = serde_yaml_ng::from_str(frontmatter_str)
+            let frontmatter: CommandFrontmatter = serde_yaml_bw::from_str(frontmatter_str)
                 .map_err(|e| crate::Error::Config(format!("Invalid command frontmatter: {}", e)))?;
 
             return Ok((frontmatter, body));

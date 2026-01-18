@@ -20,7 +20,7 @@ pub fn parse_frontmatter<F: DeserializeOwned>(content: &str) -> crate::Result<Pa
     let frontmatter_str = after_first[..end_pos].trim();
     let body = after_first[end_pos + 3..].trim().to_string();
 
-    let frontmatter: F = serde_yaml_ng::from_str(frontmatter_str)
+    let frontmatter: F = serde_yaml_bw::from_str(frontmatter_str)
         .map_err(|e| crate::Error::Config(format!("Failed to parse frontmatter: {}", e)))?;
 
     Ok(ParsedDocument { frontmatter, body })

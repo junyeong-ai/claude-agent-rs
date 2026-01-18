@@ -65,6 +65,9 @@ pub struct Settings {
     #[serde(default, rename = "apiKeyHelper")]
     pub api_key_helper: Option<String>,
 
+    #[serde(default, rename = "toolSearch")]
+    pub tool_search: ToolSearchSettings,
+
     #[serde(flatten)]
     pub extra: HashMap<String, serde_json::Value>,
 }
@@ -220,6 +223,66 @@ pub struct NetworkSandboxSettings {
 
     #[serde(default, rename = "socksProxyPort")]
     pub socks_proxy_port: Option<u16>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct ToolSearchSettings {
+    #[serde(default)]
+    pub enabled: Option<bool>,
+
+    #[serde(default)]
+    pub threshold: Option<f64>,
+
+    #[serde(default)]
+    pub mode: Option<String>,
+
+    #[serde(default, rename = "maxResults")]
+    pub max_results: Option<usize>,
+
+    #[serde(default, rename = "alwaysLoad")]
+    pub always_load: Option<Vec<String>>,
+}
+
+impl ToolSearchSettings {
+    pub fn is_enabled(&self) -> bool {
+        self.enabled.unwrap_or(true)
+    }
+
+    pub fn to_config(&self, context_window: usize) -> crate::tools::ToolSearchConfig {
+        use crate::tools::{SearchMode, ToolSearchConfig};
+
+        let mut config = ToolSearchConfig::default().with_context_window(context_window);
+
+        if let Some(threshold) = self.threshold {
+            config = config.with_threshold(threshold);
+        }
+
+        if let Some(ref mode) = self.mode {
+            let search_mode = match mode.to_lowercase().as_str() {
+                "bm25" => SearchMode::Bm25,
+                _ => SearchMode::Regex,
+            };
+            config = config.with_search_mode(search_mode);
+        }
+
+        if let Some(max_results) = self.max_results {
+            config.max_results = max_results;
+        }
+
+        if let Some(ref always_load) = self.always_load {
+            config = config.with_always_load(always_load.clone());
+        }
+
+        config
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.enabled.is_none()
+            && self.threshold.is_none()
+            && self.mode.is_none()
+            && self.max_results.is_none()
+            && self.always_load.is_none()
+    }
 }
 
 /// Settings loader that merges from multiple sources.
@@ -420,6 +483,26 @@ impl SettingsLoader {
         if other.output_style.is_some() {
             self.settings.output_style = other.output_style;
         }
+
+        // Merge tool_search settings (later settings override earlier)
+        if other.tool_search.enabled.is_some() {
+            self.settings.tool_search.enabled = other.tool_search.enabled;
+        }
+        if other.tool_search.threshold.is_some() {
+            self.settings.tool_search.threshold = other.tool_search.threshold;
+        }
+        if other.tool_search.mode.is_some() {
+            self.settings.tool_search.mode = other.tool_search.mode;
+        }
+        if other.tool_search.max_results.is_some() {
+            self.settings.tool_search.max_results = other.tool_search.max_results;
+        }
+        if let Some(always_load) = other.tool_search.always_load {
+            match &mut self.settings.tool_search.always_load {
+                Some(existing) => existing.extend(always_load),
+                None => self.settings.tool_search.always_load = Some(always_load),
+            }
+        }
     }
 
     pub fn settings(&self) -> &Settings {
@@ -502,5 +585,56 @@ mod tests {
         let network_sandbox = config.to_network_sandbox();
         assert!(network_sandbox.allowed_domains().contains("example.com"));
         assert!(network_sandbox.blocked_domains().contains("malware.com"));
+    }
+
+    #[test]
+    fn test_tool_search_settings_default() {
+        let settings = ToolSearchSettings::default();
+        assert!(settings.is_empty());
+        assert!(settings.is_enabled()); // Default is enabled
+    }
+
+    #[test]
+    fn test_tool_search_settings_to_config() {
+        use crate::tools::SearchMode;
+
+        let settings = ToolSearchSettings {
+            enabled: Some(true),
+            threshold: Some(0.15),
+            mode: Some("bm25".to_string()),
+            max_results: Some(10),
+            always_load: Some(vec!["mcp__my_tool".to_string()]),
+        };
+
+        let config = settings.to_config(200_000);
+        assert_eq!(config.threshold, 0.15);
+        assert_eq!(config.search_mode, SearchMode::Bm25);
+        assert_eq!(config.max_results, 10);
+        assert!(config.always_load.contains(&"mcp__my_tool".to_string()));
+    }
+
+    #[test]
+    fn test_tool_search_settings_regex_mode() {
+        use crate::tools::SearchMode;
+
+        let settings = ToolSearchSettings {
+            mode: Some("regex".to_string()),
+            ..Default::default()
+        };
+
+        let config = settings.to_config(100_000);
+        assert_eq!(config.search_mode, SearchMode::Regex);
+        assert_eq!(config.context_window, 100_000);
+    }
+
+    #[test]
+    fn test_tool_search_settings_disabled() {
+        let settings = ToolSearchSettings {
+            enabled: Some(false),
+            ..Default::default()
+        };
+
+        assert!(!settings.is_enabled());
+        assert!(!settings.is_empty());
     }
 }

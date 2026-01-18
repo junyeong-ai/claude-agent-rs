@@ -30,7 +30,7 @@ pub use memory::MemoryConfigProvider;
 pub use provider::{ConfigProvider, ConfigProviderExt};
 pub use settings::{
     HookConfig, HooksSettings, NetworkSandboxSettings, PermissionSettings, SandboxSettings,
-    Settings, SettingsLoader, SettingsSource,
+    Settings, SettingsLoader, SettingsSource, ToolSearchSettings,
 };
 pub use validator::{ConfigValidator, ValueType};
 

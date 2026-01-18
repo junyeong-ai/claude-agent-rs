@@ -157,9 +157,9 @@ impl SecurityContextBuilder {
             .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
 
         let fs = SecureFs::new(
-            root.clone(),
+            &root,
             self.allowed_paths.clone(),
-            self.denied_patterns.clone(),
+            &self.denied_patterns,
             self.max_symlink_depth.unwrap_or(10),
         )?;
 

@@ -13,8 +13,8 @@ pub struct SeatbeltSandbox {
 }
 
 impl SeatbeltSandbox {
-    pub fn new(config: SandboxConfig) -> Self {
-        let profile = generate_profile(&config);
+    pub fn new(config: &SandboxConfig) -> Self {
+        let profile = generate_profile(config);
         Self {
             profile,
             profile_path: None,
@@ -211,7 +211,7 @@ mod tests {
     #[test]
     fn test_profile_generation() {
         let config = SandboxConfig::new(PathBuf::from("/tmp/test"));
-        let sandbox = SeatbeltSandbox::new(config);
+        let sandbox = SeatbeltSandbox::new(&config);
 
         assert!(sandbox.profile.contains("(version 1)"));
         assert!(sandbox.profile.contains("/tmp/test"));
@@ -224,7 +224,7 @@ mod tests {
         }
 
         let config = SandboxConfig::new(PathBuf::from("/tmp"));
-        let sandbox = SeatbeltSandbox::new(config);
+        let sandbox = SeatbeltSandbox::new(&config);
 
         let wrapped = sandbox.wrap_command("echo hello").unwrap();
         assert!(wrapped.contains("sandbox-exec"));

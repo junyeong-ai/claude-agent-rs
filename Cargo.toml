@@ -1,6 +1,6 @@
 [package]
 name = "claude-agent"
-version = "0.2.13"
+version = "0.2.14"
 edition = "2024"
 rust-version = "1.92"
 license = "MIT"
@@ -69,6 +69,7 @@ rand = "0.9"
 
 # Authentication & directories
 directories = "6"
+dirs = { version = "6", optional = true }
 
 # MCP support - optional
 rmcp = { version = "0.12", optional = true, features = ["client", "transport-child-process", "client-side-sse", "reqwest"] }
@@ -130,9 +131,10 @@ azure = ["azure_identity", "azure_core"]
 cloud-all = ["aws", "gcp", "azure"]
 
 # Persistence backends
+jsonl = ["dirs"]
 postgres = ["sqlx", "rust_decimal"]
 redis-backend = ["redis"]
-persistence-all = ["postgres", "redis-backend"]
+persistence-all = ["jsonl", "postgres", "redis-backend"]
 
 # OpenTelemetry observability
 otel = ["opentelemetry", "opentelemetry_sdk", "opentelemetry-otlp", "opentelemetry-semantic-conventions", "tracing-opentelemetry", "tracing-subscriber"]

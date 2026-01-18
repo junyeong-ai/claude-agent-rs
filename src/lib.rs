@@ -446,7 +446,6 @@ impl From<session::SessionError> for Error {
             }
             session::SessionError::PermissionDenied { reason } => Error::auth(reason),
             session::SessionError::Storage { message } => Error::Config(message),
-            session::SessionError::PersistenceError(msg) => Error::Config(msg),
             session::SessionError::Serialization(e) => Error::Json(e),
             session::SessionError::Compact { message } => Error::Config(message),
             session::SessionError::Context(e) => e.into(),

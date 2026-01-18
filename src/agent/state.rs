@@ -199,7 +199,7 @@ impl AgentMetrics {
     ///
     /// This is for server-side tools executed by the API (e.g., Anthropic's
     /// server-side RAG). Not to be confused with local tool usage.
-    pub fn update_server_tool_use(&mut self, server_tool_use: ServerToolUse) {
+    pub fn update_server_tool_use(&mut self, server_tool_use: &ServerToolUse) {
         self.server_tool_use.web_search_requests += server_tool_use.web_search_requests;
         self.server_tool_use.web_fetch_requests += server_tool_use.web_fetch_requests;
     }

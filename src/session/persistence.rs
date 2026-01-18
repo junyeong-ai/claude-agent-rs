@@ -221,6 +221,24 @@ impl PersistenceFactory {
     pub fn memory() -> Arc<dyn Persistence> {
         Arc::new(MemoryPersistence::new())
     }
+
+    /// Create a JSONL persistence backend (requires `jsonl` feature).
+    #[cfg(feature = "jsonl")]
+    pub async fn jsonl(
+        config: super::persistence_jsonl::JsonlConfig,
+    ) -> SessionResult<Arc<dyn Persistence>> {
+        Ok(Arc::new(
+            super::persistence_jsonl::JsonlPersistence::new(config).await?,
+        ))
+    }
+
+    /// Create a JSONL persistence backend with default configuration (requires `jsonl` feature).
+    #[cfg(feature = "jsonl")]
+    pub async fn jsonl_default() -> SessionResult<Arc<dyn Persistence>> {
+        Ok(Arc::new(
+            super::persistence_jsonl::JsonlPersistence::default_config().await?,
+        ))
+    }
 }
 
 #[cfg(test)]

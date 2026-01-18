@@ -388,7 +388,7 @@ impl Agent {
                         warn!(tool = %name, error = %e, "PostToolUse hook failed");
                     }
                 }
-                results.push(ToolResultBlock::from_tool_result(&id, result));
+                results.push(ToolResultBlock::from_tool_result(&id, &result));
             }
 
             self.state

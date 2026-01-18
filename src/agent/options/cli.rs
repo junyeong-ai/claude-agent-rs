@@ -143,7 +143,8 @@ impl AgentBuilder {
 
         let mut settings_loader = SettingsLoader::new();
         if settings_loader.load_local(&working_dir).await.is_ok() {
-            self.apply_settings_mut(settings_loader.into_settings());
+            let settings = settings_loader.into_settings();
+            self.apply_settings_mut(&settings);
         }
 
         let mut loader = MemoryLoader::new();
@@ -164,7 +165,8 @@ impl AgentBuilder {
     async fn load_settings_from(&mut self, base: &Path) {
         let mut loader = SettingsLoader::new();
         if loader.load_from(base).await.is_ok() {
-            self.apply_settings_mut(loader.into_settings());
+            let settings = loader.into_settings();
+            self.apply_settings_mut(&settings);
         }
     }
 
@@ -213,7 +215,7 @@ impl AgentBuilder {
     }
 
     /// Apply settings mutably (for internal use by load methods).
-    fn apply_settings_mut(&mut self, settings: Settings) {
+    fn apply_settings_mut(&mut self, settings: &Settings) {
         if let Some(model) = &settings.model {
             self.config.model.primary = model.clone();
         }
@@ -257,7 +259,7 @@ impl AgentBuilder {
     /// Apply settings (for test use, returns Self for chaining).
     #[cfg(test)]
     pub(super) fn apply_settings(mut self, settings: Settings) -> Self {
-        self.apply_settings_mut(settings);
+        self.apply_settings_mut(&settings);
         self
     }
 

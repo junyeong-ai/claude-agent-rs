@@ -492,7 +492,7 @@ impl ClientBuilder {
 
         let adapter: Box<dyn ProviderAdapter> = match provider {
             CloudProvider::Anthropic => {
-                let adapter = if let Some(cred) = self.credential {
+                let adapter = if let Some(ref cred) = self.credential {
                     let mut a = if let Some(cred_provider) = self.credential_provider {
                         AnthropicAdapter::from_credential_provider(
                             config,

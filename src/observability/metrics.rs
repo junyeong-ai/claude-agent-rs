@@ -178,7 +178,7 @@ impl MetricsRegistry {
     #[cfg(feature = "otel")]
     pub fn with_otel(_config: &MetricsConfig, otel_config: &OtelConfig) -> Self {
         let meter = global::meter(SERVICE_NAME_DEFAULT);
-        let bridge = OtelMetricsBridge::new(meter);
+        let bridge = OtelMetricsBridge::new(&meter);
         let _ = &otel_config.service_name; // Used for configuration, meter uses static name
 
         Self {

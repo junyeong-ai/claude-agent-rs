@@ -26,15 +26,15 @@ pub struct SecureFs {
 
 impl SecureFs {
     pub fn new(
-        root: PathBuf,
+        root: &Path,
         allowed_paths: Vec<PathBuf>,
-        denied_patterns: Vec<String>,
+        denied_patterns: &[String],
         max_symlink_depth: u8,
     ) -> Result<Self, SecurityError> {
         let root_path = if root.exists() {
-            std::fs::canonicalize(&root)?
+            std::fs::canonicalize(root)?
         } else {
-            normalize_path(&root)
+            normalize_path(root)
         };
 
         let root_fd = std::fs::File::open(&root_path)?;
@@ -276,7 +276,7 @@ mod tests {
     #[test]
     fn test_secure_fs_new() {
         let dir = tempdir().unwrap();
-        let fs = SecureFs::new(dir.path().to_path_buf(), vec![], vec![], 10).unwrap();
+        let fs = SecureFs::new(dir.path(), vec![], &[], 10).unwrap();
         assert_eq!(fs.root(), std::fs::canonicalize(dir.path()).unwrap());
     }
 
@@ -286,7 +286,7 @@ mod tests {
         let root = std::fs::canonicalize(dir.path()).unwrap();
         fs::write(root.join("test.txt"), "content").unwrap();
 
-        let secure_fs = SecureFs::new(root.clone(), vec![], vec![], 10).unwrap();
+        let secure_fs = SecureFs::new(&root, vec![], &[], 10).unwrap();
         let path = secure_fs.resolve("test.txt").unwrap();
         assert_eq!(path.as_path(), root.join("test.txt"));
     }
@@ -294,7 +294,7 @@ mod tests {
     #[test]
     fn test_resolve_path_escape_blocked() {
         let dir = tempdir().unwrap();
-        let secure_fs = SecureFs::new(dir.path().to_path_buf(), vec![], vec![], 10).unwrap();
+        let secure_fs = SecureFs::new(dir.path(), vec![], &[], 10).unwrap();
         let result = secure_fs.resolve("../../../etc/passwd");
         assert!(matches!(result, Err(SecurityError::PathEscape(_))));
     }
@@ -305,7 +305,8 @@ mod tests {
         let root = std::fs::canonicalize(dir.path()).unwrap();
         fs::write(root.join("secret.key"), "secret").unwrap();
 
-        let secure_fs = SecureFs::new(root, vec![], vec!["*.key".into()], 10).unwrap();
+        let patterns = vec!["*.key".to_string()];
+        let secure_fs = SecureFs::new(&root, vec![], &patterns, 10).unwrap();
         let result = secure_fs.resolve("secret.key");
         assert!(matches!(result, Err(SecurityError::DeniedPath(_))));
     }
@@ -318,7 +319,7 @@ mod tests {
         let root2 = std::fs::canonicalize(dir2.path()).unwrap();
         fs::write(root2.join("file.txt"), "content").unwrap();
 
-        let secure_fs = SecureFs::new(root1, vec![root2.clone()], vec![], 10).unwrap();
+        let secure_fs = SecureFs::new(&root1, vec![root2.clone()], &[], 10).unwrap();
         assert!(secure_fs.is_within(&root2.join("file.txt")));
     }
 }

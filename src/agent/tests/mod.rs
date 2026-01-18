@@ -149,7 +149,7 @@ fn test_stop_reason_variants() {
 #[test]
 fn test_tool_result_block_from_tool_result() {
     let result = ToolResult::success("content");
-    let block = ToolResultBlock::from_tool_result("tool_123", result);
+    let block = ToolResultBlock::from_tool_result("tool_123", &result);
     assert_eq!(block.tool_use_id, "tool_123");
     assert!(!block.is_error.unwrap_or(false));
 }

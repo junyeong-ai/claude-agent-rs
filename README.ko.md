@@ -260,7 +260,8 @@ $ARGUMENTS 환경에 배포합니다.
 | 백엔드 | 기능 | 용도 |
 |--------|------|------|
 | Memory | (기본) | 개발 |
-| PostgreSQL | `postgres` | 프로덕션 (7개 테이블) |
+| JSONL | `jsonl` | CLI 호환 |
+| PostgreSQL | `postgres` | 프로덕션 |
 | Redis | `redis-backend` | 고처리량 |
 
 자세한 내용: [세션 가이드](docs/session.md)
@@ -349,6 +350,7 @@ claude-agent = { version = "0.2", features = ["mcp", "postgres"] }
 | `aws` | AWS Bedrock |
 | `gcp` | Google Vertex AI |
 | `azure` | Azure AI Foundry |
+| `jsonl` | JSONL 영속성 (CLI 호환) |
 | `postgres` | PostgreSQL 영속성 |
 | `redis-backend` | Redis 영속성 |
 | `otel` | OpenTelemetry |

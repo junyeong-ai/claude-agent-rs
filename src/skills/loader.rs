@@ -34,7 +34,7 @@ impl SkillLoader {
         fm: SkillFrontmatter,
         body: String,
         path: Option<&Path>,
-    ) -> crate::Result<SkillDefinition> {
+    ) -> SkillDefinition {
         let source_type = SourceType::from_str_opt(fm.source_type.as_deref());
 
         let mut skill =
@@ -62,14 +62,14 @@ impl SkillLoader {
             skill = skill.with_model(model);
         }
 
-        Ok(skill)
+        skill
     }
 }
 
 impl DocumentLoader<SkillDefinition> for SkillLoader {
     fn parse_content(&self, content: &str, path: Option<&Path>) -> crate::Result<SkillDefinition> {
         let doc = parse_frontmatter::<SkillFrontmatter>(content)?;
-        self.build_skill(doc.frontmatter, doc.body, path)
+        Ok(self.build_skill(doc.frontmatter, doc.body, path))
     }
 
     fn doc_type_name(&self) -> &'static str {

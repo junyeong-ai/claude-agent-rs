@@ -29,21 +29,19 @@ impl OutputStyleLoader {
         fm: OutputStyleFrontmatter,
         body: String,
         _path: Option<&Path>,
-    ) -> crate::Result<OutputStyle> {
+    ) -> OutputStyle {
         let source = SourceType::from_str_opt(fm.source_type.as_deref());
 
-        let style = OutputStyle::new(fm.name, fm.description, body)
+        OutputStyle::new(fm.name, fm.description, body)
             .with_source_type(source)
-            .with_keep_coding_instructions(fm.keep_coding_instructions);
-
-        Ok(style)
+            .with_keep_coding_instructions(fm.keep_coding_instructions)
     }
 }
 
 impl DocumentLoader<OutputStyle> for OutputStyleLoader {
     fn parse_content(&self, content: &str, path: Option<&Path>) -> crate::Result<OutputStyle> {
         let doc = parse_frontmatter::<OutputStyleFrontmatter>(content)?;
-        self.build_style(doc.frontmatter, doc.body, path)
+        Ok(self.build_style(doc.frontmatter, doc.body, path))
     }
 
     fn doc_type_name(&self) -> &'static str {

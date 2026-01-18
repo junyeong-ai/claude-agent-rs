@@ -3,6 +3,8 @@
 pub mod compact;
 pub mod manager;
 pub mod persistence;
+#[cfg(feature = "jsonl")]
+pub mod persistence_jsonl;
 #[cfg(feature = "postgres")]
 pub mod persistence_postgres;
 #[cfg(feature = "redis-backend")]
@@ -16,6 +18,10 @@ pub use crate::types::TokenUsage;
 pub use compact::{CompactExecutor, CompactStrategy};
 pub use manager::SessionManager;
 pub use persistence::{MemoryPersistence, Persistence, PersistenceFactory};
+#[cfg(feature = "jsonl")]
+pub use persistence_jsonl::{
+    JsonlConfig, JsonlConfigBuilder, JsonlEntry, JsonlPersistence, SyncMode,
+};
 #[cfg(feature = "postgres")]
 pub use persistence_postgres::{
     PgPoolConfig, PostgresConfig, PostgresPersistence, PostgresSchema, SchemaIssue,
@@ -49,9 +55,6 @@ pub enum SessionError {
 
     #[error("Storage error: {message}")]
     Storage { message: String },
-
-    #[error("Persistence error: {0}")]
-    PersistenceError(String),
 
     #[error("Serialization error: {0}")]
     Serialization(#[from] serde_json::Error),

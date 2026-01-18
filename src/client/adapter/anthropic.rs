@@ -86,27 +86,27 @@ impl AnthropicAdapter {
 
     pub fn from_credential(
         config: ProviderConfig,
-        credential: Credential,
+        credential: &Credential,
         oauth_config: Option<OAuthConfig>,
     ) -> Self {
         Self {
             config,
             base_url: Self::base_url_from_env(),
-            auth: RwLock::new(AuthMethod::from_credential(&credential, oauth_config)),
+            auth: RwLock::new(AuthMethod::from_credential(credential, oauth_config)),
             credential_provider: None,
         }
     }
 
     pub fn from_credential_provider(
         config: ProviderConfig,
-        credential: Credential,
+        credential: &Credential,
         oauth_config: Option<OAuthConfig>,
         provider: Arc<dyn CredentialProvider>,
     ) -> Self {
         Self {
             config,
             base_url: Self::base_url_from_env(),
-            auth: RwLock::new(AuthMethod::from_credential(&credential, oauth_config)),
+            auth: RwLock::new(AuthMethod::from_credential(credential, oauth_config)),
             credential_provider: Some(provider),
         }
     }
@@ -369,7 +369,7 @@ mod tests {
         let credential = Credential::oauth("test-token");
         let adapter = AnthropicAdapter::from_credential(
             ProviderConfig::new(ModelConfig::anthropic()),
-            credential,
+            &credential,
             None,
         );
         let url = adapter.build_url("model", false).await;
@@ -381,7 +381,7 @@ mod tests {
         let credential = Credential::oauth("test-token");
         let adapter = AnthropicAdapter::from_credential(
             ProviderConfig::new(ModelConfig::anthropic()),
-            credential,
+            &credential,
             None,
         );
         let request = CreateMessageRequest::new("model", vec![Message::user("Hi")]);
@@ -423,7 +423,7 @@ mod tests {
         let credential = Credential::oauth("test-token");
         let adapter = AnthropicAdapter::from_credential(
             ProviderConfig::new(ModelConfig::anthropic()),
-            credential,
+            &credential,
             None,
         );
 

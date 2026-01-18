@@ -32,7 +32,7 @@ impl SubagentLoader {
         fm: SubagentFrontmatter,
         body: String,
         _path: Option<&Path>,
-    ) -> crate::Result<SubagentDefinition> {
+    ) -> SubagentDefinition {
         let source = SourceType::from_str_opt(fm.source_type.as_deref());
 
         let tools: Vec<String> = fm
@@ -54,7 +54,7 @@ impl SubagentLoader {
             subagent = subagent.with_model(model);
         }
 
-        Ok(subagent)
+        subagent
     }
 }
 
@@ -65,7 +65,7 @@ impl DocumentLoader<SubagentDefinition> for SubagentLoader {
         path: Option<&Path>,
     ) -> crate::Result<SubagentDefinition> {
         let doc = parse_frontmatter::<SubagentFrontmatter>(content)?;
-        self.build_subagent(doc.frontmatter, doc.body, path)
+        Ok(self.build_subagent(doc.frontmatter, doc.body, path))
     }
 
     fn doc_type_name(&self) -> &'static str {

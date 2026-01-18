@@ -69,7 +69,7 @@ impl Sandbox {
 
         #[cfg(target_os = "macos")]
         {
-            let sandbox = macos::SeatbeltSandbox::new(config.clone());
+            let sandbox = macos::SeatbeltSandbox::new(config);
             if sandbox.is_available() {
                 return Some(Box::new(sandbox));
             }

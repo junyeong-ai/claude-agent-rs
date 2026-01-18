@@ -328,7 +328,7 @@ pub struct OtelMetricsBridge {
 }
 
 impl OtelMetricsBridge {
-    pub fn new(meter: opentelemetry::metrics::Meter) -> Self {
+    pub fn new(meter: &opentelemetry::metrics::Meter) -> Self {
         Self {
             requests_total: meter
                 .u64_counter("agent.requests.total")

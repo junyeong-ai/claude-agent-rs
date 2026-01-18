@@ -94,7 +94,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("Section 1: SecureFs Path Resolution");
     println!("------------------------------------------------------------------------");
 
-    let secure_fs = SecureFs::new(working_path.clone(), vec![], vec![], 10)?;
+    let secure_fs = SecureFs::new(&working_path, vec![], &[], 10)?;
 
     // Test 1: Access file within working_dir (should succeed)
     runner.check("Resolve allowed.txt (within sandbox)", {

@@ -260,7 +260,8 @@ See: [Memory System Guide](docs/memory-system.md)
 | Backend | Feature | Use Case |
 |---------|---------|----------|
 | Memory | (default) | Development |
-| PostgreSQL | `postgres` | Production (7 tables) |
+| JSONL | `jsonl` | CLI-compatible |
+| PostgreSQL | `postgres` | Production |
 | Redis | `redis-backend` | High-throughput |
 
 See: [Session Guide](docs/session.md)
@@ -349,6 +350,7 @@ claude-agent = { version = "0.2", features = ["mcp", "postgres"] }
 | `aws` | AWS Bedrock |
 | `gcp` | Google Vertex AI |
 | `azure` | Azure AI Foundry |
+| `jsonl` | JSONL persistence (CLI-compatible) |
 | `postgres` | PostgreSQL persistence |
 | `redis-backend` | Redis persistence |
 | `otel` | OpenTelemetry |

@@ -590,7 +590,9 @@ impl PostgresPersistence {
         .bind(&id_str)
         .fetch_optional(self.pool.as_ref())
         .await
-        .map_err(|e| SessionError::PersistenceError(e.to_string()))?
+        .map_err(|e| SessionError::Storage {
+            message: e.to_string(),
+        })?
         .ok_or_else(|| SessionError::NotFound { id: id_str.clone() })?;
 
         let messages = self.load_messages(session_id).await?;
@@ -686,7 +688,9 @@ impl PostgresPersistence {
         .bind(session_id.to_string())
         .fetch_all(self.pool.as_ref())
         .await
-        .map_err(|e| SessionError::PersistenceError(e.to_string()))?;
+        .map_err(|e| SessionError::Storage {
+            message: e.to_string(),
+        })?;
 
         Ok(rows
             .into_iter()
@@ -752,7 +756,9 @@ impl PostgresPersistence {
         .bind(session_id.to_string())
         .fetch_all(self.pool.as_ref())
         .await
-        .map_err(|e| SessionError::PersistenceError(e.to_string()))?;
+        .map_err(|e| SessionError::Storage {
+            message: e.to_string(),
+        })?;
 
         Ok(rows
             .into_iter()
@@ -798,7 +804,9 @@ impl PostgresPersistence {
         .bind(session_id.to_string())
         .fetch_all(self.pool.as_ref())
         .await
-        .map_err(|e| SessionError::PersistenceError(e.to_string()))?;
+        .map_err(|e| SessionError::Storage {
+            message: e.to_string(),
+        })?;
 
         Ok(rows
             .into_iter()
@@ -840,7 +848,9 @@ impl PostgresPersistence {
         .bind(session_id.to_string())
         .fetch_optional(self.pool.as_ref())
         .await
-        .map_err(|e| SessionError::PersistenceError(e.to_string()))?;
+        .map_err(|e| SessionError::Storage {
+            message: e.to_string(),
+        })?;
 
         Ok(row.and_then(|row| {
             let status = row
@@ -878,7 +888,9 @@ impl PostgresPersistence {
         .bind(session_id.to_string())
         .execute(&mut **tx)
         .await
-        .map_err(|e| SessionError::PersistenceError(e.to_string()))?;
+        .map_err(|e| SessionError::Storage {
+            message: e.to_string(),
+        })?;
 
         for todo in todos {
             let status = serde_json::to_string(&todo.status)
@@ -906,7 +918,9 @@ impl PostgresPersistence {
             .bind(todo.completed_at)
             .execute(&mut **tx)
             .await
-            .map_err(|e| SessionError::PersistenceError(e.to_string()))?;
+            .map_err(|e| SessionError::Storage {
+                message: e.to_string(),
+            })?;
         }
 
         Ok(())
@@ -953,7 +967,9 @@ impl PostgresPersistence {
         .bind(plan.completed_at)
         .execute(&mut **tx)
         .await
-        .map_err(|e| SessionError::PersistenceError(e.to_string()))?;
+        .map_err(|e| SessionError::Storage {
+            message: e.to_string(),
+        })?;
 
         Ok(())
     }
@@ -973,7 +989,9 @@ impl PostgresPersistence {
         .bind(session_id.to_string())
         .execute(&mut **tx)
         .await
-        .map_err(|e| SessionError::PersistenceError(e.to_string()))?;
+        .map_err(|e| SessionError::Storage {
+            message: e.to_string(),
+        })?;
 
         for compact in compacts {
             let trigger = serde_json::to_string(&compact.trigger)
@@ -1003,7 +1021,9 @@ impl PostgresPersistence {
             .bind(compact.created_at)
             .execute(&mut **tx)
             .await
-            .map_err(|e| SessionError::PersistenceError(e.to_string()))?;
+            .map_err(|e| SessionError::Storage {
+                message: e.to_string(),
+            })?;
         }
 
         Ok(())
@@ -1024,7 +1044,9 @@ impl PostgresPersistence {
         .bind(session_id.to_string())
         .execute(&mut **tx)
         .await
-        .map_err(|e| SessionError::PersistenceError(e.to_string()))?;
+        .map_err(|e| SessionError::Storage {
+            message: e.to_string(),
+        })?;
 
         for message in messages {
             let role = serde_json::to_string(&message.role)
@@ -1067,7 +1089,9 @@ impl PostgresPersistence {
             .bind(message.timestamp)
             .execute(&mut **tx)
             .await
-            .map_err(|e| SessionError::PersistenceError(e.to_string()))?;
+            .map_err(|e| SessionError::Storage {
+                message: e.to_string(),
+            })?;
         }
 
         Ok(())
@@ -1083,11 +1107,9 @@ impl Persistence for PostgresPersistence {
     async fn save(&self, session: &Session) -> SessionResult<()> {
         let c = &self.config;
 
-        let mut tx = self
-            .pool
-            .begin()
-            .await
-            .map_err(|e| SessionError::PersistenceError(e.to_string()))?;
+        let mut tx = self.pool.begin().await.map_err(|e| SessionError::Storage {
+            message: e.to_string(),
+        })?;
 
         let session_type = serde_json::to_string(&session.session_type)
             .unwrap_or_else(|_| "\"main\"".to_string())
@@ -1156,7 +1178,9 @@ impl Persistence for PostgresPersistence {
         .bind(session.expires_at)
         .execute(&mut *tx)
         .await
-        .map_err(|e| SessionError::PersistenceError(e.to_string()))?;
+        .map_err(|e| SessionError::Storage {
+            message: e.to_string(),
+        })?;
 
         self.save_messages_tx(&mut tx, &session.id, &session.messages)
             .await?;
@@ -1169,9 +1193,9 @@ impl Persistence for PostgresPersistence {
             self.save_plan_tx(&mut tx, plan).await?;
         }
 
-        tx.commit()
-            .await
-            .map_err(|e| SessionError::PersistenceError(e.to_string()))?;
+        tx.commit().await.map_err(|e| SessionError::Storage {
+            message: e.to_string(),
+        })?;
 
         Ok(())
     }
@@ -1194,7 +1218,9 @@ impl Persistence for PostgresPersistence {
         .bind(id.to_string())
         .execute(self.pool.as_ref())
         .await
-        .map_err(|e| SessionError::PersistenceError(e.to_string()))?;
+        .map_err(|e| SessionError::Storage {
+            message: e.to_string(),
+        })?;
 
         Ok(result.rows_affected() > 0)
     }
@@ -1218,7 +1244,9 @@ impl Persistence for PostgresPersistence {
             .fetch_all(self.pool.as_ref())
             .await
         }
-        .map_err(|e| SessionError::PersistenceError(e.to_string()))?;
+        .map_err(|e| SessionError::Storage {
+            message: e.to_string(),
+        })?;
 
         Ok(rows
             .into_iter()
@@ -1236,7 +1264,9 @@ impl Persistence for PostgresPersistence {
         .bind(parent_id.to_string())
         .fetch_all(self.pool.as_ref())
         .await
-        .map_err(|e| SessionError::PersistenceError(e.to_string()))?;
+        .map_err(|e| SessionError::Storage {
+            message: e.to_string(),
+        })?;
 
         Ok(rows
             .into_iter()
@@ -1261,7 +1291,9 @@ impl Persistence for PostgresPersistence {
         .bind(snapshot.created_at)
         .execute(self.pool.as_ref())
         .await
-        .map_err(|e| SessionError::PersistenceError(e.to_string()))?;
+        .map_err(|e| SessionError::Storage {
+            message: e.to_string(),
+        })?;
 
         sqlx::query(&format!(
             "UPDATE {sessions} SET summary = $1, updated_at = NOW() WHERE id = $2",
@@ -1271,7 +1303,9 @@ impl Persistence for PostgresPersistence {
         .bind(snapshot.session_id.to_string())
         .execute(self.pool.as_ref())
         .await
-        .map_err(|e| SessionError::PersistenceError(e.to_string()))?;
+        .map_err(|e| SessionError::Storage {
+            message: e.to_string(),
+        })?;
 
         Ok(())
     }
@@ -1291,7 +1325,9 @@ impl Persistence for PostgresPersistence {
         .bind(session_id.to_string())
         .fetch_all(self.pool.as_ref())
         .await
-        .map_err(|e| SessionError::PersistenceError(e.to_string()))?;
+        .map_err(|e| SessionError::Storage {
+            message: e.to_string(),
+        })?;
 
         Ok(rows
             .into_iter()
@@ -1335,7 +1371,9 @@ impl Persistence for PostgresPersistence {
         .bind(item.created_at)
         .execute(self.pool.as_ref())
         .await
-        .map_err(|e| SessionError::PersistenceError(e.to_string()))?;
+        .map_err(|e| SessionError::Storage {
+            message: e.to_string(),
+        })?;
 
         Ok(item)
     }
@@ -1361,7 +1399,9 @@ impl Persistence for PostgresPersistence {
         .bind(session_id.to_string())
         .fetch_optional(self.pool.as_ref())
         .await
-        .map_err(|e| SessionError::PersistenceError(e.to_string()))?;
+        .map_err(|e| SessionError::Storage {
+            message: e.to_string(),
+        })?;
 
         Ok(row.and_then(|row| {
             Some(QueueItem {
@@ -1387,7 +1427,7 @@ impl Persistence for PostgresPersistence {
         .bind(item_id)
         .execute(self.pool.as_ref())
         .await
-        .map_err(|e| SessionError::PersistenceError(e.to_string()))?;
+        .map_err(|e| SessionError::Storage { message: e.to_string() })?;
 
         Ok(result.rows_affected() > 0)
     }
@@ -1407,7 +1447,9 @@ impl Persistence for PostgresPersistence {
         .bind(session_id.to_string())
         .fetch_all(self.pool.as_ref())
         .await
-        .map_err(|e| SessionError::PersistenceError(e.to_string()))?;
+        .map_err(|e| SessionError::Storage {
+            message: e.to_string(),
+        })?;
 
         Ok(rows
             .into_iter()
@@ -1435,7 +1477,9 @@ impl Persistence for PostgresPersistence {
         ))
         .execute(self.pool.as_ref())
         .await
-        .map_err(|e| SessionError::PersistenceError(e.to_string()))?;
+        .map_err(|e| SessionError::Storage {
+            message: e.to_string(),
+        })?;
 
         Ok(result.rows_affected() as usize)
     }

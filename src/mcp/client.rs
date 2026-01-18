@@ -149,10 +149,10 @@ impl McpClient {
                 .resources
                 .into_iter()
                 .map(|r| McpResourceDefinition {
-                    uri: r.raw.uri.clone(),
-                    name: r.raw.name.clone(),
-                    description: r.raw.description.clone(),
-                    mime_type: r.raw.mime_type.clone(),
+                    uri: r.raw.uri,
+                    name: r.raw.name,
+                    description: r.raw.description,
+                    mime_type: r.raw.mime_type,
                 })
                 .collect();
         }

@@ -103,7 +103,7 @@ impl ToolResultBlock {
         }
     }
 
-    pub fn from_tool_result(tool_use_id: &str, result: crate::types::tool::ToolResult) -> Self {
+    pub fn from_tool_result(tool_use_id: &str, result: &crate::types::tool::ToolResult) -> Self {
         use crate::types::tool::ToolOutput;
         match &result.output {
             ToolOutput::Success(content) => Self::success(tool_use_id, content.clone()),

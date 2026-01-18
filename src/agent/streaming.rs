@@ -592,7 +592,7 @@ impl StreamState {
         }
 
         self.pending_tool_results
-            .push(ToolResultBlock::from_tool_result(&tool_use.id, result));
+            .push(ToolResultBlock::from_tool_result(&tool_use.id, &result));
         self.phase = Phase::ProcessingTools {
             tool_index: tool_index + 1,
         };

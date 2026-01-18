@@ -3,10 +3,12 @@
 pub mod client;
 pub mod manager;
 pub mod resources;
+pub mod toolset;
 
 pub use client::McpClient;
 pub use manager::McpManager;
 pub use resources::{ResourceManager, ResourceQuery};
+pub use toolset::{McpToolset, McpToolsetRegistry, ToolLoadConfig};
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;

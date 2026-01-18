@@ -15,6 +15,7 @@ mod plan;
 mod process;
 mod read;
 mod registry;
+pub mod search;
 #[cfg(test)]
 mod testing;
 mod todo;
@@ -36,9 +37,10 @@ pub use plan::PlanTool;
 pub use process::{ProcessId, ProcessInfo, ProcessManager};
 pub use read::ReadTool;
 pub use registry::ToolRegistry;
+pub use search::{PreparedTools, SearchMode, ToolSearchConfig, ToolSearchManager};
 pub use todo::TodoWriteTool;
 pub use traits::{SchemaTool, Tool};
 pub use write::WriteTool;
 
 pub use crate::security::sandbox::{DomainCheck, NetworkSandbox};
-pub use crate::types::{ToolOutput, ToolResult, WebFetchTool, WebSearchTool};
+pub use crate::types::{ToolOutput, ToolResult, ToolSearchTool, WebFetchTool, WebSearchTool};

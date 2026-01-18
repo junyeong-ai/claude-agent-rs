@@ -10,7 +10,7 @@ use crate::budget::{BudgetTracker, TenantBudget};
 use crate::context::PromptOrchestrator;
 use crate::hooks::HookManager;
 use crate::session::ToolState;
-use crate::tools::{ToolRegistry, ToolRegistryBuilder};
+use crate::tools::{ToolRegistry, ToolRegistryBuilder, ToolSearchManager};
 use crate::types::Message;
 
 pub struct Agent {
@@ -25,6 +25,7 @@ pub struct Agent {
     pub(crate) budget_tracker: Arc<BudgetTracker>,
     pub(crate) tenant_budget: Option<Arc<TenantBudget>>,
     pub(crate) mcp_manager: Option<Arc<crate::mcp::McpManager>>,
+    pub(crate) tool_search_manager: Option<Arc<ToolSearchManager>>,
 }
 
 impl Agent {
@@ -145,6 +146,7 @@ impl Agent {
             budget_tracker: Arc::new(budget_tracker),
             tenant_budget: None,
             mcp_manager: None,
+            tool_search_manager: None,
         }
     }
 
@@ -194,6 +196,15 @@ impl Agent {
 
     pub fn mcp_manager(&self) -> Option<&Arc<crate::mcp::McpManager>> {
         self.mcp_manager.as_ref()
+    }
+
+    pub fn with_tool_search_manager(mut self, manager: Arc<ToolSearchManager>) -> Self {
+        self.tool_search_manager = Some(manager);
+        self
+    }
+
+    pub fn tool_search_manager(&self) -> Option<&Arc<ToolSearchManager>> {
+        self.tool_search_manager.as_ref()
     }
 
     pub fn with_initial_messages(mut self, messages: Vec<Message>) -> Self {

@@ -71,6 +71,9 @@ pub struct AgentBuilder {
     pub(super) output_style_name: Option<String>,
     pub(super) mcp_configs: std::collections::HashMap<String, crate::mcp::McpServerConfig>,
     pub(super) mcp_manager: Option<std::sync::Arc<crate::mcp::McpManager>>,
+    pub(super) mcp_toolset_registry: Option<crate::mcp::McpToolsetRegistry>,
+    pub(super) tool_search_config: Option<crate::tools::ToolSearchConfig>,
+    pub(super) tool_search_manager: Option<std::sync::Arc<crate::tools::ToolSearchManager>>,
     pub(super) session_manager: Option<crate::session::SessionManager>,
 
     // Resource level flags - loaded in fixed order during build()
@@ -589,6 +592,66 @@ impl AgentBuilder {
     /// Sets a shared MCP manager (for multi-agent scenarios).
     pub fn shared_mcp_manager(mut self, manager: std::sync::Arc<crate::mcp::McpManager>) -> Self {
         self.mcp_manager = Some(manager);
+        self
+    }
+
+    /// Registers an MCP toolset configuration for deferred loading.
+    pub fn mcp_toolset(mut self, toolset: crate::mcp::McpToolset) -> Self {
+        self.mcp_toolset_registry
+            .get_or_insert_with(crate::mcp::McpToolsetRegistry::new)
+            .register(toolset);
+        self
+    }
+
+    // =========================================================================
+    // Tool Search
+    // =========================================================================
+
+    /// Enables tool search with default configuration.
+    pub fn with_tool_search(mut self) -> Self {
+        self.tool_search_config = Some(crate::tools::ToolSearchConfig::default());
+        self
+    }
+
+    /// Sets the tool search configuration.
+    pub fn tool_search_config(mut self, config: crate::tools::ToolSearchConfig) -> Self {
+        self.tool_search_config = Some(config);
+        self
+    }
+
+    /// Sets the tool search threshold as a fraction of context window (0.0 - 1.0).
+    pub fn tool_search_threshold(mut self, threshold: f64) -> Self {
+        let config = self
+            .tool_search_config
+            .get_or_insert_with(crate::tools::ToolSearchConfig::default);
+        config.threshold = threshold.clamp(0.0, 1.0);
+        self
+    }
+
+    /// Sets the search mode for tool search.
+    pub fn tool_search_mode(mut self, mode: crate::tools::SearchMode) -> Self {
+        let config = self
+            .tool_search_config
+            .get_or_insert_with(crate::tools::ToolSearchConfig::default);
+        config.search_mode = mode;
+        self
+    }
+
+    /// Sets tools that should always be loaded immediately (never deferred).
+    pub fn always_load_tools(mut self, tools: impl IntoIterator<Item = impl Into<String>>) -> Self {
+        let config = self
+            .tool_search_config
+            .get_or_insert_with(crate::tools::ToolSearchConfig::default);
+        config.always_load = tools.into_iter().map(Into::into).collect();
+        self
+    }
+
+    /// Sets a shared tool search manager.
+    pub fn shared_tool_search_manager(
+        mut self,
+        manager: std::sync::Arc<crate::tools::ToolSearchManager>,
+    ) -> Self {
+        self.tool_search_manager = Some(manager);
         self
     }
 

@@ -5,7 +5,7 @@ use std::sync::Arc;
 use crate::client::{CloudProvider, ProviderConfig};
 use crate::context::{MemoryProvider, PromptOrchestrator, RulesEngine, StaticContext};
 use crate::skills::SkillExecutor;
-use crate::tools::ToolRegistry;
+use crate::tools::{ToolRegistry, ToolSearchConfig, ToolSearchManager};
 
 use super::builder::AgentBuilder;
 
@@ -18,6 +18,7 @@ impl AgentBuilder {
         self.resolve_output_style().await?;
         self.resolve_model_aliases();
         self.connect_mcp_servers().await?;
+        self.initialize_tool_search().await;
 
         let client = self.build_client().await?;
         let tools = self.build_tools().await;
@@ -50,6 +51,9 @@ impl AgentBuilder {
         }
         if let Some(budget) = tenant_budget {
             agent = agent.with_tenant_budget(budget);
+        }
+        if let Some(tsm) = self.tool_search_manager {
+            agent = agent.with_tool_search_manager(tsm);
         }
 
         Ok(agent)
@@ -155,6 +159,44 @@ impl AgentBuilder {
 
         self.mcp_manager = Some(manager);
         Ok(())
+    }
+
+    async fn initialize_tool_search(&mut self) {
+        let Some(ref mcp_manager) = self.mcp_manager else {
+            return;
+        };
+
+        // Use shared manager if provided, otherwise create new one
+        let manager = if let Some(shared) = self.tool_search_manager.take() {
+            shared
+        } else {
+            let config = self.tool_search_config.take().unwrap_or_else(|| {
+                let context_window =
+                    crate::types::context_window::for_model(&self.config.model.primary) as usize;
+                ToolSearchConfig::default().with_context_window(context_window)
+            });
+            Arc::new(ToolSearchManager::new(config))
+        };
+
+        // Set toolset registry if available
+        if let Some(registry) = self.mcp_toolset_registry.take() {
+            manager.set_toolset_registry(registry);
+        }
+
+        // Build the search index from MCP tools
+        manager.build_index(mcp_manager).await;
+
+        let prepared = manager.prepare_tools().await;
+        tracing::debug!(
+            use_search = prepared.use_search,
+            immediate_count = prepared.immediate.len(),
+            deferred_count = prepared.deferred.len(),
+            total_tokens = prepared.total_tokens,
+            threshold_tokens = prepared.threshold_tokens,
+            "Tool search initialized"
+        );
+
+        self.tool_search_manager = Some(manager);
     }
 
     /// Loads resources from enabled levels in fixed order.
@@ -318,6 +360,12 @@ impl AgentBuilder {
             config.beta.add(crate::client::BetaFeature::WebSearch);
             config.beta.add(crate::client::BetaFeature::WebFetch);
             tracing::debug!("Enabled server-side web tools");
+        }
+
+        // Enable tool search beta if manager is configured
+        if self.tool_search_manager.is_some() {
+            config.beta.add(crate::client::BetaFeature::AdvancedToolUse);
+            tracing::debug!("Enabled advanced tool use for tool search");
         }
 
         let mut builder = crate::Client::builder().config(config);

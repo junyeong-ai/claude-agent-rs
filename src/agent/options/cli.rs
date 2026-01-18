@@ -254,6 +254,14 @@ impl AgentBuilder {
                 self.mcp_configs.insert(name.clone(), config);
             }
         }
+
+        // Apply tool search settings
+        if !settings.tool_search.is_empty() && settings.tool_search.is_enabled() {
+            let context_window =
+                crate::types::context_window::for_model(&self.config.model.primary) as usize;
+            let config = settings.tool_search.to_config(context_window);
+            self.tool_search_config = Some(config);
+        }
     }
 
     /// Apply settings (for test use, returns Self for chaining).

@@ -25,7 +25,7 @@
 //! use claude_agent::subagents::SubagentIndex;
 //!
 //! // Create subagent with metadata only (prompt loaded lazily)
-//! let subagent = SubagentIndex::new("explore", "Fast codebase exploration")
+//! let subagent = SubagentIndex::new("Explore", "Fast codebase exploration")
 //!     .with_source(ContentSource::in_memory("You are an exploration agent..."))
 //!     .with_tools(["Read", "Grep", "Glob"]);
 //!
@@ -41,7 +41,10 @@ mod index;
 #[cfg(feature = "cli-integration")]
 mod index_loader;
 
-pub use builtin::{builtin_subagents, find_builtin};
+pub use builtin::{
+    bash_subagent, builtin_subagents, explore_subagent, find_builtin, general_purpose_subagent,
+    plan_subagent,
+};
 pub use index::SubagentIndex;
 #[cfg(feature = "cli-integration")]
 pub use index_loader::{SubagentFrontmatter, SubagentIndexLoader};
@@ -82,7 +85,7 @@ mod tests {
 
     #[test]
     fn test_no_tool_restrictions() {
-        let subagent = SubagentIndex::new("general", "General agent")
+        let subagent = SubagentIndex::new("general-purpose", "General purpose agent")
             .with_source(ContentSource::in_memory("Do anything"));
 
         assert!(!subagent.has_tool_restrictions());

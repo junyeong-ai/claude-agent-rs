@@ -194,18 +194,18 @@ mod tests {
 
     #[test]
     fn test_summary_line() {
-        let subagent = SubagentIndex::new("explore", "Fast codebase exploration")
+        let subagent = SubagentIndex::new("Explore", "Fast codebase exploration")
             .with_tools(["Read", "Grep", "Glob", "Bash"]);
 
         let summary = subagent.to_summary_line();
-        assert!(summary.contains("explore"));
+        assert!(summary.contains("Explore"));
         assert!(summary.contains("Fast codebase exploration"));
         assert!(summary.contains("Read, Grep, Glob, Bash"));
     }
 
     #[test]
     fn test_summary_line_no_tools() {
-        let subagent = SubagentIndex::new("general", "General purpose agent");
+        let subagent = SubagentIndex::new("general-purpose", "General purpose agent");
         let summary = subagent.to_summary_line();
         assert!(summary.contains("(Tools: *)"));
     }

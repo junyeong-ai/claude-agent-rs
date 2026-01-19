@@ -390,12 +390,12 @@ mod tests {
         let input: TaskInput = serde_json::from_value(serde_json::json!({
             "description": "Search files",
             "prompt": "Find all Rust files",
-            "subagent_type": "explore"
+            "subagent_type": "Explore"
         }))
         .unwrap();
 
         assert_eq!(input.description, "Search files");
-        assert_eq!(input.subagent_type, "explore");
+        assert_eq!(input.subagent_type, "Explore");
     }
 
     #[tokio::test]
@@ -406,7 +406,7 @@ mod tests {
         let context = test_context();
 
         registry
-            .register("existing".into(), "explore".into(), "Existing task".into())
+            .register("existing".into(), "Explore".into(), "Existing task".into())
             .await;
 
         let result = tool
@@ -414,7 +414,7 @@ mod tests {
                 serde_json::json!({
                     "description": "New task",
                     "prompt": "Do something",
-                    "subagent_type": "general",
+                    "subagent_type": "general-purpose",
                     "run_in_background": true
                 }),
                 &context,
@@ -431,9 +431,10 @@ mod tests {
         let mut subagent_registry = IndexRegistry::new();
         subagent_registry.register_all(builtin_subagents());
 
-        assert!(subagent_registry.contains("explore"));
-        assert!(subagent_registry.contains("plan"));
-        assert!(subagent_registry.contains("general"));
+        assert!(subagent_registry.contains("Bash"));
+        assert!(subagent_registry.contains("Explore"));
+        assert!(subagent_registry.contains("Plan"));
+        assert!(subagent_registry.contains("general-purpose"));
 
         let _tool = TaskTool::new(registry).with_subagent_registry(subagent_registry);
     }

@@ -172,7 +172,7 @@ mod tests {
     async fn test_task_output_completed() {
         let registry = test_registry();
         registry
-            .register(TASK_1_UUID.into(), "explore".into(), "Test".into())
+            .register(TASK_1_UUID.into(), "Explore".into(), "Test".into())
             .await;
         registry.complete(TASK_1_UUID, mock_result()).await;
 
@@ -217,7 +217,7 @@ mod tests {
     async fn test_task_output_non_blocking() {
         let registry = test_registry();
         registry
-            .register(TASK_2_UUID.into(), "explore".into(), "Running".into())
+            .register(TASK_2_UUID.into(), "Explore".into(), "Running".into())
             .await;
 
         let tool = TaskOutputTool::new(registry);
@@ -241,7 +241,7 @@ mod tests {
     async fn test_task_output_failed() {
         let registry = test_registry();
         registry
-            .register(TASK_3_UUID.into(), "explore".into(), "Failing".into())
+            .register(TASK_3_UUID.into(), "Explore".into(), "Failing".into())
             .await;
         registry
             .fail(TASK_3_UUID, "Something went wrong".into())

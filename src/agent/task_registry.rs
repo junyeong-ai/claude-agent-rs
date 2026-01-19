@@ -316,7 +316,7 @@ mod tests {
     async fn test_register_and_complete() {
         let registry = test_registry();
         let _cancel_rx = registry
-            .register(TASK_1_UUID.into(), "explore".into(), "Test task".into())
+            .register(TASK_1_UUID.into(), "Explore".into(), "Test task".into())
             .await;
 
         assert_eq!(
@@ -334,7 +334,7 @@ mod tests {
     async fn test_fail_task() {
         let registry = test_registry();
         registry
-            .register(TASK_2_UUID.into(), "explore".into(), "Failing task".into())
+            .register(TASK_2_UUID.into(), "Explore".into(), "Failing task".into())
             .await;
 
         registry
@@ -352,7 +352,7 @@ mod tests {
         registry
             .register(
                 TASK_3_UUID.into(),
-                "explore".into(),
+                "Explore".into(),
                 "Cancellable task".into(),
             )
             .await;
@@ -377,7 +377,7 @@ mod tests {
     async fn test_messages() {
         let registry = test_registry();
         registry
-            .register(TASK_4_UUID.into(), "explore".into(), "Message test".into())
+            .register(TASK_4_UUID.into(), "Explore".into(), "Message test".into())
             .await;
 
         let messages = vec![

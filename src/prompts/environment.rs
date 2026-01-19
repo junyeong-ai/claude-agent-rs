@@ -31,7 +31,7 @@ Today's date: {date}
 </env>
 You are powered by the model named {model_name}. The exact model ID is {model_id}.
 
-Assistant knowledge cutoff is January 2025.
+Assistant knowledge cutoff is May 2025.
 
 <claude_background_info>
 The most recent frontier Claude model is Claude Opus 4.5 (model ID: '{frontier}').

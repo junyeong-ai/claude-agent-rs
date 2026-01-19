@@ -201,7 +201,26 @@ impl Agent {
         let mut dynamic_rules_context = String::new();
         let mut total_usage = Usage::default();
 
-        let request_builder = RequestBuilder::new(&self.config, Arc::clone(&self.tools));
+        // Build request builder with optional MCP Progressive Disclosure
+        let request_builder = {
+            let builder = RequestBuilder::new(&self.config, Arc::clone(&self.tools));
+
+            // Connect ToolSearchManager for Progressive Disclosure of MCP tools
+            if let Some(ref tsm) = self.tool_search_manager {
+                let prepared = tsm.prepare_tools().await;
+                if prepared.use_search {
+                    info!(
+                        immediate = prepared.immediate.len(),
+                        deferred = prepared.deferred.len(),
+                        tokens_saved = prepared.token_savings(),
+                        "MCP Progressive Disclosure active"
+                    );
+                }
+                builder.with_prepared_tools(prepared)
+            } else {
+                builder
+            }
+        };
         let max_tokens = context_window::for_model(&self.config.model.primary);
 
         info!(prompt_len = final_prompt.len(), "Starting agent execution");

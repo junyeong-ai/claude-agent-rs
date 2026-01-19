@@ -8,7 +8,9 @@ use super::config::{
 };
 use super::context::ContextManagement;
 use super::types::{ApiTool, RequestMetadata};
-use crate::types::{Message, SystemPrompt, ToolDefinition, WebFetchTool, WebSearchTool};
+use crate::types::{
+    Message, SystemPrompt, ToolDefinition, ToolSearchTool, WebFetchTool, WebSearchTool,
+};
 
 #[derive(Debug, Clone, Serialize)]
 pub struct CreateMessageRequest {
@@ -114,6 +116,13 @@ impl CreateMessageRequest {
     pub fn with_web_fetch(mut self, config: WebFetchTool) -> Self {
         let mut tools = self.tools.unwrap_or_default();
         tools.push(ApiTool::WebFetch(config));
+        self.tools = Some(tools);
+        self
+    }
+
+    pub fn with_tool_search(mut self, config: ToolSearchTool) -> Self {
+        let mut tools = self.tools.unwrap_or_default();
+        tools.push(ApiTool::ToolSearch(config));
         self.tools = Some(tools);
         self
     }

@@ -4,7 +4,7 @@ use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
 
-use crate::types::{ToolDefinition, WebFetchTool, WebSearchTool};
+use crate::types::{ToolDefinition, ToolSearchTool, WebFetchTool, WebSearchTool};
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct RequestMetadata {
@@ -44,6 +44,7 @@ pub enum ApiTool {
     Custom(ToolDefinition),
     WebSearch(WebSearchTool),
     WebFetch(WebFetchTool),
+    ToolSearch(ToolSearchTool),
 }
 
 impl From<ToolDefinition> for ApiTool {
@@ -55,6 +56,18 @@ impl From<ToolDefinition> for ApiTool {
 impl From<WebSearchTool> for ApiTool {
     fn from(tool: WebSearchTool) -> Self {
         Self::WebSearch(tool)
+    }
+}
+
+impl From<ToolSearchTool> for ApiTool {
+    fn from(tool: ToolSearchTool) -> Self {
+        Self::ToolSearch(tool)
+    }
+}
+
+impl From<WebFetchTool> for ApiTool {
+    fn from(tool: WebFetchTool) -> Self {
+        Self::WebFetch(tool)
     }
 }
 

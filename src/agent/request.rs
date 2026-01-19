@@ -7,7 +7,8 @@ use crate::agent::config::{AgentConfig, CacheConfig, ServerToolsConfig, SystemPr
 use crate::client::messages::CreateMessageRequest;
 use crate::output_style::{OutputStyle, SystemPromptGenerator};
 use crate::tools::ToolRegistry;
-use crate::types::{Message, SystemBlock, SystemPrompt};
+use crate::tools::search::{PreparedTools, SearchMode};
+use crate::types::{Message, SystemBlock, SystemPrompt, ToolSearchTool};
 
 pub struct RequestBuilder {
     model: String,
@@ -19,6 +20,7 @@ pub struct RequestBuilder {
     custom_system_prompt: Option<String>,
     base_system_prompt: String,
     cache_config: CacheConfig,
+    prepared_mcp_tools: Option<PreparedTools>,
 }
 
 impl RequestBuilder {
@@ -39,7 +41,13 @@ impl RequestBuilder {
             custom_system_prompt: config.prompt.system_prompt.clone(),
             base_system_prompt,
             cache_config: config.cache.clone(),
+            prepared_mcp_tools: None,
         }
+    }
+
+    pub fn with_prepared_tools(mut self, prepared: PreparedTools) -> Self {
+        self.prepared_mcp_tools = Some(prepared);
+        self
     }
 
     pub fn build(&self, messages: Vec<Message>, dynamic_rules: &str) -> CreateMessageRequest {
@@ -49,10 +57,55 @@ impl RequestBuilder {
             .with_max_tokens(self.max_tokens)
             .with_system(system_prompt);
 
-        let tool_defs = self.tools.definitions();
-        if !tool_defs.is_empty() {
-            request = request.with_tools(tool_defs);
-        }
+        // Build tool definitions with optional Progressive Disclosure
+        request = match &self.prepared_mcp_tools {
+            Some(prepared) => {
+                // Progressive Disclosure mode: separate built-in and MCP tools
+                let registry_tools = self.tools.definitions();
+                let builtin_tools: Vec<_> = registry_tools
+                    .into_iter()
+                    .filter(|t| !crate::mcp::is_mcp_name(&t.name))
+                    .collect();
+
+                // Pre-allocate capacity to avoid reallocations
+                let capacity =
+                    builtin_tools.len() + prepared.immediate.len() + prepared.deferred.len();
+                let mut tools = Vec::with_capacity(capacity);
+
+                // 1. Built-in tools (non-MCP)
+                tools.extend(builtin_tools);
+
+                // 2. Immediate MCP tools (full schema, no defer_loading)
+                tools.extend(prepared.immediate.iter().cloned());
+
+                // 3. Deferred MCP tools (full schema, defer_loading: true)
+                tools.extend(prepared.deferred.iter().cloned());
+
+                if !tools.is_empty() {
+                    request = request.with_tools(tools);
+                }
+
+                // Add ToolSearchTool when threshold exceeded
+                if prepared.use_search {
+                    let tool_search = match prepared.search_mode {
+                        SearchMode::Regex => ToolSearchTool::regex(),
+                        SearchMode::Bm25 => ToolSearchTool::bm25(),
+                    };
+                    request = request.with_tool_search(tool_search);
+                }
+
+                request
+            }
+            None => {
+                // Standard mode: all tools from registry
+                let tool_defs = self.tools.definitions();
+                if !tool_defs.is_empty() {
+                    request.with_tools(tool_defs)
+                } else {
+                    request
+                }
+            }
+        };
 
         if self.tool_access.is_allowed("WebSearch") {
             let web_search = self.server_tools.web_search.clone().unwrap_or_default();

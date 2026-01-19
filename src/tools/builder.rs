@@ -10,17 +10,18 @@ use super::env::ToolExecutionEnv;
 use super::registry::ToolRegistry;
 use super::traits::Tool;
 use crate::agent::{TaskOutputTool, TaskRegistry, TaskTool};
+use crate::common::IndexRegistry;
 use crate::permissions::PermissionPolicy;
 use crate::session::session_state::ToolState;
 use crate::session::{MemoryPersistence, SessionId};
-use crate::subagents::SubagentRegistry;
+use crate::subagents::SubagentIndex;
 
 pub struct ToolRegistryBuilder<'a> {
     access: Option<&'a ToolAccess>,
     working_dir: Option<PathBuf>,
     task_registry: Option<TaskRegistry>,
     skill_executor: Option<crate::skills::SkillExecutor>,
-    subagent_registry: Option<SubagentRegistry>,
+    subagent_registry: Option<IndexRegistry<SubagentIndex>>,
     policy: Option<PermissionPolicy>,
     sandbox_config: Option<crate::security::SandboxConfig>,
     tool_state: Option<ToolState>,
@@ -62,7 +63,7 @@ impl<'a> ToolRegistryBuilder<'a> {
         self
     }
 
-    pub fn subagent_registry(mut self, registry: SubagentRegistry) -> Self {
+    pub fn subagent_registry(mut self, registry: IndexRegistry<SubagentIndex>) -> Self {
         self.subagent_registry = Some(registry);
         self
     }

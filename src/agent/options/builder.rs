@@ -30,12 +30,13 @@ use std::time::Duration;
 use crate::auth::{Credential, OAuthConfig};
 use crate::budget::TenantBudgetManager;
 use crate::client::{CloudProvider, FallbackConfig, ModelConfig, ProviderConfig};
-use crate::context::{LeveledMemoryProvider, RuleIndex, SkillIndex};
+use crate::common::IndexRegistry;
+use crate::context::{LeveledMemoryProvider, RuleIndex};
 use crate::hooks::{Hook, HookManager};
 use crate::output_style::OutputStyle;
 use crate::permissions::{PermissionMode, PermissionPolicy, PermissionRule};
-use crate::skills::{SkillDefinition, SkillRegistry};
-use crate::subagents::{SubagentDefinition, SubagentRegistry};
+use crate::skills::SkillIndex;
+use crate::subagents::{SubagentIndex, builtin_subagents};
 use crate::tools::{Tool, ToolAccess};
 
 use crate::agent::config::{AgentConfig, SystemPromptMode};
@@ -55,9 +56,8 @@ pub struct AgentBuilder {
     pub(super) cloud_provider: Option<CloudProvider>,
     pub(super) model_config: Option<ModelConfig>,
     pub(super) provider_config: Option<ProviderConfig>,
-    pub(super) skill_registry: Option<SkillRegistry>,
-    pub(super) subagent_registry: Option<SubagentRegistry>,
-    pub(super) skill_indices: Vec<SkillIndex>,
+    pub(super) skill_registry: Option<IndexRegistry<SkillIndex>>,
+    pub(super) subagent_registry: Option<IndexRegistry<SubagentIndex>>,
     pub(super) rule_indices: Vec<RuleIndex>,
     pub(super) hooks: HookManager,
     pub(super) custom_tools: Vec<Arc<dyn Tool>>,
@@ -660,22 +660,16 @@ impl AgentBuilder {
     // =========================================================================
 
     /// Sets a complete skill registry.
-    pub fn skill_registry(mut self, registry: SkillRegistry) -> Self {
+    pub fn skill_registry(mut self, registry: IndexRegistry<SkillIndex>) -> Self {
         self.skill_registry = Some(registry);
         self
     }
 
-    /// Registers a single skill.
-    pub fn skill(mut self, skill: SkillDefinition) -> Self {
+    /// Registers a single skill index.
+    pub fn skill(mut self, skill: SkillIndex) -> Self {
         self.skill_registry
-            .get_or_insert_with(SkillRegistry::new)
+            .get_or_insert_with(IndexRegistry::new)
             .register(skill);
-        self
-    }
-
-    /// Adds a skill index for skill discovery.
-    pub fn skill_index(mut self, index: SkillIndex) -> Self {
-        self.skill_indices.push(index);
         self
     }
 
@@ -706,15 +700,19 @@ impl AgentBuilder {
     // =========================================================================
 
     /// Sets a complete subagent registry.
-    pub fn subagent_registry(mut self, registry: SubagentRegistry) -> Self {
+    pub fn subagent_registry(mut self, registry: IndexRegistry<SubagentIndex>) -> Self {
         self.subagent_registry = Some(registry);
         self
     }
 
     /// Registers a single subagent.
-    pub fn subagent(mut self, subagent: SubagentDefinition) -> Self {
+    pub fn subagent(mut self, subagent: SubagentIndex) -> Self {
         self.subagent_registry
-            .get_or_insert_with(SubagentRegistry::with_builtins)
+            .get_or_insert_with(|| {
+                let mut registry = IndexRegistry::new();
+                registry.register_all(builtin_subagents());
+                registry
+            })
             .register(subagent);
         self
     }

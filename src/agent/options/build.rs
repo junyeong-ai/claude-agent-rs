@@ -3,7 +3,9 @@
 use std::sync::Arc;
 
 use crate::client::{CloudProvider, ProviderConfig};
-use crate::context::{MemoryProvider, PromptOrchestrator, RulesEngine, StaticContext};
+use crate::common::Index;
+use crate::common::IndexRegistry;
+use crate::context::{MemoryProvider, PromptOrchestrator, RuleIndex, StaticContext};
 use crate::skills::SkillExecutor;
 use crate::tools::{ToolRegistry, ToolSearchConfig, ToolSearchManager};
 
@@ -61,10 +63,10 @@ impl AgentBuilder {
 
     #[cfg(feature = "cli-integration")]
     async fn resolve_output_style(&mut self) -> crate::Result<()> {
-        use crate::common::Provider;
+        use crate::common::{Provider, SourceType};
         use crate::output_style::{
-            ChainOutputStyleProvider, InMemoryOutputStyleProvider, OutputStyleSourceType,
-            builtin_styles, file_output_style_provider,
+            ChainOutputStyleProvider, InMemoryOutputStyleProvider, builtin_styles,
+            file_output_style_provider,
         };
 
         if self.config.prompt.output_style.is_some() {
@@ -78,7 +80,7 @@ impl AgentBuilder {
         let builtins = InMemoryOutputStyleProvider::new()
             .with_items(builtin_styles())
             .with_priority(0)
-            .with_source_type(OutputStyleSourceType::Builtin);
+            .with_source_type(SourceType::Builtin);
 
         let mut chain = ChainOutputStyleProvider::new().with(builtins);
 
@@ -86,14 +88,14 @@ impl AgentBuilder {
             let project = file_output_style_provider()
                 .with_project_path(working_dir)
                 .with_priority(20)
-                .with_source_type(OutputStyleSourceType::Project);
+                .with_source_type(SourceType::Project);
             chain = chain.with(project);
         }
 
         let user = file_output_style_provider()
             .with_user_path()
             .with_priority(10)
-            .with_source_type(OutputStyleSourceType::User);
+            .with_source_type(SourceType::User);
         chain = chain.with(user);
 
         if let Ok(Some(style)) = chain.get(name).await {
@@ -254,35 +256,33 @@ impl AgentBuilder {
             static_context = static_context.with_claude_md(claude_md);
         }
 
-        let skill_indices = std::mem::take(&mut self.skill_indices);
-        if !skill_indices.is_empty() {
+        // Get skill registry for building summary
+        let skill_registry = self.skill_registry.clone().unwrap_or_default();
+
+        if !skill_registry.is_empty() {
             let mut lines = vec!["# Available Skills".to_string()];
-            for skill in &skill_indices {
+            for skill in skill_registry.iter() {
                 lines.push(skill.to_summary_line());
             }
             static_context = static_context.with_skill_summary(lines.join("\n"));
         }
 
-        let mut rules_engine = RulesEngine::new();
+        let mut rule_registry: IndexRegistry<RuleIndex> = IndexRegistry::new();
         if !rule_indices.is_empty() {
             let summary = {
                 let mut lines = vec!["# Available Rules".to_string()];
                 for rule in &rule_indices {
-                    let scope = match &rule.paths {
-                        Some(p) => p.join(", "),
-                        None => "all files".to_string(),
-                    };
-                    lines.push(format!("- {}: applies to {}", rule.name, scope));
+                    lines.push(rule.to_summary_line());
                 }
                 lines.join("\n")
             };
             static_context = static_context.with_rules_summary(summary);
-            rules_engine.add_indices(rule_indices);
+            rule_registry.register_all(rule_indices);
         }
 
         PromptOrchestrator::new(static_context, &self.config.model.primary)
-            .with_rules_engine(rules_engine)
-            .with_skill_indices(skill_indices)
+            .with_rule_registry(rule_registry)
+            .with_skill_registry(skill_registry)
     }
 
     async fn build_tools(&mut self) -> Arc<ToolRegistry> {

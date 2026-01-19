@@ -1,54 +1,83 @@
-//! SkillTool - tool wrapper for skill execution.
+//! SkillTool - tool wrapper for skill execution with progressive disclosure.
 
 use std::sync::Arc;
-use tokio::sync::RwLock;
 
 use async_trait::async_trait;
 use schemars::JsonSchema;
 use serde::Deserialize;
+use tokio::sync::RwLock;
 
-use super::SkillExecutor;
+use super::{SkillExecutor, SkillIndex};
+use crate::common::IndexRegistry;
 use crate::tools::{ExecutionContext, SchemaTool};
 use crate::types::ToolResult;
 
-/// Tool for executing skills
+/// Tool for executing skills with progressive disclosure.
+///
+/// Skills are stored as lightweight indices (metadata only). Full content
+/// is loaded on-demand only when the skill is executed.
 pub struct SkillTool {
     executor: Arc<RwLock<SkillExecutor>>,
 }
 
 impl SkillTool {
-    /// Create a new SkillTool with the given executor
+    /// Create a new SkillTool with the given executor.
     pub fn new(executor: SkillExecutor) -> Self {
         Self {
             executor: Arc::new(RwLock::new(executor)),
         }
     }
 
-    /// Create a SkillTool with default skills
+    /// Create a SkillTool with an empty registry.
     pub fn with_defaults() -> Self {
         Self::new(SkillExecutor::with_defaults())
     }
 
-    /// Get a reference to the executor
+    /// Create a SkillTool with a pre-populated registry.
+    pub fn with_registry(registry: IndexRegistry<SkillIndex>) -> Self {
+        Self::new(SkillExecutor::new(registry))
+    }
+
+    /// Get a reference to the executor.
     pub fn executor(&self) -> &Arc<RwLock<SkillExecutor>> {
         &self.executor
     }
 
-    /// Generate description with available skills list
+    /// Generate description with available skills list.
     ///
     /// This method generates a complete description including the dynamic
     /// `<available_skills>` section. Use this when building system prompts
     /// to give the LLM visibility into registered skills.
+    ///
+    /// The skill list includes only metadata (name, description, tools),
+    /// NOT the full content - this is the progressive disclosure pattern.
     pub async fn description_with_skills(&self) -> String {
         let executor = self.executor.read().await;
-        let skills = executor.list_skills();
+        let registry = executor.registry();
 
-        let skills_section = if skills.is_empty() {
-            "<skill>\n<name>No skills registered</name>\n<description>Register skills using SkillRegistry</description>\n</skill>".to_string()
+        let skills_section = if registry.is_empty() {
+            "<skill>\n<name>No skills registered</name>\n<description>Register skills using IndexRegistry</description>\n</skill>".to_string()
         } else {
-            skills
+            registry
                 .iter()
-                .map(|name| format!("<skill>\n<name>\n{}\n</name>\n</skill>", name))
+                .map(|skill| {
+                    let tools_hint = if skill.allowed_tools.is_empty() {
+                        String::new()
+                    } else {
+                        format!("\n<tools>{}</tools>", skill.allowed_tools.join(", "))
+                    };
+
+                    let args_hint = skill
+                        .argument_hint
+                        .as_ref()
+                        .map(|h| format!("\n<args>{}</args>", h))
+                        .unwrap_or_default();
+
+                    format!(
+                        "<skill>\n<name>{}</name>\n<description>{}</description>{}{}\n</skill>",
+                        skill.name, skill.description, tools_hint, args_hint
+                    )
+                })
                 .collect::<Vec<_>>()
                 .join("\n")
         };
@@ -87,6 +116,18 @@ Important:
 </available_skills>"#,
             skills_section
         )
+    }
+
+    /// Register a skill in the executor's registry.
+    pub async fn register_skill(&self, skill: SkillIndex) {
+        let mut executor = self.executor.write().await;
+        executor.registry_mut().register(skill);
+    }
+
+    /// Register multiple skills.
+    pub async fn register_skills(&self, skills: impl IntoIterator<Item = SkillIndex>) {
+        let mut executor = self.executor.write().await;
+        executor.registry_mut().register_all(skills);
     }
 }
 
@@ -160,7 +201,7 @@ Note: For the full list of available skills, use description_with_skills() metho
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::skills::{SkillDefinition, SkillRegistry};
+    use crate::common::ContentSource;
     use crate::tools::{ExecutionContext, Tool};
     use crate::types::ToolOutput;
 
@@ -168,17 +209,16 @@ mod tests {
         ExecutionContext::default()
     }
 
+    fn test_skill(name: &str, description: &str, content: &str) -> SkillIndex {
+        SkillIndex::new(name, description).with_source(ContentSource::in_memory(content))
+    }
+
     #[tokio::test]
     async fn test_skill_tool_execute() {
-        let mut registry = SkillRegistry::new();
-        registry.register(SkillDefinition::new(
-            "test",
-            "Test skill",
-            "Execute with: $ARGUMENTS",
-        ));
+        let mut registry = IndexRegistry::new();
+        registry.register(test_skill("test", "Test skill", "Execute with: $ARGUMENTS"));
 
-        let executor = SkillExecutor::new(registry);
-        let tool = SkillTool::new(executor);
+        let tool = SkillTool::with_registry(registry);
         let context = test_context();
 
         let result = tool
@@ -199,7 +239,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_skill_tool_not_found() {
-        let tool = SkillTool::new(SkillExecutor::new(SkillRegistry::new()));
+        let tool = SkillTool::with_defaults();
         let context = test_context();
 
         let result = tool
@@ -217,42 +257,53 @@ mod tests {
     #[tokio::test]
     async fn test_skill_tool_with_defaults() {
         let tool = SkillTool::with_defaults();
-
-        // Default registry is empty (no built-in skills)
         let executor = tool.executor.read().await;
         assert!(!executor.has_skill("nonexistent"));
     }
 
     #[tokio::test]
     async fn test_description_with_skills() {
-        let mut registry = SkillRegistry::new();
-        registry.register(SkillDefinition::new(
-            "test-skill",
-            "A test skill",
-            "template",
-        ));
-        registry.register(SkillDefinition::new(
-            "another-skill",
-            "Another skill",
-            "template",
-        ));
+        let mut registry = IndexRegistry::new();
+        registry.register(test_skill("test-skill", "A test skill", "template"));
+        registry.register(test_skill("another-skill", "Another skill", "template"));
 
-        let executor = SkillExecutor::new(registry);
-        let tool = SkillTool::new(executor);
-
+        let tool = SkillTool::with_registry(registry);
         let desc = tool.description_with_skills().await;
 
-        // Should contain skills_instructions tags
         assert!(desc.contains("<skills_instructions>"));
         assert!(desc.contains("</skills_instructions>"));
-
-        // Should contain available_skills section
         assert!(desc.contains("<available_skills>"));
         assert!(desc.contains("</available_skills>"));
-
-        // Should list registered skills
         assert!(desc.contains("test-skill"));
         assert!(desc.contains("another-skill"));
+    }
+
+    #[tokio::test]
+    async fn test_description_with_tools_and_args() {
+        let mut registry = IndexRegistry::new();
+        registry.register(
+            SkillIndex::new("reader", "Read files")
+                .with_source(ContentSource::in_memory("content"))
+                .with_allowed_tools(["Read", "Grep"])
+                .with_argument_hint("<file_path>"),
+        );
+
+        let tool = SkillTool::with_registry(registry);
+        let desc = tool.description_with_skills().await;
+
+        assert!(desc.contains("<tools>Read, Grep</tools>"));
+        assert!(desc.contains("<args><file_path></args>"));
+    }
+
+    #[tokio::test]
+    async fn test_register_skill() {
+        let tool = SkillTool::with_defaults();
+
+        tool.register_skill(test_skill("dynamic", "Dynamic skill", "content"))
+            .await;
+
+        let executor = tool.executor.read().await;
+        assert!(executor.has_skill("dynamic"));
     }
 
     #[test]

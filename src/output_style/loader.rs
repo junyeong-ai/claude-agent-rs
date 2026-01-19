@@ -30,10 +30,10 @@ impl OutputStyleLoader {
         body: String,
         _path: Option<&Path>,
     ) -> OutputStyle {
-        let source = SourceType::from_str_opt(fm.source_type.as_deref());
+        let source_type = SourceType::from_str_opt(fm.source_type.as_deref());
 
         OutputStyle::new(fm.name, fm.description, body)
-            .with_source_type(source)
+            .with_source_type(source_type)
             .with_keep_coding_instructions(fm.keep_coding_instructions)
     }
 }
@@ -56,7 +56,7 @@ impl DocumentLoader<OutputStyle> for OutputStyleLoader {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::output_style::OutputStyleSourceType;
+    use crate::common::SourceType;
 
     #[test]
     fn test_parse_output_style_with_frontmatter() {
@@ -120,6 +120,6 @@ Content here.
         let loader = OutputStyleLoader::new();
         let style = loader.parse_content(content, None).unwrap();
 
-        assert_eq!(style.source_type, OutputStyleSourceType::Builtin);
+        assert_eq!(style.source_type, SourceType::Builtin);
     }
 }

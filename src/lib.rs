@@ -100,11 +100,13 @@ pub use client::{
     ProviderAdapter, ProviderConfig, ProxyConfig, Resilience, ResilienceConfig, RetryConfig,
     TokenValidationError, UploadFileRequest, strict_schema, transform_for_strict,
 };
-pub use common::{Named, Provider, SourceType, ToolRestricted};
+pub use common::{
+    ContentSource, Index, IndexRegistry, LoadedEntry, Named, PathMatched, Provider, SourceType,
+    ToolRestricted,
+};
 pub use context::{
     ContextBuilder, FileMemoryProvider, InMemoryProvider, LeveledMemoryProvider, MemoryContent,
-    MemoryLoader, MemoryProvider, PromptOrchestrator, RoutingStrategy, RuleIndex, SkillIndex,
-    StaticContext,
+    MemoryLoader, MemoryProvider, PromptOrchestrator, RoutingStrategy, RuleIndex, StaticContext,
 };
 pub use hooks::{CommandHook, Hook, HookContext, HookEvent, HookInput, HookManager, HookOutput};
 pub use observability::{
@@ -112,8 +114,7 @@ pub use observability::{
     SpanContext, TracingConfig,
 };
 pub use output_style::{
-    OutputStyle, OutputStyleSourceType, builtin_styles, default_style, explanatory_style,
-    learning_style,
+    OutputStyle, builtin_styles, default_style, explanatory_style, learning_style,
 };
 #[cfg(feature = "cli-integration")]
 pub use output_style::{OutputStyleLoader, SystemPromptGenerator};
@@ -123,18 +124,14 @@ pub use session::{
     SessionError, SessionId, SessionManager, SessionMessage, SessionResult, SessionState,
     ToolState,
 };
-#[cfg(feature = "cli-integration")]
-pub use skills::FileSkillProvider;
 pub use skills::{
-    ChainSkillProvider, CommandLoader, InMemorySkillProvider, SkillDefinition, SkillExecutor,
-    SkillProviderTrait, SkillRegistry, SkillResult, SkillTool, SlashCommand,
-};
-pub use subagents::{
-    ChainSubagentProvider, InMemorySubagentProvider, SubagentDefinition, SubagentProviderTrait,
-    SubagentRegistry, builtin_subagents, find_builtin,
+    SkillExecutor, SkillFrontmatter, SkillIndex, SkillIndexLoader, SkillResult, SkillTool,
+    process_bash_backticks, process_file_references, resolve_markdown_paths, strip_frontmatter,
+    substitute_args,
 };
 #[cfg(feature = "cli-integration")]
-pub use subagents::{FileSubagentProvider, SubagentLoader};
+pub use subagents::{SubagentFrontmatter, SubagentIndexLoader};
+pub use subagents::{SubagentIndex, builtin_subagents, find_builtin};
 pub use tools::{
     ExecutionContext, SchemaTool, Tool, ToolAccess, ToolRegistry, ToolRegistryBuilder,
 };

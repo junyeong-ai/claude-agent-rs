@@ -25,6 +25,9 @@ pub use crate::Credential;
 pub use crate::Client;
 pub use crate::ClientBuilder;
 
+// Common - Index pattern types
+pub use crate::common::{ContentSource, Index, IndexRegistry, Named, SourceType, ToolRestricted};
+
 // Tools
 pub use crate::tools::{ExecutionContext, SchemaTool, Tool, ToolAccess, ToolRegistry};
 pub use crate::types::ToolResult;
@@ -40,9 +43,11 @@ pub use crate::ContextBuilder;
 pub use crate::PromptOrchestrator;
 pub use crate::StaticContext;
 
-// Skills & Subagents
-pub use crate::SkillDefinition;
-pub use crate::SubagentDefinition;
+// Skills
+pub use crate::skills::{SkillExecutor, SkillIndex, SkillResult};
+
+// Subagents
+pub use crate::SubagentIndex;
 
 // Hooks
 pub use crate::Hook;

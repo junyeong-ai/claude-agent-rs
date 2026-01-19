@@ -6,14 +6,14 @@
 use std::path::Path;
 
 use crate::auth::Auth;
-use crate::common::{Named, Provider};
+use crate::common::{IndexRegistry, Named, Provider};
 use crate::config::{Settings, SettingsLoader};
 use crate::context::{LeveledMemoryProvider, MemoryLoader, enterprise_base_path, user_base_path};
 use crate::hooks::CommandHook;
 use crate::output_style::file_output_style_provider;
 use crate::permissions::{PermissionMode, PermissionPolicy};
-use crate::skills::file_skill_provider;
-use crate::subagents::file_subagent_provider;
+use crate::skills::SkillIndexLoader;
+use crate::subagents::{SubagentIndexLoader, builtin_subagents};
 
 use super::builder::AgentBuilder;
 
@@ -171,22 +171,28 @@ impl AgentBuilder {
     }
 
     async fn load_skills_from(&mut self, base: &Path) {
-        let provider = file_skill_provider().with_project_path(base);
-        if let Ok(skills) = provider.load_all().await {
+        let skills_dir = base.join(".claude").join("skills");
+        let loader = SkillIndexLoader::new();
+        if let Ok(skills) = loader.scan_directory(&skills_dir).await {
             for skill in skills {
                 self.skill_registry
-                    .get_or_insert_with(crate::skills::SkillRegistry::new)
+                    .get_or_insert_with(IndexRegistry::new)
                     .register(skill);
             }
         }
     }
 
     async fn load_subagents_from(&mut self, base: &Path) {
-        let provider = file_subagent_provider().with_project_path(base);
-        if let Ok(subagents) = provider.load_all().await {
+        let loader = SubagentIndexLoader::new();
+        let subagents_dir = base.join(".claude").join("subagents");
+        if let Ok(subagents) = loader.scan_directory(&subagents_dir).await {
             for subagent in subagents {
                 self.subagent_registry
-                    .get_or_insert_with(crate::subagents::SubagentRegistry::with_builtins)
+                    .get_or_insert_with(|| {
+                        let mut registry = IndexRegistry::new();
+                        registry.register_all(builtin_subagents());
+                        registry
+                    })
                     .register(subagent);
             }
         }

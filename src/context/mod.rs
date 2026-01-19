@@ -7,7 +7,6 @@ pub mod orchestrator;
 pub mod provider;
 pub mod routing;
 pub mod rule_index;
-pub mod skill_index;
 pub mod static_context;
 
 pub use crate::types::TokenUsage;
@@ -18,9 +17,11 @@ pub use memory_loader::MemoryLoader;
 pub use orchestrator::PromptOrchestrator;
 pub use provider::{FileMemoryProvider, InMemoryProvider, MAX_IMPORT_DEPTH, MemoryProvider};
 pub use routing::RoutingStrategy;
-pub use rule_index::{LoadedRule, RuleIndex, RuleSource, RulesEngine};
-pub use skill_index::{SkillIndex, SkillScope, SkillSource};
+pub use rule_index::RuleIndex;
 pub use static_context::{McpToolMeta, StaticContext};
+
+// Re-export SkillIndex from skills module for convenience
+pub use crate::skills::SkillIndex;
 
 use thiserror::Error;
 

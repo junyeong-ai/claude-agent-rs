@@ -10,27 +10,33 @@ use super::AgentBuilder;
 use super::task_registry::TaskRegistry;
 use crate::auth::Auth;
 use crate::client::CloudProvider;
+use crate::common::{Index, IndexRegistry};
 use crate::hooks::{HookEvent, HookInput};
-use crate::subagents::SubagentRegistry;
+use crate::subagents::{SubagentIndex, builtin_subagents};
 use crate::tools::{ExecutionContext, SchemaTool};
 use crate::types::{Message, ToolResult};
 
 pub struct TaskTool {
     registry: TaskRegistry,
-    subagent_registry: SubagentRegistry,
+    subagent_registry: IndexRegistry<SubagentIndex>,
     max_background_tasks: usize,
 }
 
 impl TaskTool {
     pub fn new(registry: TaskRegistry) -> Self {
+        let mut subagent_registry = IndexRegistry::new();
+        subagent_registry.register_all(builtin_subagents());
         Self {
             registry,
-            subagent_registry: SubagentRegistry::with_builtins(),
+            subagent_registry,
             max_background_tasks: 10,
         }
     }
 
-    pub fn with_subagent_registry(mut self, subagent_registry: SubagentRegistry) -> Self {
+    pub fn with_subagent_registry(
+        mut self,
+        subagent_registry: IndexRegistry<SubagentIndex>,
+    ) -> Self {
         self.subagent_registry = subagent_registry;
         self
     }
@@ -47,18 +53,8 @@ impl TaskTool {
     pub fn description_with_subagents(&self) -> String {
         let subagents_desc = self
             .subagent_registry
-            .items()
-            .map(|subagent| {
-                let tools_str = if subagent.tools.is_empty() {
-                    "*".to_string()
-                } else {
-                    subagent.tools.join(", ")
-                };
-                format!(
-                    "- {}: {} (Tools: {})",
-                    subagent.name, subagent.description, tools_str
-                )
-            })
+            .iter()
+            .map(|subagent| subagent.to_summary_line())
             .collect::<Vec<_>>()
             .join("\n");
 
@@ -432,7 +428,8 @@ mod tests {
     fn test_subagent_registry_integration() {
         use crate::session::MemoryPersistence;
         let registry = TaskRegistry::new(std::sync::Arc::new(MemoryPersistence::new()));
-        let subagent_registry = SubagentRegistry::with_builtins();
+        let mut subagent_registry = IndexRegistry::new();
+        subagent_registry.register_all(builtin_subagents());
 
         assert!(subagent_registry.contains("explore"));
         assert!(subagent_registry.contains("plan"));

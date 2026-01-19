@@ -52,13 +52,13 @@ mod tests {
 
     #[tokio::test]
     async fn test_file_provider() {
-        use crate::output_style::OutputStyleSourceType;
+        use crate::common::SourceType;
 
         let temp = tempfile::tempdir().unwrap();
         let provider = file_output_style_provider()
             .with_path(temp.path())
             .with_priority(5)
-            .with_source_type(OutputStyleSourceType::Project);
+            .with_source_type(SourceType::Project);
 
         assert_eq!(provider.priority(), 5);
         assert_eq!(provider.paths().len(), 1);

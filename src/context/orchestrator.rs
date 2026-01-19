@@ -5,28 +5,27 @@
 //! 2. Context-aware loading (rules based on file path)
 //! 3. On-demand loading (explicit skill/rule requests)
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use tokio::sync::RwLock;
 
-use crate::skills::SkillDefinition;
+use crate::common::{Index, IndexRegistry, LoadedEntry};
+use crate::skills::SkillIndex;
 use crate::types::{DEFAULT_COMPACT_THRESHOLD, TokenUsage, context_window};
 
-use super::rule_index::{LoadedRule, RulesEngine};
-use super::skill_index::SkillIndex;
+use super::rule_index::RuleIndex;
 use super::static_context::StaticContext;
 
 pub struct PromptOrchestrator {
     static_context: StaticContext,
-    skill_indices: Vec<SkillIndex>,
-    rules_engine: Arc<RulesEngine>,
+    skill_registry: IndexRegistry<SkillIndex>,
+    rule_registry: Arc<RwLock<IndexRegistry<RuleIndex>>>,
     model: String,
     current_input_tokens: u64,
     compact_threshold: f32,
     current_file: Option<PathBuf>,
-    active_skills: Arc<RwLock<HashMap<String, SkillDefinition>>>,
     active_rule_names: Arc<RwLock<HashSet<String>>>,
 }
 
@@ -34,24 +33,24 @@ impl PromptOrchestrator {
     pub fn new(static_context: StaticContext, model: &str) -> Self {
         Self {
             static_context,
-            skill_indices: Vec::new(),
-            rules_engine: Arc::new(RulesEngine::new()),
+            skill_registry: IndexRegistry::new(),
+            rule_registry: Arc::new(RwLock::new(IndexRegistry::new())),
             model: model.to_string(),
             current_input_tokens: 0,
             compact_threshold: DEFAULT_COMPACT_THRESHOLD,
             current_file: None,
-            active_skills: Arc::new(RwLock::new(HashMap::new())),
             active_rule_names: Arc::new(RwLock::new(HashSet::new())),
         }
     }
 
-    pub fn with_rules_engine(mut self, engine: RulesEngine) -> Self {
-        self.rules_engine = Arc::new(engine);
+    /// Set the rule registry with pre-populated rules.
+    pub fn with_rule_registry(mut self, registry: IndexRegistry<RuleIndex>) -> Self {
+        self.rule_registry = Arc::new(RwLock::new(registry));
         self
     }
 
-    pub fn with_skill_indices(mut self, indices: Vec<SkillIndex>) -> Self {
-        self.skill_indices = indices;
+    pub fn with_skill_registry(mut self, registry: IndexRegistry<SkillIndex>) -> Self {
+        self.skill_registry = registry;
         self
     }
 
@@ -63,8 +62,15 @@ impl PromptOrchestrator {
         &mut self.static_context
     }
 
-    pub fn rules_engine(&self) -> &RulesEngine {
-        &self.rules_engine
+    /// Get read access to the rule registry.
+    pub async fn rule_registry(
+        &self,
+    ) -> tokio::sync::RwLockReadGuard<'_, IndexRegistry<RuleIndex>> {
+        self.rule_registry.read().await
+    }
+
+    pub fn skill_registry(&self) -> &IndexRegistry<SkillIndex> {
+        &self.skill_registry
     }
 
     pub fn max_tokens(&self) -> u64 {
@@ -101,19 +107,27 @@ impl PromptOrchestrator {
         self.current_file.as_deref()
     }
 
-    pub async fn get_rules_for_current_file(&self) -> Vec<LoadedRule> {
+    /// Get loaded rules for the current file.
+    pub async fn get_rules_for_current_file(&self) -> Vec<LoadedEntry<RuleIndex>> {
         match &self.current_file {
-            Some(path) => self.rules_engine.load_matching(path).await,
+            Some(path) => {
+                let registry = self.rule_registry.read().await;
+                registry.load_matching(path).await
+            }
             None => Vec::new(),
         }
     }
 
-    pub async fn get_rules_for_path(&self, path: &Path) -> Vec<LoadedRule> {
-        self.rules_engine.load_matching(path).await
+    /// Get loaded rules for a specific path.
+    pub async fn get_rules_for_path(&self, path: &Path) -> Vec<LoadedEntry<RuleIndex>> {
+        let registry = self.rule_registry.read().await;
+        registry.load_matching(path).await
     }
 
-    pub async fn activate_rules_for_file(&self, path: &Path) -> Vec<LoadedRule> {
-        let rules = self.rules_engine.load_matching(path).await;
+    /// Activate rules for a file and track their names.
+    pub async fn activate_rules_for_file(&self, path: &Path) -> Vec<LoadedEntry<RuleIndex>> {
+        let registry = self.rule_registry.read().await;
+        let rules = registry.load_matching(path).await;
         let mut active = self.active_rule_names.write().await;
         for rule in &rules {
             active.insert(rule.index.name.clone());
@@ -126,12 +140,14 @@ impl PromptOrchestrator {
         active.iter().cloned().collect()
     }
 
+    /// Build dynamic context for a file path using matching rules.
     pub async fn build_dynamic_context(&self, file_path: Option<&Path>) -> String {
         let Some(path) = file_path else {
             return String::new();
         };
 
-        let rules = self.rules_engine.load_matching(path).await;
+        let registry = self.rule_registry.read().await;
+        let rules = registry.load_matching(path).await;
         if rules.is_empty() {
             return String::new();
         }
@@ -145,58 +161,62 @@ impl PromptOrchestrator {
         parts.join("\n\n")
     }
 
+    /// Find rules matching a path (indices only, no content loading).
+    pub async fn find_matching_rules(&self, path: &Path) -> Vec<RuleIndex> {
+        let registry = self.rule_registry.read().await;
+        registry.find_matching(path).into_iter().cloned().collect()
+    }
+
+    /// Check if any rules match a path.
+    pub async fn has_matching_rules(&self, path: &Path) -> bool {
+        let registry = self.rule_registry.read().await;
+        registry.has_matching(path)
+    }
+
     pub fn find_skills_by_triggers(&self, input: &str) -> Vec<&SkillIndex> {
-        self.skill_indices
+        self.skill_registry
             .iter()
             .filter(|s| s.matches_triggers(input))
             .collect()
     }
 
     pub fn find_skill_by_command(&self, input: &str) -> Option<&SkillIndex> {
-        self.skill_indices.iter().find(|s| s.matches_command(input))
-    }
-
-    pub async fn activate_skill(&self, skill: SkillDefinition) {
-        let mut skills = self.active_skills.write().await;
-        skills.insert(skill.name.clone(), skill);
-    }
-
-    pub async fn deactivate_skill(&self, name: &str) -> bool {
-        let mut skills = self.active_skills.write().await;
-        skills.remove(name).is_some()
-    }
-
-    pub async fn get_active_skill(&self, name: &str) -> Option<SkillDefinition> {
-        let skills = self.active_skills.read().await;
-        skills.get(name).cloned()
-    }
-
-    pub async fn active_skill_names(&self) -> Vec<String> {
-        let skills = self.active_skills.read().await;
-        skills.keys().cloned().collect()
+        self.skill_registry
+            .iter()
+            .find(|s| s.matches_command(input))
     }
 
     pub fn build_skill_summary(&self) -> String {
-        if self.skill_indices.is_empty() {
+        if self.skill_registry.is_empty() {
             return String::new();
         }
 
         let mut lines = vec!["# Available Skills".to_string()];
-        for skill in &self.skill_indices {
+        for skill in self.skill_registry.iter() {
             lines.push(skill.to_summary_line());
         }
         lines.join("\n")
     }
 
-    pub fn build_rules_summary(&self) -> String {
-        self.rules_engine.build_summary()
+    /// Build a summary of all registered rules.
+    pub async fn build_rules_summary(&self) -> String {
+        let registry = self.rule_registry.read().await;
+        if registry.is_empty() {
+            return String::new();
+        }
+
+        let mut lines = vec!["# Available Rules".to_string()];
+        for rule in registry.sorted_by_priority() {
+            lines.push(rule.to_summary_line());
+        }
+        lines.join("\n")
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::context::rule_index::RuleIndex;
+    use crate::common::ContentSource;
 
     #[test]
     fn test_orchestrator_creation() {
@@ -233,23 +253,18 @@ mod tests {
 
     #[tokio::test]
     async fn test_rules_for_path() {
-        let mut engine = RulesEngine::new();
-        engine.add_index(
+        let mut rule_registry = IndexRegistry::new();
+        rule_registry.register(
             RuleIndex::new("rust")
                 .with_paths(vec!["**/*.rs".into()])
-                .with_source(super::super::rule_index::RuleSource::InMemory {
-                    content: "Use snake_case".into(),
-                }),
+                .with_source(ContentSource::in_memory("Use snake_case")),
         );
-        engine.add_index(RuleIndex::new("global").with_source(
-            super::super::rule_index::RuleSource::InMemory {
-                content: "Be helpful".into(),
-            },
-        ));
+        rule_registry
+            .register(RuleIndex::new("global").with_source(ContentSource::in_memory("Be helpful")));
 
         let static_context = StaticContext::new();
-        let orchestrator =
-            PromptOrchestrator::new(static_context, "claude-sonnet-4-5").with_rules_engine(engine);
+        let orchestrator = PromptOrchestrator::new(static_context, "claude-sonnet-4-5")
+            .with_rule_registry(rule_registry);
 
         let rules = orchestrator
             .get_rules_for_path(Path::new("src/lib.rs"))
@@ -259,19 +274,85 @@ mod tests {
         let rules = orchestrator
             .get_rules_for_path(Path::new("src/lib.ts"))
             .await;
-        assert_eq!(rules.len(), 1);
+        assert_eq!(rules.len(), 1); // Only global rule matches
     }
 
     #[tokio::test]
-    async fn test_skill_activation() {
+    async fn test_find_matching_rules() {
+        let mut rule_registry = IndexRegistry::new();
+        rule_registry.register(
+            RuleIndex::new("rust")
+                .with_paths(vec!["**/*.rs".into()])
+                .with_source(ContentSource::in_memory("Rust rules")),
+        );
+
         let static_context = StaticContext::new();
-        let orchestrator = PromptOrchestrator::new(static_context, "claude-sonnet-4-5");
+        let orchestrator = PromptOrchestrator::new(static_context, "claude-sonnet-4-5")
+            .with_rule_registry(rule_registry);
 
-        let skill = SkillDefinition::new("test", "A test skill", "Test content");
-        orchestrator.activate_skill(skill).await;
+        let rules = orchestrator
+            .find_matching_rules(Path::new("src/lib.rs"))
+            .await;
+        assert_eq!(rules.len(), 1);
+        assert_eq!(rules[0].name, "rust");
 
-        assert!(orchestrator.get_active_skill("test").await.is_some());
-        assert!(orchestrator.deactivate_skill("test").await);
-        assert!(orchestrator.get_active_skill("test").await.is_none());
+        assert!(
+            orchestrator
+                .has_matching_rules(Path::new("src/lib.rs"))
+                .await
+        );
+        assert!(
+            !orchestrator
+                .has_matching_rules(Path::new("src/lib.ts"))
+                .await
+        );
+    }
+
+    #[test]
+    fn test_skill_registry_integration() {
+        let static_context = StaticContext::new();
+        let mut skill_registry = IndexRegistry::new();
+        skill_registry.register(
+            SkillIndex::new("test", "A test skill")
+                .with_source(ContentSource::in_memory("Test content")),
+        );
+
+        let orchestrator = PromptOrchestrator::new(static_context, "claude-sonnet-4-5")
+            .with_skill_registry(skill_registry);
+
+        assert!(orchestrator.skill_registry().contains("test"));
+    }
+
+    #[test]
+    fn test_build_skill_summary() {
+        let static_context = StaticContext::new();
+        let mut skill_registry = IndexRegistry::new();
+        skill_registry.register(SkillIndex::new("commit", "Create git commits"));
+        skill_registry.register(SkillIndex::new("review", "Review code"));
+
+        let orchestrator = PromptOrchestrator::new(static_context, "claude-sonnet-4-5")
+            .with_skill_registry(skill_registry);
+
+        let summary = orchestrator.build_skill_summary();
+        assert!(summary.contains("commit"));
+        assert!(summary.contains("review"));
+    }
+
+    #[tokio::test]
+    async fn test_build_rules_summary() {
+        let mut rule_registry = IndexRegistry::new();
+        rule_registry.register(
+            RuleIndex::new("security")
+                .with_description("Security best practices")
+                .with_source(ContentSource::in_memory("content")),
+        );
+
+        let static_context = StaticContext::new();
+        let orchestrator = PromptOrchestrator::new(static_context, "claude-sonnet-4-5")
+            .with_rule_registry(rule_registry);
+
+        let summary = orchestrator.build_rules_summary().await;
+        assert!(summary.contains("security"));
+        assert!(summary.contains("Security best practices"));
     }
 }

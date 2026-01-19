@@ -6,11 +6,12 @@
 use std::path::PathBuf;
 
 use super::{
-    ChainOutputStyleProvider, InMemoryOutputStyleProvider, OutputStyle, OutputStyleSourceType,
-    builtin_styles, default_style, file_output_style_provider,
+    ChainOutputStyleProvider, InMemoryOutputStyleProvider, OutputStyle, builtin_styles,
+    default_style, file_output_style_provider,
 };
 use crate::client::DEFAULT_MODEL;
 use crate::common::Provider;
+use crate::common::SourceType;
 use crate::prompts::{
     base::{BASE_SYSTEM_PROMPT, TOOL_USAGE_POLICY},
     coding,
@@ -126,7 +127,7 @@ impl SystemPromptGenerator {
         let builtins = InMemoryOutputStyleProvider::new()
             .with_items(builtin_styles())
             .with_priority(0)
-            .with_source_type(OutputStyleSourceType::Builtin);
+            .with_source_type(SourceType::Builtin);
 
         let mut chain = ChainOutputStyleProvider::new().with(builtins);
 
@@ -134,14 +135,14 @@ impl SystemPromptGenerator {
             let project = file_output_style_provider()
                 .with_project_path(working_dir)
                 .with_priority(20)
-                .with_source_type(OutputStyleSourceType::Project);
+                .with_source_type(SourceType::Project);
             chain = chain.with(project);
         }
 
         let user = file_output_style_provider()
             .with_user_path()
             .with_priority(10)
-            .with_source_type(OutputStyleSourceType::User);
+            .with_source_type(SourceType::User);
         chain = chain.with(user);
 
         if let Some(style) = chain.get(name).await? {
@@ -265,7 +266,7 @@ fn derive_model_name(model_id: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::output_style::OutputStyleSourceType;
+    use crate::output_style::SourceType;
 
     #[test]
     fn test_generator_default_no_cli_identity() {
@@ -290,7 +291,7 @@ mod tests {
     #[test]
     fn test_generator_with_custom_style_keep_coding() {
         let style = OutputStyle::new("test", "Test style", "Custom instructions here")
-            .with_source_type(OutputStyleSourceType::User)
+            .with_source_type(SourceType::User)
             .with_keep_coding_instructions(true);
 
         let prompt = SystemPromptGenerator::with_cli_identity()
@@ -306,7 +307,7 @@ mod tests {
     #[test]
     fn test_generator_with_custom_style_no_coding() {
         let style = OutputStyle::new("concise", "Be concise", "Keep responses short.")
-            .with_source_type(OutputStyleSourceType::User)
+            .with_source_type(SourceType::User)
             .with_keep_coding_instructions(false);
 
         let prompt = SystemPromptGenerator::with_cli_identity()

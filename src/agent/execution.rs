@@ -495,7 +495,7 @@ pub(crate) async fn activate_rules_for_file(
 ) -> Vec<String> {
     let orch = orchestrator.read().await;
     let path = Path::new(file_path);
-    let rules = orch.rules_engine().find_matching(path);
+    let rules = orch.find_matching_rules(path).await;
     rules.iter().map(|r| r.name.clone()).collect()
 }
 

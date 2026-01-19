@@ -1,12 +1,15 @@
 //! Built-in subagent definitions.
 
-use super::{SubagentDefinition, SubagentSourceType};
+use super::SubagentIndex;
 use crate::client::ModelType;
+use crate::common::{ContentSource, SourceType};
 
-pub fn explore_subagent() -> SubagentDefinition {
-    SubagentDefinition::new(
+pub fn explore_subagent() -> SubagentIndex {
+    SubagentIndex::new(
         "explore",
         "Fast agent for exploring codebases and searching code",
+    )
+    .with_source(ContentSource::in_memory(
         r#"You are an Explore agent specialized for investigating codebases.
 
 Your task is to quickly find relevant information through:
@@ -15,16 +18,18 @@ Your task is to quickly find relevant information through:
 - File reading with Read
 
 Be thorough but efficient. Return a concise summary of your findings."#,
-    )
-    .with_source_type(SubagentSourceType::Builtin)
+    ))
+    .with_source_type(SourceType::Builtin)
     .with_tools(["Read", "Grep", "Glob", "Bash"])
     .with_model_type(ModelType::Small)
 }
 
-pub fn plan_subagent() -> SubagentDefinition {
-    SubagentDefinition::new(
+pub fn plan_subagent() -> SubagentIndex {
+    SubagentIndex::new(
         "plan",
         "Software architect agent for designing implementation plans",
+    )
+    .with_source(ContentSource::in_memory(
         r#"You are a Plan agent for designing implementation strategies.
 
 Your task is to:
@@ -34,15 +39,17 @@ Your task is to:
 4. Identify potential issues and trade-offs
 
 Present your plan clearly with numbered steps."#,
-    )
-    .with_source_type(SubagentSourceType::Builtin)
+    ))
+    .with_source_type(SourceType::Builtin)
     .with_model_type(ModelType::Primary)
 }
 
-pub fn general_subagent() -> SubagentDefinition {
-    SubagentDefinition::new(
+pub fn general_subagent() -> SubagentIndex {
+    SubagentIndex::new(
         "general",
         "General-purpose agent for complex, multi-step tasks",
+    )
+    .with_source(ContentSource::in_memory(
         r#"You are a general-purpose agent capable of handling complex tasks.
 
 You can:
@@ -52,16 +59,16 @@ You can:
 - Implement features and fix bugs
 
 Work autonomously and return results when complete."#,
-    )
-    .with_source_type(SubagentSourceType::Builtin)
+    ))
+    .with_source_type(SourceType::Builtin)
     .with_model_type(ModelType::Primary)
 }
 
-pub fn builtin_subagents() -> Vec<SubagentDefinition> {
+pub fn builtin_subagents() -> Vec<SubagentIndex> {
     vec![explore_subagent(), plan_subagent(), general_subagent()]
 }
 
-pub fn find_builtin(name: &str) -> Option<SubagentDefinition> {
+pub fn find_builtin(name: &str) -> Option<SubagentIndex> {
     match name {
         "explore" => Some(explore_subagent()),
         "plan" => Some(plan_subagent()),

@@ -14,13 +14,12 @@ pub use provider::InMemoryOutputStyleProvider;
 #[cfg(feature = "cli-integration")]
 pub use provider::{ChainOutputStyleProvider, FileOutputStyleProvider, file_output_style_provider};
 
+use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 
 #[cfg(feature = "cli-integration")]
 use crate::common::Provider;
-use crate::common::{BaseRegistry, Named, RegistryItem, SourceType};
-
-pub use crate::common::SourceType as OutputStyleSourceType;
+use crate::common::{ContentSource, Index, IndexRegistry, Named, SourceType};
 
 /// Definition of an output style.
 ///
@@ -31,9 +30,13 @@ pub use crate::common::SourceType as OutputStyleSourceType;
 pub struct OutputStyle {
     pub name: String,
     pub description: String,
+    /// The prompt content for this style.
     pub prompt: String,
-    #[serde(default, alias = "source")]
-    pub source_type: OutputStyleSourceType,
+    /// Content source for lazy loading (optional, defaults to InMemory from prompt).
+    #[serde(default)]
+    pub source: ContentSource,
+    #[serde(default)]
+    pub source_type: SourceType,
     #[serde(default, rename = "keep-coding-instructions")]
     pub keep_coding_instructions: bool,
 }
@@ -48,16 +51,18 @@ impl OutputStyle {
         description: impl Into<String>,
         prompt: impl Into<String>,
     ) -> Self {
+        let prompt_str = prompt.into();
         Self {
             name: name.into(),
             description: description.into(),
-            prompt: prompt.into(),
-            source_type: OutputStyleSourceType::default(),
+            source: ContentSource::in_memory(&prompt_str),
+            prompt: prompt_str,
+            source_type: SourceType::default(),
             keep_coding_instructions: true,
         }
     }
 
-    pub fn with_source_type(mut self, source_type: OutputStyleSourceType) -> Self {
+    pub fn with_source_type(mut self, source_type: SourceType) -> Self {
         self.source_type = source_type;
         self
     }
@@ -78,14 +83,28 @@ impl Named for OutputStyle {
     }
 }
 
-impl RegistryItem for OutputStyle {
+#[async_trait]
+impl Index for OutputStyle {
+    fn source(&self) -> &ContentSource {
+        &self.source
+    }
+
     fn source_type(&self) -> SourceType {
         self.source_type
     }
+
+    fn to_summary_line(&self) -> String {
+        format!("- {}: {}", self.name, self.description)
+    }
+
+    fn description(&self) -> &str {
+        &self.description
+    }
 }
 
+/// Registry for output styles.
 #[cfg(feature = "cli-integration")]
-pub type OutputStyleRegistry = BaseRegistry<OutputStyle, OutputStyleLoader>;
+pub type OutputStyleRegistry = IndexRegistry<OutputStyle>;
 
 #[cfg(feature = "cli-integration")]
 impl OutputStyleRegistry {
@@ -143,7 +162,7 @@ mod tests {
         assert_eq!(style.name, "test");
         assert_eq!(style.description, "A test style");
         assert_eq!(style.prompt, "Test prompt");
-        assert_eq!(style.source_type, OutputStyleSourceType::User);
+        assert_eq!(style.source_type, SourceType::User);
         // Default is now true for consistency with CompactStrategy
         assert!(style.keep_coding_instructions);
     }
@@ -151,10 +170,10 @@ mod tests {
     #[test]
     fn test_output_style_builder() {
         let style = OutputStyle::new("custom", "Custom style", "Custom prompt")
-            .with_source_type(OutputStyleSourceType::Project)
+            .with_source_type(SourceType::Project)
             .with_keep_coding_instructions(true);
 
-        assert_eq!(style.source_type, OutputStyleSourceType::Project);
+        assert_eq!(style.source_type, SourceType::Project);
         assert!(style.keep_coding_instructions);
     }
 
@@ -169,9 +188,9 @@ mod tests {
 
     #[test]
     fn test_source_type_display() {
-        assert_eq!(OutputStyleSourceType::Builtin.to_string(), "builtin");
-        assert_eq!(OutputStyleSourceType::User.to_string(), "user");
-        assert_eq!(OutputStyleSourceType::Project.to_string(), "project");
-        assert_eq!(OutputStyleSourceType::Managed.to_string(), "managed");
+        assert_eq!(SourceType::Builtin.to_string(), "builtin");
+        assert_eq!(SourceType::User.to_string(), "user");
+        assert_eq!(SourceType::Project.to_string(), "project");
+        assert_eq!(SourceType::Managed.to_string(), "managed");
     }
 }

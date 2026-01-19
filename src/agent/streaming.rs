@@ -582,8 +582,7 @@ impl StreamState {
         {
             let orch = orchestrator.read().await;
             let path = Path::new(&file_path);
-            let rules = orch.rules_engine().find_matching(path);
-            if !rules.is_empty() {
+            if orch.has_matching_rules(path).await {
                 let dynamic_ctx = orch.build_dynamic_context(Some(path)).await;
                 if !dynamic_ctx.is_empty() {
                     self.dynamic_rules = dynamic_ctx;

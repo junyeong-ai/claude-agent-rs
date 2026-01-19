@@ -3,20 +3,18 @@
 //! These are the standard output styles that come bundled with the SDK,
 //! matching the built-in styles from Claude Code.
 
-use super::{OutputStyle, OutputStyleSourceType};
+use crate::common::SourceType;
+
+use super::OutputStyle;
 
 /// Default output style.
 ///
 /// Standard software engineering mode with full coding instructions.
 /// This is a null/passthrough style that doesn't modify the default behavior.
 pub fn default_style() -> OutputStyle {
-    OutputStyle {
-        name: "default".to_string(),
-        description: "Standard mode with full coding instructions".to_string(),
-        prompt: String::new(),
-        source_type: OutputStyleSourceType::Builtin,
-        keep_coding_instructions: true,
-    }
+    OutputStyle::new("default", "Standard mode with full coding instructions", "")
+        .with_source_type(SourceType::Builtin)
+        .with_keep_coding_instructions(true)
 }
 
 /// Explanatory output style.
@@ -24,13 +22,13 @@ pub fn default_style() -> OutputStyle {
 /// Adds educational insights between coding tasks to explain
 /// implementation choices and codebase patterns.
 pub fn explanatory_style() -> OutputStyle {
-    OutputStyle {
-        name: "explanatory".to_string(),
-        description: "Educational mode that explains implementation choices".to_string(),
-        prompt: EXPLANATORY_PROMPT.to_string(),
-        source_type: OutputStyleSourceType::Builtin,
-        keep_coding_instructions: true,
-    }
+    OutputStyle::new(
+        "explanatory",
+        "Educational mode that explains implementation choices",
+        EXPLANATORY_PROMPT,
+    )
+    .with_source_type(SourceType::Builtin)
+    .with_keep_coding_instructions(true)
 }
 
 /// Learning output style.
@@ -38,13 +36,13 @@ pub fn explanatory_style() -> OutputStyle {
 /// Collaborative learn-by-doing mode where Claude asks the user
 /// to implement code pieces themselves.
 pub fn learning_style() -> OutputStyle {
-    OutputStyle {
-        name: "learning".to_string(),
-        description: "Interactive learning mode with guided exercises".to_string(),
-        prompt: LEARNING_PROMPT.to_string(),
-        source_type: OutputStyleSourceType::Builtin,
-        keep_coding_instructions: true,
-    }
+    OutputStyle::new(
+        "learning",
+        "Interactive learning mode with guided exercises",
+        LEARNING_PROMPT,
+    )
+    .with_source_type(SourceType::Builtin)
+    .with_keep_coding_instructions(true)
 }
 
 /// Returns all built-in styles.
@@ -158,7 +156,7 @@ mod tests {
         assert_eq!(style.name, "default");
         assert!(style.is_default());
         assert!(style.keep_coding_instructions);
-        assert_eq!(style.source_type, OutputStyleSourceType::Builtin);
+        assert_eq!(style.source_type, SourceType::Builtin);
     }
 
     #[test]
@@ -183,11 +181,7 @@ mod tests {
     fn test_builtin_styles() {
         let styles = builtin_styles();
         assert_eq!(styles.len(), 3);
-        assert!(
-            styles
-                .iter()
-                .all(|s| s.source_type == OutputStyleSourceType::Builtin)
-        );
+        assert!(styles.iter().all(|s| s.source_type == SourceType::Builtin));
     }
 
     #[test]

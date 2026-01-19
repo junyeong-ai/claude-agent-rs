@@ -4,7 +4,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use super::skill_index::SkillIndex;
+use crate::skills::SkillIndex;
 
 /// Strategy for routing user input to skills
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -175,16 +175,16 @@ impl Default for SkillRouter {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::context::skill_index::SkillScope;
+    use crate::common::SourceType;
 
     fn test_skills() -> Vec<SkillIndex> {
         vec![
             SkillIndex::new("commit", "Create a git commit")
-                .with_triggers(vec!["git commit".into(), "commit changes".into()])
-                .with_scope(SkillScope::User),
+                .with_triggers(["git commit", "commit changes"])
+                .with_source_type(SourceType::User),
             SkillIndex::new("review", "Review code changes")
-                .with_triggers(vec!["code review".into(), "review pr".into()])
-                .with_scope(SkillScope::Project),
+                .with_triggers(["code review", "review pr"])
+                .with_source_type(SourceType::Project),
         ]
     }
 

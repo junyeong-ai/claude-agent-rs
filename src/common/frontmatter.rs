@@ -1,10 +1,43 @@
+//! Frontmatter parsing utilities for Progressive Disclosure.
+//!
+//! Provides generic frontmatter parsing for all Index types.
+//! Supports YAML frontmatter delimited by `---` markers.
+
 use serde::de::DeserializeOwned;
 
+/// Parsed document containing frontmatter metadata and body content.
 pub struct ParsedDocument<F> {
     pub frontmatter: F,
     pub body: String,
 }
 
+/// Strip YAML frontmatter from content, returning body only.
+///
+/// This is a lightweight operation that returns a slice (no allocation).
+/// Use when you only need the body content without parsing metadata.
+///
+/// # Examples
+/// ```
+/// use claude_agent::common::strip_frontmatter;
+///
+/// let content = "---\nname: test\n---\nBody content";
+/// assert_eq!(strip_frontmatter(content), "Body content");
+///
+/// let no_frontmatter = "Just content";
+/// assert_eq!(strip_frontmatter(no_frontmatter), "Just content");
+/// ```
+pub fn strip_frontmatter(content: &str) -> &str {
+    if let Some(after_first) = content.strip_prefix("---")
+        && let Some(end_pos) = after_first.find("---")
+    {
+        return after_first[end_pos + 3..].trim_start();
+    }
+    content
+}
+
+/// Parse frontmatter from content, returning structured metadata and body.
+///
+/// Returns an error if frontmatter is missing or malformed.
 pub fn parse_frontmatter<F: DeserializeOwned>(content: &str) -> crate::Result<ParsedDocument<F>> {
     if !content.starts_with("---") {
         return Err(crate::Error::Config(

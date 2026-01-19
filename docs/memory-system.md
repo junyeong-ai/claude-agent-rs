@@ -136,7 +136,8 @@ Rules are loaded recursively from `.claude/rules/`:
 
 ```markdown
 ---
-paths: **/*.rs
+paths:
+  - "**/*.rs"
 priority: 10
 ---
 
@@ -151,8 +152,9 @@ priority: 10
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `paths` | glob | Files this rule applies to |
+| `paths` | array | Glob patterns for matching files (YAML list) |
 | `priority` | number | Higher = loaded first |
+| `description` | string | Rule description (optional) |
 
 ### Progressive Disclosure
 

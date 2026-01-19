@@ -210,8 +210,8 @@ User Request
 |------|----------------|
 | Add tool | Implement `Tool` trait, register in `ToolRegistry` |
 | Add auth provider | Implement `CredentialProvider`, add to chain |
-| Add skill | Create `.md` file or use `SkillDefinition::new()` |
-| Add subagent | Create `.md` file or use `SubagentDefinition::new()` |
+| Add skill | Create `.md` file or use `SkillIndex::new()` |
+| Add subagent | Create `.md` file or use `SubagentIndex::new()` |
 | Add hook | Implement `Hook` trait, register via `HookManager::register()` |
 | Add MCP server | `McpManager::add_server()` with `McpServerConfig` |
 | Custom output style | Create `.claude/output-styles/*.md` |

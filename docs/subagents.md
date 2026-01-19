@@ -76,22 +76,19 @@ Full capability agent for complex tasks.
 ### Programmatic
 
 ```rust
-use claude_agent::SubagentDefinition;
+use claude_agent::{SubagentIndex, ContentSource};
 
-let subagent = SubagentDefinition::new(
-    "code-reviewer",
-    "Specialized code review agent",
-    r#"
+let subagent = SubagentIndex::new("code-reviewer", "Specialized code review agent")
+    .with_source(ContentSource::in_memory(r#"
 You are a code review specialist.
 1. Analyze the code for bugs and security issues
 2. Check coding standards compliance
 3. Suggest improvements
 4. Return a structured review report
-    "#,
-)
-.with_tools(["Read", "Grep", "Glob"])
-.with_model("claude-sonnet-4-20250514")
-.with_permission_mode("plan");
+    "#))
+    .with_allowed_tools(["Read", "Grep", "Glob"])
+    .with_model("claude-sonnet-4-20250514")
+    .with_permission_mode("plan");
 ```
 
 ### File-based
@@ -181,8 +178,9 @@ Resume a previous subagent with context:
 Subagents can limit available tools:
 
 ```rust
-let subagent = SubagentDefinition::new("reader", "Read-only agent", "...")
-    .with_tools(["Read", "Glob", "Grep"]);
+let subagent = SubagentIndex::new("reader", "Read-only agent")
+    .with_source(ContentSource::in_memory("..."))
+    .with_allowed_tools(["Read", "Glob", "Grep"]);
 
 // Write, Bash, etc. are not available
 ```
@@ -204,16 +202,18 @@ Pattern-based restrictions:
 | `default` | Explicit rules required |
 
 ```rust
-let subagent = SubagentDefinition::new("safe-agent", "Safe agent", "...")
+let subagent = SubagentIndex::new("safe-agent", "Safe agent")
+    .with_source(ContentSource::in_memory("..."))
     .with_permission_mode("plan");  // Read-only
 ```
 
 ## Registration
 
 ```rust
-use claude_agent::SubagentRegistry;
+use claude_agent::common::IndexRegistry;
+use claude_agent::subagents::SubagentIndex;
 
-let mut registry = SubagentRegistry::new();
+let mut registry = IndexRegistry::<SubagentIndex>::new();
 registry.register(code_reviewer);
 registry.register(security_auditor);
 

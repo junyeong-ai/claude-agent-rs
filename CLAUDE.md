@@ -1,7 +1,7 @@
 # CLAUDE.md
 
 ## Overview
-Production-ready Rust SDK for Claude API. 1016 tests, zero runtime dependencies.
+Production-ready Rust SDK for Claude API. 1000+ tests, zero runtime dependencies.
 
 ## Commands
 ```bash

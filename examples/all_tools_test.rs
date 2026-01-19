@@ -11,9 +11,10 @@
 
 use claude_agent::ToolOutput;
 use claude_agent::agent::{AgentMetrics, AgentState, TaskOutputTool, TaskRegistry};
+use claude_agent::common::{ContentSource, IndexRegistry};
 use claude_agent::security::SecurityContext;
 use claude_agent::session::{MemoryPersistence, SessionId, SessionState, ToolState};
-use claude_agent::skills::{SkillDefinition, SkillExecutor, SkillRegistry};
+use claude_agent::skills::{SkillExecutor, SkillIndex};
 use claude_agent::tools::{
     BashTool, EditTool, ExecutionContext, GlobTool, GrepTool, KillShellTool, PlanTool,
     ProcessManager, ReadTool, TodoWriteTool, Tool, WriteTool,
@@ -346,19 +347,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("\nSection 4: Skills");
     println!("------------------------------------------------------------------------");
 
-    let mut skill_registry = SkillRegistry::new();
+    let mut skill_registry = IndexRegistry::<SkillIndex>::new();
     skill_registry.register(
-        SkillDefinition::new("calculator", "Math calculator", "Calculate: $ARGUMENTS")
-            .with_trigger("calculate")
-            .with_trigger("math"),
+        SkillIndex::new("calculator", "Math calculator")
+            .with_source(ContentSource::in_memory("Calculate: $ARGUMENTS"))
+            .with_triggers(["calculate", "math"]),
     );
     skill_registry.register(
-        SkillDefinition::new(
-            "greeter",
-            "Greeting generator",
-            "Generate greeting for: $ARGUMENTS",
-        )
-        .with_trigger("greet"),
+        SkillIndex::new("greeter", "Greeting generator")
+            .with_source(ContentSource::in_memory(
+                "Generate greeting for: $ARGUMENTS",
+            ))
+            .with_triggers(["greet"]),
     );
 
     let executor = SkillExecutor::new(skill_registry);

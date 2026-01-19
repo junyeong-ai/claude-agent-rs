@@ -34,23 +34,19 @@ Skills are specialized workflows that activate on-demand for context optimizatio
 ### Programmatic
 
 ```rust
-use claude_agent::SkillDefinition;
+use claude_agent::{SkillIndex, ContentSource};
 
-let skill = SkillDefinition::new(
-    "deploy",
-    "Production deployment workflow",
-    r#"
+let skill = SkillIndex::new("deploy", "Production deployment workflow")
+    .with_source(ContentSource::in_memory(r#"
 Deploy the application to $ARGUMENTS environment:
 1. Run tests
 2. Build artifacts
 3. Deploy to server
 4. Verify health checks
-    "#,
-)
-.with_trigger("deploy")
-.with_trigger("release")
-.with_allowed_tools(["Bash", "Read"])
-.with_model("claude-sonnet-4-20250514");
+    "#))
+    .with_triggers(["deploy", "release"])
+    .with_allowed_tools(["Bash", "Read"])
+    .with_model("claude-sonnet-4-20250514");
 ```
 
 ### File-based
@@ -101,10 +97,9 @@ Use the Skill tool directly:
 Skills can auto-activate based on keywords:
 
 ```rust
-let skill = SkillDefinition::new("deploy", "Deploy", "...")
-    .with_trigger("deploy")
-    .with_trigger("release")
-    .with_trigger("ship");
+let skill = SkillIndex::new("deploy", "Deploy")
+    .with_source(ContentSource::in_memory("..."))
+    .with_triggers(["deploy", "release", "ship"]);
 
 // "deploy to production" → activates deploy skill
 // "ship it" → also activates deploy skill
@@ -175,7 +170,8 @@ Current branch: !`git branch --show-current`
 Skills can limit available tools:
 
 ```rust
-let skill = SkillDefinition::new("reader", "Read-only", "...")
+let skill = SkillIndex::new("reader", "Read-only")
+    .with_source(ContentSource::in_memory("..."))
     .with_allowed_tools(["Read", "Glob", "Grep"]);
 
 // Only Read, Glob, Grep are available during this skill
@@ -194,11 +190,13 @@ Skills can specify a different model:
 
 ```rust
 // Use faster model for simple tasks
-let skill = SkillDefinition::new("quick-check", "Fast check", "...")
+let skill = SkillIndex::new("quick-check", "Fast check")
+    .with_source(ContentSource::in_memory("..."))
     .with_model("claude-haiku-4-5-20251001");
 
 // Use stronger model for complex tasks
-let skill = SkillDefinition::new("architect", "Design", "...")
+let skill = SkillIndex::new("architect", "Design")
+    .with_source(ContentSource::in_memory("..."))
     .with_model("claude-opus-4-5-20251101");
 ```
 
@@ -217,8 +215,8 @@ let agent = Agent::builder()
 Or load from directory:
 
 ```rust
-let loader = SkillLoader::new();
-let skills = loader.load_all(project_dir).await?;
+let loader = SkillIndexLoader::new();
+let skills = loader.scan_directory(&skills_dir).await?;
 
 for skill in skills {
     agent_builder = agent_builder.skill(skill);

@@ -4,17 +4,18 @@
 //! - Permission Modes (BypassPermissions, AcceptEdits, allow_tool, Default)
 //! - Hook System (HookManager, HookEvent, HookOutput)
 //! - Session Manager (create, update, fork, lifecycle, tenant)
-//! - Subagent System (SubagentDefinition, builtin_subagents)
+//! - Subagent System (SubagentIndex, builtin_subagents)
 //!
 //! Run: cargo run --example advanced_test
 
 use async_trait::async_trait;
 use claude_agent::{
     Agent, Auth, Hook, ToolAccess,
+    common::ContentSource,
     hooks::{HookContext, HookEvent, HookInput, HookManager, HookOutput},
     permissions::{PermissionMode, PermissionPolicy},
     session::{SessionConfig, SessionManager, SessionState},
-    subagents::{SubagentDefinition, builtin_subagents},
+    subagents::{SubagentIndex, builtin_subagents},
     types::ContentBlock,
 };
 use std::path::PathBuf;
@@ -81,7 +82,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     println!("\nSection 4: Subagent System");
     println!("------------------------------------------------------------------------");
-    test!("SubagentDefinition", test_subagent_definition());
+    test!("SubagentIndex", test_subagent_definition());
     test!("Builtin subagents", test_builtin_subagents());
     test!("Subagent tool restrictions", test_subagent_tools());
     test!("Subagent model resolution", test_subagent_model());
@@ -517,7 +518,8 @@ async fn test_session_tenant() -> Result<(), String> {
 // =============================================================================
 
 fn test_subagent_definition() -> Result<(), String> {
-    let subagent = SubagentDefinition::new("reviewer", "Code reviewer", "Review the code")
+    let subagent = SubagentIndex::new("reviewer", "Code reviewer")
+        .with_source(ContentSource::in_memory("Review the code"))
         .with_tools(["Read", "Grep", "Glob"])
         .with_model("claude-haiku-4-5-20251001");
 
@@ -527,7 +529,7 @@ fn test_subagent_definition() -> Result<(), String> {
     if subagent.description != "Code reviewer" {
         return Err("Description mismatch".into());
     }
-    if subagent.tools.len() != 3 {
+    if subagent.allowed_tools.len() != 3 {
         return Err("Should have 3 tools".into());
     }
 
@@ -558,7 +560,8 @@ fn test_builtin_subagents() -> Result<(), String> {
 fn test_subagent_tools() -> Result<(), String> {
     use claude_agent::common::ToolRestricted;
 
-    let restricted = SubagentDefinition::new("limited", "Limited agent", "Do limited things")
+    let restricted = SubagentIndex::new("limited", "Limited agent")
+        .with_source(ContentSource::in_memory("Do limited things"))
         .with_tools(["Read", "Grep"]);
 
     if !restricted.has_tool_restrictions() {
@@ -574,7 +577,8 @@ fn test_subagent_tools() -> Result<(), String> {
         return Err("Bash should not be allowed".into());
     }
 
-    let unrestricted = SubagentDefinition::new("general", "General", "Do anything");
+    let unrestricted = SubagentIndex::new("general", "General")
+        .with_source(ContentSource::in_memory("Do anything"));
     if unrestricted.has_tool_restrictions() {
         return Err("Should not have restrictions".into());
     }
@@ -590,19 +594,23 @@ fn test_subagent_model() -> Result<(), String> {
 
     let config = ModelConfig::default();
 
-    let direct =
-        SubagentDefinition::new("direct", "Direct", "Use direct").with_model("custom-model");
+    let direct = SubagentIndex::new("direct", "Direct")
+        .with_source(ContentSource::in_memory("Use direct"))
+        .with_model("custom-model");
     if direct.resolve_model(&config) != "custom-model" {
         return Err("Direct model mismatch".into());
     }
 
-    let haiku = SubagentDefinition::new("fast", "Fast", "Be fast").with_model("haiku");
+    let haiku = SubagentIndex::new("fast", "Fast")
+        .with_source(ContentSource::in_memory("Be fast"))
+        .with_model("haiku");
     if !haiku.resolve_model(&config).contains("haiku") {
         return Err("Haiku alias failed".into());
     }
 
-    let typed =
-        SubagentDefinition::new("typed", "Typed", "Use type").with_model_type(ModelType::Small);
+    let typed = SubagentIndex::new("typed", "Typed")
+        .with_source(ContentSource::in_memory("Use type"))
+        .with_model_type(ModelType::Small);
     if !typed.resolve_model(&config).contains("haiku") {
         return Err("ModelType fallback failed".into());
     }

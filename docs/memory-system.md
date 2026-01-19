@@ -169,7 +169,7 @@ Rules implement progressive disclosure:
 ```rust
 use claude_agent::context::MemoryLoader;
 
-let mut loader = MemoryLoader::new();
+let loader = MemoryLoader::new();
 
 // Load everything (CLAUDE.md + CLAUDE.local.md + rules)
 let content = loader.load(&project_dir).await?;

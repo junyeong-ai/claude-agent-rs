@@ -11,12 +11,13 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use claude_agent::{
-    Agent, Auth, Client, ToolAccess, ToolRestricted,
+    Agent, Auth, Client, PathMatched, ToolAccess, ToolRestricted,
     auth::OAuthConfig,
     client::{BetaFeature, CreateMessageRequest, OutputFormat, ProviderConfig},
+    common::{ContentSource, IndexRegistry, SourceType},
     context::{ContextBuilder, MemoryLoader},
     session::{SessionId, ToolState},
-    skills::{SkillDefinition, SkillExecutor, SkillRegistry, SkillSourceType},
+    skills::{SkillExecutor, SkillIndex},
     tools::{
         BashTool, DomainCheck, EditTool, ExecutionContext, GlobTool, GrepTool, NetworkSandbox,
         ProcessManager, ReadTool, TodoWriteTool, Tool, WebFetchTool, WebSearchTool, WriteTool,
@@ -900,17 +901,17 @@ mod skill_system_tests {
 
     #[tokio::test]
     #[ignore = "Live API test"]
-    async fn test_skill_definition() {
-        print_test_header("Skill: Definition");
+    async fn test_skill_index() {
+        print_test_header("Skill: Index");
         let start = Instant::now();
 
-        let skill = SkillDefinition::new("greet", "Greeting skill", "Say hello to: $ARGUMENTS")
-            .with_source_type(SkillSourceType::User)
-            .with_trigger("/greet")
-            .with_trigger("hello");
+        let skill = SkillIndex::new("greet", "Greeting skill")
+            .with_source(ContentSource::in_memory("Say hello to: $ARGUMENTS"))
+            .with_source_type(SourceType::User)
+            .with_triggers(["/greet", "hello"]);
 
         let success =
-            skill.matches_trigger("/greet world") && skill.matches_trigger("say hello please");
+            skill.matches_triggers("/greet world") && skill.matches_triggers("say hello please");
 
         print_result(
             success,
@@ -926,9 +927,11 @@ mod skill_system_tests {
         print_test_header("Skill: Executor");
         let start = Instant::now();
 
-        let mut registry = SkillRegistry::new();
+        let mut registry = IndexRegistry::<SkillIndex>::new();
         registry.register(
-            SkillDefinition::new("echo", "Echo skill", "Echo: $ARGUMENTS").with_trigger("/echo"),
+            SkillIndex::new("echo", "Echo skill")
+                .with_source(ContentSource::in_memory("Echo: $ARGUMENTS"))
+                .with_triggers(["/echo"]),
         );
 
         let executor = SkillExecutor::new(registry);
@@ -951,7 +954,8 @@ mod skill_system_tests {
         print_test_header("Skill: Tool Restrictions");
         let start = Instant::now();
 
-        let skill = SkillDefinition::new("reader", "Read-only skill", "Read files")
+        let skill = SkillIndex::new("reader", "Read-only skill")
+            .with_source(ContentSource::in_memory("Read files"))
             .with_allowed_tools(["Read", "Grep", "Glob"]);
 
         let success = skill.is_tool_allowed("Read")
@@ -973,7 +977,8 @@ mod skill_system_tests {
         print_test_header("Skill: Model Override");
         let start = Instant::now();
 
-        let skill = SkillDefinition::new("fast", "Fast skill", "Quick task")
+        let skill = SkillIndex::new("fast", "Fast skill")
+            .with_source(ContentSource::in_memory("Quick task"))
             .with_model("claude-haiku-4-5-20251001");
 
         let success = skill.model == Some("claude-haiku-4-5-20251001".to_string());

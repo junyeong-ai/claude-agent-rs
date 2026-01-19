@@ -377,8 +377,8 @@ mod context_builder_tests {
         let md = &context.static_context().claude_md;
         assert!(md.contains("Main content"));
 
-        // Rules are loaded as indices in RulesEngine, not in claude_md
-        let summary = context.build_rules_summary();
+        // Rules are loaded as indices in IndexRegistry, not in claude_md
+        let summary = context.build_rules_summary().await;
         assert!(summary.contains("rule1"));
     }
 }
@@ -515,59 +515,54 @@ mod small_model_tests {
 }
 
 // =============================================================================
-// Part 9: Slash Commands Tests
+// Part 9: Skill Index Tests (Progressive Disclosure)
 // =============================================================================
 
-mod slash_commands_tests {
-    use claude_agent::skills::SlashCommand;
-    use std::path::PathBuf;
+mod skill_index_tests {
+    use claude_agent::common::ContentSource;
+    use claude_agent::skills::SkillIndex;
 
     #[test]
-    fn test_slash_command_creation() {
-        let cmd = SlashCommand {
-            name: "commit".to_string(),
-            description: Some("Create a git commit".to_string()),
-            content: "Analyze changes and create commit: $ARGUMENTS".to_string(),
-            location: PathBuf::from(".claude/commands/commit.md"),
-            allowed_tools: vec!["Bash".to_string()],
-            argument_hint: Some("message".to_string()),
-            model: None,
-        };
+    fn test_skill_index_creation() {
+        let skill = SkillIndex::new("commit", "Create a git commit")
+            .with_allowed_tools(["Bash"])
+            .with_argument_hint("message");
 
-        assert_eq!(cmd.name, "commit");
-        assert_eq!(cmd.allowed_tools.len(), 1);
+        assert_eq!(skill.name, "commit");
+        assert_eq!(skill.allowed_tools.len(), 1);
+        assert_eq!(skill.description, "Create a git commit");
     }
 
     #[test]
-    fn test_slash_command_argument_substitution() {
-        let cmd = SlashCommand {
-            name: "test".to_string(),
-            description: None,
-            content: "Fix issue: $ARGUMENTS in the codebase".to_string(),
-            location: PathBuf::from("/test"),
-            allowed_tools: vec![],
-            argument_hint: None,
-            model: None,
-        };
-
-        let result = cmd.execute("login bug");
+    fn test_skill_argument_substitution() {
+        let content = "Fix issue: $ARGUMENTS in the codebase";
+        let result = SkillIndex::substitute_args(content, Some("login bug"));
         assert_eq!(result, "Fix issue: login bug in the codebase");
     }
 
     #[test]
     fn test_multiple_argument_substitution() {
-        let cmd = SlashCommand {
-            name: "test".to_string(),
-            description: None,
-            content: "First: $ARGUMENTS, Second: $ARGUMENTS".to_string(),
-            location: PathBuf::from("/test"),
-            allowed_tools: vec![],
-            argument_hint: None,
-            model: None,
-        };
-
-        let result = cmd.execute("value");
+        let content = "First: $ARGUMENTS, Second: $ARGUMENTS";
+        let result = SkillIndex::substitute_args(content, Some("value"));
         assert_eq!(result, "First: value, Second: value");
+    }
+
+    #[test]
+    fn test_positional_argument_substitution() {
+        let content = "File: $1, Action: $2, All: $ARGUMENTS";
+        let result = SkillIndex::substitute_args(content, Some("main.rs build"));
+        assert_eq!(result, "File: main.rs, Action: build, All: main.rs build");
+    }
+
+    #[test]
+    fn test_skill_index_matching() {
+        let skill = SkillIndex::new("commit", "Create a git commit")
+            .with_source(ContentSource::in_memory("Content"));
+
+        assert!(skill.matches_command("/commit"));
+        assert!(skill.matches_command("/commit -m 'message'"));
+        assert!(!skill.matches_command("/other"));
+        assert!(!skill.matches_command("commit"));
     }
 }
 

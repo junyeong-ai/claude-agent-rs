@@ -10,8 +10,9 @@ use claude_agent::{
     Agent, Auth, Client, ToolAccess, ToolRestricted,
     auth::OAuthConfig,
     client::{BetaFeature, CreateMessageRequest, OutputFormat, ProviderConfig},
+    common::{ContentSource, IndexRegistry},
     context::{ContextBuilder, MemoryLoader},
-    skills::{SkillDefinition, SkillExecutor, SkillRegistry},
+    skills::{SkillExecutor, SkillIndex},
     tools::{
         BashTool, EditTool, ExecutionContext, GlobTool, GrepTool, ProcessManager, ReadTool, Tool,
         WriteTool,
@@ -688,16 +689,16 @@ mod skill_system_tests {
 
     #[tokio::test]
     #[ignore = "Live API test"]
-    async fn test_skill_definition() {
-        println!("\n=== Skill System: Definition ===");
+    async fn test_skill_index() {
+        println!("\n=== Skill System: SkillIndex ===");
 
-        let skill = SkillDefinition::new("greet", "Greeting skill", "Say hello: $ARGUMENTS")
-            .with_trigger("/greet")
-            .with_trigger("hello");
+        let skill = SkillIndex::new("greet", "Greeting skill")
+            .with_source(ContentSource::in_memory("Say hello: $ARGUMENTS"))
+            .with_triggers(["/greet", "hello"]);
 
-        assert!(skill.matches_trigger("/greet world"));
-        assert!(skill.matches_trigger("I want to say hello"));
-        println!("✓ Skill definition verified");
+        assert!(skill.matches_triggers("/greet world"));
+        assert!(skill.matches_triggers("I want to say hello"));
+        println!("✓ Skill index verified");
     }
 
     #[tokio::test]
@@ -705,9 +706,11 @@ mod skill_system_tests {
     async fn test_skill_executor() {
         println!("\n=== Skill System: Executor ===");
 
-        let mut registry = SkillRegistry::new();
+        let mut registry = IndexRegistry::<SkillIndex>::new();
         registry.register(
-            SkillDefinition::new("echo", "Echo skill", "Echo: $ARGUMENTS").with_trigger("/echo"),
+            SkillIndex::new("echo", "Echo skill")
+                .with_source(ContentSource::in_memory("Echo: $ARGUMENTS"))
+                .with_triggers(["/echo"]),
         );
 
         let executor = SkillExecutor::new(registry);
@@ -723,7 +726,8 @@ mod skill_system_tests {
     async fn test_skill_with_allowed_tools() {
         println!("\n=== Skill System: Allowed Tools ===");
 
-        let skill = SkillDefinition::new("read-only", "Read only skill", "Content")
+        let skill = SkillIndex::new("read-only", "Read only skill")
+            .with_source(ContentSource::in_memory("Content"))
             .with_allowed_tools(["Read", "Grep", "Glob"]);
 
         assert!(skill.is_tool_allowed("Read"));
@@ -745,8 +749,9 @@ mod skill_system_tests {
             .expect("CLI credentials failed")
             .oauth_config(OAuthConfig::default())
             .skill(
-                SkillDefinition::new("helper", "Helper skill", "You are a helpful assistant.")
-                    .with_trigger("/help"),
+                SkillIndex::new("helper", "Helper skill")
+                    .with_source(ContentSource::in_memory("You are a helpful assistant."))
+                    .with_triggers(["/help"]),
             )
             .tools(ToolAccess::only(["Skill"]))
             .max_iterations(2)

@@ -777,28 +777,31 @@ mod hook_tests {
 // ============================================================================
 
 mod skill_tests {
-    use claude_agent::skills::{SkillDefinition, SkillRegistry, SkillResult, SkillSourceType};
+    use claude_agent::common::{ContentSource, IndexRegistry, SourceType};
+    use claude_agent::skills::{SkillIndex, SkillResult};
 
-    /// Skill definition verification
+    /// Skill index verification (progressive disclosure pattern)
     #[test]
     fn test_skill_definition() {
-        let skill =
-            SkillDefinition::new("commit", "Create git commit", "Analyze and commit changes")
-                .with_source_type(SkillSourceType::Builtin)
-                .with_trigger("/commit");
+        let skill = SkillIndex::new("commit", "Create git commit")
+            .with_source(ContentSource::in_memory("Analyze and commit changes"))
+            .with_source_type(SourceType::Builtin)
+            .with_triggers(["/commit"]);
 
         assert_eq!(skill.name, "commit");
-        assert!(skill.matches_trigger("/commit please"));
-        assert!(!skill.matches_trigger("just commit"));
+        assert!(skill.matches_triggers("/commit please"));
+        assert!(!skill.matches_triggers("just commit"));
     }
 
-    /// Skill Registry verification
+    /// Skill IndexRegistry verification
     #[test]
     fn test_skill_registry() {
-        let mut registry = SkillRegistry::new();
+        let mut registry = IndexRegistry::<SkillIndex>::new();
 
-        let skill1 = SkillDefinition::new("commit", "Commit", "content1");
-        let skill2 = SkillDefinition::new("review", "Review", "content2");
+        let skill1 =
+            SkillIndex::new("commit", "Commit").with_source(ContentSource::in_memory("content1"));
+        let skill2 =
+            SkillIndex::new("review", "Review").with_source(ContentSource::in_memory("content2"));
 
         registry.register(skill1);
         registry.register(skill2);

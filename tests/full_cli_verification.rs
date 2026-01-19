@@ -12,10 +12,14 @@
 //! Run: cargo test --test full_cli_verification -- --ignored --nocapture
 
 use claude_agent::{
-    Agent, Auth, Client, PermissionPolicy, ToolAccess, ToolOutput,
-    skills::{ExecutionMode, SkillDefinition, SkillExecutor, SkillRegistry, SkillTool},
+    Agent, Auth, Client, Index, PermissionPolicy, ToolAccess, ToolOutput,
+    common::{ContentSource, IndexRegistry},
+    skills::{ExecutionMode, SkillExecutor, SkillIndex, SkillIndexLoader, SkillTool},
     tools::{ExecutionContext, Tool, ToolRegistry},
 };
+
+#[allow(unused_imports)]
+use claude_agent::common::SourceType;
 
 fn permissive_policy() -> PermissionPolicy {
     PermissionPolicy::permissive()
@@ -316,10 +320,11 @@ mod builtin_tools_tests {
     /// Test 8: Skill Tool
     #[tokio::test]
     async fn test_skill_tool() {
-        let mut registry = SkillRegistry::new();
+        let mut registry = IndexRegistry::<SkillIndex>::new();
         registry.register(
-            SkillDefinition::new("test-skill", "Test skill", "Execute: $ARGUMENTS")
-                .with_trigger("test"),
+            SkillIndex::new("test-skill", "Test skill")
+                .with_source(ContentSource::in_memory("Execute: $ARGUMENTS"))
+                .with_triggers(["test"]),
         );
 
         let executor = SkillExecutor::new(registry);
@@ -386,24 +391,24 @@ mod progressive_disclosure_tests {
 
     #[tokio::test]
     async fn test_skill_on_demand_loading() {
-        let mut registry = SkillRegistry::new();
+        let mut registry = IndexRegistry::<SkillIndex>::new();
 
         // Register multiple skills - content not loaded until used
-        registry.register(SkillDefinition::new(
-            "commit",
-            "Git commit helper",
-            "Create a commit with message: $ARGUMENTS\n\nUse git add and git commit.",
+        registry.register(SkillIndex::new("commit", "Git commit helper").with_source(
+            ContentSource::in_memory(
+                "Create a commit with message: $ARGUMENTS\n\nUse git add and git commit.",
+            ),
         ));
-        registry.register(SkillDefinition::new(
-            "deploy",
-            "Deployment helper",
-            "Deploy to environment: $ARGUMENTS\n\nRun deployment scripts.",
+        registry.register(SkillIndex::new("deploy", "Deployment helper").with_source(
+            ContentSource::in_memory(
+                "Deploy to environment: $ARGUMENTS\n\nRun deployment scripts.",
+            ),
         ));
-        registry.register(SkillDefinition::new(
-            "review-pr",
-            "PR review helper",
-            "Review PR: $ARGUMENTS\n\nCheck code quality.",
-        ));
+        registry.register(
+            SkillIndex::new("review-pr", "PR review helper").with_source(ContentSource::in_memory(
+                "Review PR: $ARGUMENTS\n\nCheck code quality.",
+            )),
+        );
 
         let executor = SkillExecutor::new(registry);
 
@@ -424,19 +429,18 @@ mod progressive_disclosure_tests {
 
     #[tokio::test]
     async fn test_trigger_based_skill_activation() {
-        let mut registry = SkillRegistry::new();
+        let mut registry = IndexRegistry::<SkillIndex>::new();
 
         registry.register(
-            SkillDefinition::new("jira-helper", "Jira", "Handle Jira: $ARGUMENTS")
-                .with_trigger("jira")
-                .with_trigger("issue")
-                .with_trigger("ticket"),
+            SkillIndex::new("jira-helper", "Jira")
+                .with_source(ContentSource::in_memory("Handle Jira: $ARGUMENTS"))
+                .with_triggers(["jira", "issue", "ticket"]),
         );
 
         registry.register(
-            SkillDefinition::new("docker-helper", "Docker", "Handle Docker: $ARGUMENTS")
-                .with_trigger("docker")
-                .with_trigger("container"),
+            SkillIndex::new("docker-helper", "Docker")
+                .with_source(ContentSource::in_memory("Handle Docker: $ARGUMENTS"))
+                .with_triggers(["docker", "container"]),
         );
 
         let executor = SkillExecutor::new(registry);
@@ -458,20 +462,18 @@ mod progressive_disclosure_tests {
 
     #[tokio::test]
     async fn test_execution_modes() {
-        let mut registry = SkillRegistry::new();
-        registry.register(SkillDefinition::new(
-            "test-skill",
-            "Test",
-            "Execute: $ARGUMENTS",
-        ));
+        let mut registry = IndexRegistry::<SkillIndex>::new();
+        registry.register(
+            SkillIndex::new("test-skill", "Test")
+                .with_source(ContentSource::in_memory("Execute: $ARGUMENTS")),
+        );
 
         // DryRun mode
-        let mut registry2 = SkillRegistry::new();
-        registry2.register(SkillDefinition::new(
-            "test-skill",
-            "Test",
-            "Execute: $ARGUMENTS",
-        ));
+        let mut registry2 = IndexRegistry::<SkillIndex>::new();
+        registry2.register(
+            SkillIndex::new("test-skill", "Test")
+                .with_source(ContentSource::in_memory("Execute: $ARGUMENTS")),
+        );
         let dry_executor = SkillExecutor::new(registry).with_mode(ExecutionMode::DryRun);
         let dry_result = dry_executor.execute("test-skill", Some("test")).await;
         assert!(dry_result.output.contains("[DRY RUN]"));
@@ -489,15 +491,18 @@ mod progressive_disclosure_tests {
     }
 
     #[tokio::test]
-    async fn test_slash_commands() {
+    async fn test_skill_loading_from_directory() {
         let dir = tempdir().unwrap();
-        let commands_dir = dir.path().join(".claude").join("commands");
-        fs::create_dir_all(&commands_dir).await.unwrap();
+        let skills_dir = dir.path().join(".claude").join("skills");
+        fs::create_dir_all(&skills_dir).await.unwrap();
 
-        // Create slash command with YAML frontmatter
+        // Create skill folder with SKILL.md
+        let build_dir = skills_dir.join("build");
+        fs::create_dir_all(&build_dir).await.unwrap();
         fs::write(
-            commands_dir.join("build.md"),
+            build_dir.join("SKILL.md"),
             r#"---
+name: build
 description: Build the project
 allowed-tools:
   - Bash
@@ -513,24 +518,35 @@ Steps:
         .await
         .unwrap();
 
-        // Create nested command
-        let aws_dir = commands_dir.join("aws");
-        fs::create_dir_all(&aws_dir).await.unwrap();
-        fs::write(aws_dir.join("deploy.md"), "Deploy to AWS: $ARGUMENTS")
-            .await
-            .unwrap();
+        // Create another skill
+        let deploy_dir = skills_dir.join("aws-deploy");
+        fs::create_dir_all(&deploy_dir).await.unwrap();
+        fs::write(
+            deploy_dir.join("SKILL.md"),
+            r#"---
+name: aws-deploy
+description: Deploy to AWS
+---
+Deploy to AWS: $ARGUMENTS"#,
+        )
+        .await
+        .unwrap();
 
-        let mut loader = claude_agent::skills::CommandLoader::new();
-        loader.load(dir.path()).await.unwrap();
+        let loader = SkillIndexLoader::new();
+        let indices = loader.scan_directory(&skills_dir).await.unwrap();
 
-        assert!(loader.exists("build"), "build command should exist");
-        assert!(loader.exists("aws:deploy"), "aws:deploy should exist");
+        let mut registry = IndexRegistry::<SkillIndex>::new();
+        registry.register_all(indices);
 
-        let cmd = loader.get("build").unwrap();
-        let output = cmd.execute("release");
+        assert!(registry.contains("build"), "build skill should exist");
+        assert!(registry.contains("aws-deploy"), "aws-deploy should exist");
+
+        let skill = registry.get("build").unwrap();
+        let content = skill.load_content().await.unwrap();
+        let output = skill.execute("release", &content).await;
         assert!(output.contains("release"));
 
-        println!("Slash commands work correctly");
+        println!("Skill loading works correctly");
     }
 }
 
@@ -713,11 +729,13 @@ mod agent_tools_tests {
             .auth(Auth::ClaudeCli)
             .await
             .expect("Failed to load CLI credentials")
-            .skill(SkillDefinition::new(
-                "math",
-                "Mathematical calculations",
-                "Calculate: $ARGUMENTS. Show work and provide answer.",
-            ))
+            .skill(
+                SkillIndex::new("math", "Mathematical calculations").with_source(
+                    ContentSource::in_memory(
+                        "Calculate: $ARGUMENTS. Show work and provide answer.",
+                    ),
+                ),
+            )
             .tools(ToolAccess::only(["Skill"]))
             .max_iterations(5)
             .build()

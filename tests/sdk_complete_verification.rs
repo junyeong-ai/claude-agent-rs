@@ -9,14 +9,15 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use claude_agent::{
-    Agent, Auth, Client, ToolAccess, ToolOutput, ToolRestricted,
+    Agent, Auth, Client, Index, PathMatched, ToolAccess, ToolOutput, ToolRestricted,
     client::{
         CloudProvider, ContextManagement, CreateMessageRequest, OutputFormat, ThinkingConfig,
     },
-    context::{ContextBuilder, MemoryLoader, RuleIndex, SkillIndex},
+    common::{ContentSource, IndexRegistry},
+    context::{ContextBuilder, MemoryLoader, RuleIndex},
     hooks::{HookEvent, HookOutput},
     session::CompactStrategy,
-    skills::{CommandLoader, SkillDefinition, SkillExecutor, SkillRegistry, SkillTool},
+    skills::{SkillExecutor, SkillIndex, SkillIndexLoader, SkillTool},
     tools::{
         BashTool, EditTool, ExecutionContext, GlobTool, GrepTool, ProcessManager, ReadTool, Tool,
         ToolRegistry, WriteTool,
@@ -528,12 +529,11 @@ mod tool_tests {
 
     #[tokio::test]
     async fn test_skill_tool() {
-        let mut registry = SkillRegistry::new();
-        registry.register(SkillDefinition::new(
-            "test-skill",
-            "Test skill",
-            "Execute: $ARGUMENTS",
-        ));
+        let mut registry = IndexRegistry::<SkillIndex>::new();
+        registry.register(
+            SkillIndex::new("test-skill", "Test skill")
+                .with_source(ContentSource::in_memory("Execute: $ARGUMENTS")),
+        );
 
         let executor = SkillExecutor::new(registry);
         let tool = SkillTool::new(executor);
@@ -645,19 +645,20 @@ mod skills_tests {
     use super::*;
 
     #[test]
-    fn test_skill_definition() {
-        let skill = SkillDefinition::new("test", "Test skill", "Content: $ARGUMENTS")
-            .with_trigger("/test")
-            .with_trigger("test keyword");
+    fn test_skill_index() {
+        let skill = SkillIndex::new("test", "Test skill")
+            .with_source(ContentSource::in_memory("Content: $ARGUMENTS"))
+            .with_triggers(["/test", "test keyword"]);
 
         assert_eq!(skill.name, "test");
-        assert!(skill.matches_trigger("/test please"));
-        assert!(skill.matches_trigger("I want to test keyword this"));
+        assert!(skill.matches_triggers("/test please"));
+        assert!(skill.matches_triggers("I want to test keyword this"));
     }
 
     #[test]
     fn test_skill_allowed_tools() {
-        let skill = SkillDefinition::new("read-only", "Read only", "Content")
+        let skill = SkillIndex::new("read-only", "Read only")
+            .with_source(ContentSource::in_memory("Content"))
             .with_allowed_tools(["Read", "Grep", "Glob"]);
 
         assert!(skill.is_tool_allowed("Read"));
@@ -668,7 +669,8 @@ mod skills_tests {
 
     #[test]
     fn test_skill_model_override() {
-        let skill = SkillDefinition::new("fast", "Fast skill", "Content")
+        let skill = SkillIndex::new("fast", "Fast skill")
+            .with_source(ContentSource::in_memory("Content"))
             .with_model("claude-haiku-4-5-20251001");
 
         assert_eq!(skill.model, Some("claude-haiku-4-5-20251001".to_string()));
@@ -676,10 +678,11 @@ mod skills_tests {
 
     #[tokio::test]
     async fn test_skill_executor() {
-        let mut registry = SkillRegistry::new();
+        let mut registry = IndexRegistry::<SkillIndex>::new();
         registry.register(
-            SkillDefinition::new("math", "Math skill", "Calculate: $ARGUMENTS")
-                .with_trigger("calculate"),
+            SkillIndex::new("math", "Math skill")
+                .with_source(ContentSource::in_memory("Calculate: $ARGUMENTS"))
+                .with_triggers(["calculate"]),
         );
 
         let executor = SkillExecutor::new(registry);
@@ -695,14 +698,18 @@ mod skills_tests {
     }
 
     #[tokio::test]
-    async fn test_command_loader() {
+    async fn test_skill_index_loader() {
+        use claude_agent::Index;
+
         let dir = tempdir().unwrap();
-        let commands = dir.path().join(".claude").join("commands");
-        fs::create_dir_all(&commands).await.unwrap();
+        let skills_dir = dir.path().join(".claude").join("skills");
+        let deploy_dir = skills_dir.join("deploy");
+        fs::create_dir_all(&deploy_dir).await.unwrap();
 
         fs::write(
-            commands.join("deploy.md"),
+            deploy_dir.join("SKILL.md"),
             r#"---
+name: deploy
 description: Deploy app
 allowed-tools:
   - Bash
@@ -712,20 +719,24 @@ Deploy: $ARGUMENTS"#,
         .await
         .unwrap();
 
-        let mut loader = CommandLoader::new();
-        loader.load(dir.path()).await.unwrap();
+        let loader = SkillIndexLoader::new();
+        let indices = loader.scan_directory(&skills_dir).await.unwrap();
 
-        assert!(loader.exists("deploy"));
+        let mut registry = IndexRegistry::<SkillIndex>::new();
+        registry.register_all(indices);
 
-        let cmd = loader.get("deploy").unwrap();
-        let output = cmd.execute("production");
+        assert!(registry.contains("deploy"));
+
+        let skill = registry.get("deploy").unwrap();
+        let content = skill.load_content().await.unwrap();
+        let output = skill.execute("production", &content).await;
         assert!(output.contains("production"));
     }
 
     #[test]
-    fn test_skill_index() {
-        let index = SkillIndex::new("git-commit", "Create commits")
-            .with_triggers(vec!["commit".into(), "git".into()]);
+    fn test_skill_index_command_matching() {
+        let index =
+            SkillIndex::new("git-commit", "Create commits").with_triggers(["commit", "git"]);
 
         assert_eq!(index.name, "git-commit");
         assert!(index.matches_command("/git-commit"));
@@ -951,7 +962,7 @@ mod agent_builder_tests {
             .await
             .expect("CLI credentials failed")
             .oauth_config(OAuthConfig::default())
-            .skill(SkillDefinition::new("test", "Test", "Content"))
+            .skill(SkillIndex::new("test", "Test").with_source(ContentSource::in_memory("Content")))
             .tools(ToolAccess::only(["Skill"]))
             .max_iterations(3)
             .build()

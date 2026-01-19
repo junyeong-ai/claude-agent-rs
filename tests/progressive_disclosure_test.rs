@@ -5,10 +5,9 @@
 //! Run: cargo test --test progressive_disclosure_test -- --nocapture
 
 use claude_agent::{
-    Agent, Auth, ToolAccess, ToolOutput,
-    skills::{
-        CommandLoader, ExecutionMode, SkillDefinition, SkillExecutor, SkillRegistry, SkillTool,
-    },
+    Agent, Auth, Index, ToolAccess, ToolOutput,
+    common::{ContentSource, IndexRegistry},
+    skills::{ExecutionMode, SkillExecutor, SkillIndex, SkillIndexLoader, SkillTool},
     tools::{ExecutionContext, Tool, ToolRegistry},
 };
 use tempfile::tempdir;
@@ -34,11 +33,13 @@ mod skill_tool_tests {
 
     #[tokio::test]
     async fn test_skill_tool_execute_inline() {
-        let mut skill_registry = SkillRegistry::new();
+        let mut skill_registry = IndexRegistry::<SkillIndex>::new();
         skill_registry.register(
-            SkillDefinition::new(
+            SkillIndex::new(
                 "atlassian-cli",
                 "Execute Atlassian CLI commands for Jira/Confluence",
+            )
+            .with_source(ContentSource::in_memory(
                 r#"
 You have access to the atlassian-cli tool. Use Bash to run commands like:
 - `atlassian jira issue list --project $ARGUMENTS`
@@ -47,10 +48,8 @@ You have access to the atlassian-cli tool. Use Bash to run commands like:
 
 Execute the user's request: $ARGUMENTS
 "#,
-            )
-            .with_trigger("jira")
-            .with_trigger("confluence")
-            .with_trigger("atlassian"),
+            ))
+            .with_triggers(["jira", "confluence", "atlassian"]),
         );
 
         let executor = SkillExecutor::new(skill_registry);
@@ -78,22 +77,23 @@ Execute the user's request: $ARGUMENTS
 
     #[tokio::test]
     async fn test_skill_progressive_loading() {
-        let mut skill_registry = SkillRegistry::new();
+        let mut skill_registry = IndexRegistry::<SkillIndex>::new();
 
         // Add multiple skills - only loaded when activated
         skill_registry.register(
-            SkillDefinition::new("commit", "Git commit", "Create commit: $ARGUMENTS")
-                .with_trigger("/commit"),
+            SkillIndex::new("commit", "Git commit")
+                .with_source(ContentSource::in_memory("Create commit: $ARGUMENTS"))
+                .with_triggers(["/commit"]),
         );
         skill_registry.register(
-            SkillDefinition::new("review-pr", "Review PR", "Review PR: $ARGUMENTS")
-                .with_trigger("/review"),
+            SkillIndex::new("review-pr", "Review PR")
+                .with_source(ContentSource::in_memory("Review PR: $ARGUMENTS"))
+                .with_triggers(["/review"]),
         );
-        skill_registry.register(SkillDefinition::new(
-            "datadog-query",
-            "Query Datadog",
-            "Query: $ARGUMENTS",
-        ));
+        skill_registry.register(
+            SkillIndex::new("datadog-query", "Query Datadog")
+                .with_source(ContentSource::in_memory("Query: $ARGUMENTS")),
+        );
 
         let executor = SkillExecutor::new(skill_registry);
 
@@ -110,22 +110,25 @@ Execute the user's request: $ARGUMENTS
 }
 
 // =============================================================================
-// Part 2: Slash Commands Tests
+// Part 2: Skill Index Tests (Progressive Disclosure)
 // =============================================================================
 
-mod slash_command_tests {
+mod skill_index_tests {
     use super::*;
 
     #[tokio::test]
-    async fn test_command_loader_from_directory() {
+    async fn test_skill_loader_from_directory() {
         let dir = tempdir().unwrap();
-        let commands_dir = dir.path().join(".claude").join("commands");
-        fs::create_dir_all(&commands_dir).await.unwrap();
+        let skills_dir = dir.path().join(".claude").join("skills");
+        fs::create_dir_all(&skills_dir).await.unwrap();
 
-        // Create a slash command file
+        // Create a skill directory with SKILL.md
+        let deploy_dir = skills_dir.join("deploy");
+        fs::create_dir_all(&deploy_dir).await.unwrap();
         fs::write(
-            commands_dir.join("deploy.md"),
+            deploy_dir.join("SKILL.md"),
             r#"---
+name: deploy
 description: Deploy the application
 allowed-tools:
   - Bash
@@ -142,27 +145,36 @@ Steps:
         .await
         .unwrap();
 
-        // Create nested command
-        let aws_dir = commands_dir.join("aws");
-        fs::create_dir_all(&aws_dir).await.unwrap();
+        // Create nested skill
+        let lambda_dir = skills_dir.join("aws-lambda");
+        fs::create_dir_all(&lambda_dir).await.unwrap();
         fs::write(
-            aws_dir.join("lambda.md"),
-            r#"Deploy AWS Lambda function: $ARGUMENTS"#,
+            lambda_dir.join("SKILL.md"),
+            r#"---
+name: aws-lambda
+description: Deploy AWS Lambda function
+---
+Deploy AWS Lambda function: $ARGUMENTS"#,
         )
         .await
         .unwrap();
 
-        let mut loader = CommandLoader::new();
-        loader.load(dir.path()).await.unwrap();
+        let loader = SkillIndexLoader::new();
+        let indices = loader.scan_directory(&skills_dir).await.unwrap();
 
-        // Commands should be loaded
-        assert!(loader.exists("deploy"));
-        assert!(loader.exists("aws:lambda"));
+        // Create registry from loaded indices
+        let mut registry = IndexRegistry::<SkillIndex>::new();
+        registry.register_all(indices);
 
-        // Execute command with arguments
-        let cmd = loader.get("deploy").unwrap();
-        let result = cmd.execute("production");
-        println!("Deploy command result:\n{}", result);
+        // Skills should be loaded
+        assert!(registry.contains("deploy"));
+        assert!(registry.contains("aws-lambda"));
+
+        // Execute skill with arguments (uses lazy loading via execute method)
+        let skill = registry.get("deploy").unwrap();
+        let content = skill.load_content().await.unwrap();
+        let result = skill.execute("production", &content).await;
+        println!("Deploy skill result:\n{}", result);
         assert!(result.contains("production"));
     }
 }
@@ -177,12 +189,12 @@ mod cli_integration_tests {
     #[tokio::test]
     async fn test_skill_with_cli_tool_simulation() {
         // Simulate a skill that uses an external CLI tool
-        let mut skill_registry = SkillRegistry::new();
+        let mut skill_registry = IndexRegistry::<SkillIndex>::new();
 
-        skill_registry.register(SkillDefinition::new(
-            "docker-compose",
-            "Manage Docker Compose services",
-            r#"
+        skill_registry.register(
+            SkillIndex::new("docker-compose", "Manage Docker Compose services").with_source(
+                ContentSource::in_memory(
+                    r#"
 You have access to docker-compose. Use Bash to execute:
 
 Available commands:
@@ -195,7 +207,9 @@ User request: $ARGUMENTS
 
 Execute the appropriate docker-compose command using Bash.
 "#,
-        ));
+                ),
+            ),
+        );
 
         let executor = SkillExecutor::new(skill_registry);
         let result = executor
@@ -210,23 +224,18 @@ Execute the appropriate docker-compose command using Bash.
     #[tokio::test]
     async fn test_context_aware_skill_activation() {
         // Test that skills are activated based on context/triggers
-        let mut skill_registry = SkillRegistry::new();
+        let mut skill_registry = IndexRegistry::<SkillIndex>::new();
 
         skill_registry.register(
-            SkillDefinition::new(
-                "rust-analyzer",
-                "Rust code analysis",
-                "Analyze Rust: $ARGUMENTS",
-            )
-            .with_trigger("rust")
-            .with_trigger("cargo"),
+            SkillIndex::new("rust-analyzer", "Rust code analysis")
+                .with_source(ContentSource::in_memory("Analyze Rust: $ARGUMENTS"))
+                .with_triggers(["rust", "cargo"]),
         );
 
         skill_registry.register(
-            SkillDefinition::new("npm-scripts", "NPM script runner", "Run npm: $ARGUMENTS")
-                .with_trigger("npm")
-                .with_trigger("node")
-                .with_trigger("package.json"),
+            SkillIndex::new("npm-scripts", "NPM script runner")
+                .with_source(ContentSource::in_memory("Run npm: $ARGUMENTS"))
+                .with_triggers(["npm", "node", "package.json"]),
         );
 
         let executor = SkillExecutor::new(skill_registry);
@@ -252,8 +261,10 @@ mod execution_mode_tests {
 
     #[tokio::test]
     async fn test_dry_run_mode() {
-        let mut registry = SkillRegistry::new();
-        registry.register(SkillDefinition::new("test", "Test", "Do: $ARGUMENTS"));
+        let mut registry = IndexRegistry::<SkillIndex>::new();
+        registry.register(
+            SkillIndex::new("test", "Test").with_source(ContentSource::in_memory("Do: $ARGUMENTS")),
+        );
 
         let executor = SkillExecutor::new(registry).with_mode(ExecutionMode::DryRun);
         let result = executor.execute("test", Some("something")).await;
@@ -265,12 +276,11 @@ mod execution_mode_tests {
 
     #[tokio::test]
     async fn test_inline_prompt_mode() {
-        let mut registry = SkillRegistry::new();
-        registry.register(SkillDefinition::new(
-            "analyze",
-            "Analyze code",
-            "Analyze: $ARGUMENTS",
-        ));
+        let mut registry = IndexRegistry::<SkillIndex>::new();
+        registry.register(
+            SkillIndex::new("analyze", "Analyze code")
+                .with_source(ContentSource::in_memory("Analyze: $ARGUMENTS")),
+        );
 
         let executor = SkillExecutor::new(registry).with_mode(ExecutionMode::InlinePrompt);
         let result = executor.execute("analyze", Some("main.rs")).await;
@@ -291,7 +301,6 @@ mod execution_mode_tests {
 
 mod live_agent_tests {
     use super::*;
-    use claude_agent::skills::SkillDefinition;
 
     #[tokio::test]
     #[ignore = "Requires CLI credentials"]
@@ -301,11 +310,13 @@ mod live_agent_tests {
             .auth(Auth::ClaudeCli)
             .await
             .expect("Failed to load CLI credentials")
-            .skill(SkillDefinition::new(
-                "math-helper",
-                "Perform mathematical calculations",
-                r#"Calculate: $ARGUMENTS. Show your work and provide the answer."#,
-            ))
+            .skill(
+                SkillIndex::new("math-helper", "Perform mathematical calculations").with_source(
+                    ContentSource::in_memory(
+                        r#"Calculate: $ARGUMENTS. Show your work and provide the answer."#,
+                    ),
+                ),
+            )
             .tools(ToolAccess::only(["Skill"]))
             .max_iterations(5)
             .build()
@@ -333,10 +344,9 @@ mod live_agent_tests {
             .await
             .expect("Failed to load CLI credentials")
             .skill(
-                SkillDefinition::new(
-                    "jira",
-                    "Interact with Jira issues",
-                    r#"
+                SkillIndex::new("jira", "Interact with Jira issues")
+                    .with_source(ContentSource::in_memory(
+                        r#"
 You can interact with Jira using bash commands:
 - List issues: echo "PROJ-123: Fix login bug (Open)"
 - Create issue: echo "Created PROJ-456"
@@ -345,9 +355,8 @@ User request: $ARGUMENTS
 
 Execute the simulated Jira command.
 "#,
-                )
-                .with_trigger("jira")
-                .with_trigger("issue"),
+                    ))
+                    .with_triggers(["jira", "issue"]),
             )
             .tools(ToolAccess::only(["Skill", "Bash"]))
             .max_iterations(5)
@@ -376,21 +385,19 @@ Execute the simulated Jira command.
             .auth(Auth::ClaudeCli)
             .await
             .expect("Failed to load CLI credentials")
-            .skill(SkillDefinition::new(
-                "file-analyzer",
-                "Analyze file contents",
-                "Read and analyze the file: $ARGUMENTS",
-            ))
-            .skill(SkillDefinition::new(
-                "code-reviewer",
-                "Review code for issues",
-                "Review code: $ARGUMENTS",
-            ))
-            .skill(SkillDefinition::new(
-                "docker-helper",
-                "Help with Docker commands",
-                "Docker command: $ARGUMENTS",
-            ))
+            .skill(
+                SkillIndex::new("file-analyzer", "Analyze file contents").with_source(
+                    ContentSource::in_memory("Read and analyze the file: $ARGUMENTS"),
+                ),
+            )
+            .skill(
+                SkillIndex::new("code-reviewer", "Review code for issues")
+                    .with_source(ContentSource::in_memory("Review code: $ARGUMENTS")),
+            )
+            .skill(
+                SkillIndex::new("docker-helper", "Help with Docker commands")
+                    .with_source(ContentSource::in_memory("Docker command: $ARGUMENTS")),
+            )
             .tools(ToolAccess::only(["Skill", "Read"]))
             .working_dir(dir.path())
             .max_iterations(3)

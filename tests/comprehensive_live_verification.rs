@@ -4,11 +4,15 @@
 //! Run: cargo test --test comprehensive_live_verification -- --ignored --nocapture
 
 use claude_agent::{
-    Agent, Auth, Client, ToolAccess,
+    Agent, Auth, Client, Index, ToolAccess,
     client::CloudProvider,
+    common::{ContentSource, IndexRegistry},
     context::{ContextBuilder, MemoryLoader},
-    skills::{CommandLoader, SkillDefinition, SkillExecutor, SkillRegistry},
+    skills::{SkillExecutor, SkillIndex, SkillIndexLoader},
 };
+
+#[allow(unused_imports)]
+use claude_agent::common::SourceType;
 use std::time::Instant;
 use tempfile::tempdir;
 use tokio::fs;
@@ -212,33 +216,29 @@ async fn test_5_skill_registration_and_execution() {
 
     let start = Instant::now();
 
-    let mut registry = SkillRegistry::new();
+    let mut registry = IndexRegistry::<SkillIndex>::new();
 
     // Register multiple skills
     registry.register(
-        SkillDefinition::new(
-            "git-commit",
-            "Create conventional git commits",
-            "Analyze changes and create commit: $ARGUMENTS",
-        )
-        .with_trigger("/commit")
-        .with_trigger("git commit"),
+        SkillIndex::new("git-commit", "Create conventional git commits")
+            .with_source(ContentSource::in_memory(
+                "Analyze changes and create commit: $ARGUMENTS",
+            ))
+            .with_triggers(["/commit", "git commit"]),
     );
 
     registry.register(
-        SkillDefinition::new(
-            "code-review",
-            "Review code for issues",
-            "Review the following code: $ARGUMENTS\n\nCheck for:\n- Bugs\n- Performance\n- Security",
-        )
-        .with_trigger("/review"),
+        SkillIndex::new("code-review", "Review code for issues")
+            .with_source(ContentSource::in_memory(
+                "Review the following code: $ARGUMENTS\n\nCheck for:\n- Bugs\n- Performance\n- Security",
+            ))
+            .with_triggers(["/review"]),
     );
 
-    registry.register(SkillDefinition::new(
-        "docker-compose",
-        "Manage Docker services",
-        "Docker command: $ARGUMENTS",
-    ));
+    registry.register(
+        SkillIndex::new("docker-compose", "Manage Docker services")
+            .with_source(ContentSource::in_memory("Docker command: $ARGUMENTS")),
+    );
 
     let executor = SkillExecutor::new(registry);
 
@@ -277,16 +277,15 @@ async fn test_6_progressive_disclosure_with_agent() {
         .auth(Auth::ClaudeCli)
         .await
         .expect("Failed to load CLI credentials")
-        .skill(SkillDefinition::new(
-            "calculator",
-            "Perform calculations",
-            "Calculate: $ARGUMENTS\n\nProvide step-by-step solution.",
-        ))
-        .skill(SkillDefinition::new(
-            "translator",
-            "Translate text",
-            "Translate to Korean: $ARGUMENTS",
-        ))
+        .skill(
+            SkillIndex::new("calculator", "Perform calculations").with_source(
+                ContentSource::in_memory("Calculate: $ARGUMENTS\n\nProvide step-by-step solution."),
+            ),
+        )
+        .skill(
+            SkillIndex::new("translator", "Translate text")
+                .with_source(ContentSource::in_memory("Translate to Korean: $ARGUMENTS")),
+        )
         .tools(ToolAccess::only(["Skill"]))
         .max_iterations(5)
         .build()
@@ -314,27 +313,30 @@ async fn test_6_progressive_disclosure_with_agent() {
 }
 
 // =============================================================================
-// Part 4: Slash Commands
+// Part 4: Skill Loading
 // =============================================================================
 
 #[tokio::test]
 #[ignore = "Live test"]
-async fn test_7_slash_commands_loading() {
+async fn test_7_skill_loading() {
     println!("\n{}", "=".repeat(60));
-    println!("TEST 7: Slash Commands (.claude/commands/)");
+    println!("TEST 7: Skill Loading (.claude/skills/)");
     println!("{}", "=".repeat(60));
 
     let start = Instant::now();
     let dir = tempdir().unwrap();
 
-    // Create commands directory structure
-    let commands_dir = dir.path().join(".claude").join("commands");
-    fs::create_dir_all(&commands_dir).await.unwrap();
+    // Create skills directory structure
+    let skills_dir = dir.path().join(".claude").join("skills");
+    fs::create_dir_all(&skills_dir).await.unwrap();
 
-    // Create deploy command
+    // Create deploy skill
+    let deploy_dir = skills_dir.join("deploy");
+    fs::create_dir_all(&deploy_dir).await.unwrap();
     fs::write(
-        commands_dir.join("deploy.md"),
+        deploy_dir.join("SKILL.md"),
         r#"---
+name: deploy
 description: Deploy application to environment
 allowed-tools:
   - Bash
@@ -349,37 +351,59 @@ Deploy to $ARGUMENTS environment:
     .await
     .unwrap();
 
-    // Create nested aws commands
-    let aws_dir = commands_dir.join("aws");
-    fs::create_dir_all(&aws_dir).await.unwrap();
-    fs::write(aws_dir.join("lambda.md"), "Deploy Lambda: $ARGUMENTS")
-        .await
-        .unwrap();
-    fs::write(aws_dir.join("s3.md"), "S3 operation: $ARGUMENTS")
-        .await
-        .unwrap();
+    // Create aws-lambda skill
+    let lambda_dir = skills_dir.join("aws-lambda");
+    fs::create_dir_all(&lambda_dir).await.unwrap();
+    fs::write(
+        lambda_dir.join("SKILL.md"),
+        r#"---
+name: aws-lambda
+description: Deploy Lambda
+---
+Deploy Lambda: $ARGUMENTS"#,
+    )
+    .await
+    .unwrap();
 
-    // Load commands
-    let mut loader = CommandLoader::new();
-    loader.load(dir.path()).await.unwrap();
+    // Create aws-s3 skill
+    let s3_dir = skills_dir.join("aws-s3");
+    fs::create_dir_all(&s3_dir).await.unwrap();
+    fs::write(
+        s3_dir.join("SKILL.md"),
+        r#"---
+name: aws-s3
+description: S3 operation
+---
+S3 operation: $ARGUMENTS"#,
+    )
+    .await
+    .unwrap();
 
-    println!("Loaded commands:");
-    for cmd in loader.list() {
-        println!("  - {} : {:?}", cmd.name, cmd.description);
+    // Load skills using progressive disclosure
+    let loader = SkillIndexLoader::new();
+    let indices = loader.scan_directory(&skills_dir).await.unwrap();
+
+    let mut registry = IndexRegistry::<SkillIndex>::new();
+    registry.register_all(indices);
+
+    println!("Loaded skills:");
+    for skill in registry.iter() {
+        println!("  - {} : {}", skill.name, skill.description);
     }
 
-    assert!(loader.exists("deploy"));
-    assert!(loader.exists("aws:lambda"));
-    assert!(loader.exists("aws:s3"));
+    assert!(registry.contains("deploy"));
+    assert!(registry.contains("aws-lambda"));
+    assert!(registry.contains("aws-s3"));
 
-    // Test argument substitution
-    let deploy_cmd = loader.get("deploy").unwrap();
-    let executed = deploy_cmd.execute("production");
-    println!("\nDeploy command output:\n{}", executed);
+    // Test argument substitution with execute
+    let deploy_skill = registry.get("deploy").unwrap();
+    let content = deploy_skill.load_content().await.unwrap();
+    let executed = deploy_skill.execute("production", &content).await;
+    println!("\nDeploy skill output:\n{}", executed);
     assert!(executed.contains("production"));
 
     println!(
-        "\nSlash commands: PASSED ({} ms)",
+        "\nSkill loading: PASSED ({} ms)",
         start.elapsed().as_millis()
     );
 }
@@ -467,11 +491,11 @@ async fn test_9_full_agent_with_tools_and_skills() {
         .auth(Auth::ClaudeCli)
         .await
         .expect("Failed to load CLI credentials")
-        .skill(SkillDefinition::new(
-            "json-analyzer",
-            "Analyze JSON data",
-            "Analyze this JSON and summarize: $ARGUMENTS",
-        ))
+        .skill(
+            SkillIndex::new("json-analyzer", "Analyze JSON data").with_source(
+                ContentSource::in_memory("Analyze this JSON and summarize: $ARGUMENTS"),
+            ),
+        )
         .tools(ToolAccess::only(["Skill", "Read", "Bash"]))
         .working_dir(dir.path())
         .max_iterations(5)

@@ -9,7 +9,7 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use claude_agent::{
-    Agent, Auth, Client, Index, PathMatched, ToolAccess, ToolOutput, ToolRestricted,
+    Agent, Auth, Client, PathMatched, ToolAccess, ToolOutput, ToolRestricted,
     client::{
         CloudProvider, ContextManagement, CreateMessageRequest, OutputFormat, ThinkingConfig,
     },

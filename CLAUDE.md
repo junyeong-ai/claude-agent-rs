@@ -23,6 +23,7 @@ cargo fmt --all -- --check
 src/
 ├── agent/          # AgentBuilder, AgentExecutor, HookManager
 ├── client/         # API client, Provider adapters (Anthropic/Bedrock/Vertex/Foundry)
+├── context/        # MemoryLoader, ImportExtractor, RuleIndex
 ├── security/       # SecureFs, Sandbox, BashAnalyzer
 ├── session/        # Session state, Persistence backends
 ├── tools/          # 12 built-in tools (Read, Write, Bash, etc.)

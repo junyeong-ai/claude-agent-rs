@@ -522,7 +522,7 @@ mod progressive_disclosure_tests {
         assert!(security_rule.matches_path(std::path::Path::new("any/file.txt"))); // Global rule
 
         // Load actual rule files
-        let mut loader = MemoryLoader::new();
+        let loader = MemoryLoader::new();
         let content = loader.load(dir.path()).await.unwrap();
 
         assert_eq!(content.rule_indices.len(), 2);
@@ -805,7 +805,7 @@ mod memory_system_tests {
             .await
             .unwrap();
 
-        let mut loader = MemoryLoader::new();
+        let loader = MemoryLoader::new();
         let content = loader.load(dir.path()).await.unwrap();
 
         println!("CLAUDE.md files: {}", content.claude_md.len());
@@ -842,7 +842,7 @@ mod memory_system_tests {
         .await
         .unwrap();
 
-        let mut loader = MemoryLoader::new();
+        let loader = MemoryLoader::new();
         let content = loader.load(dir.path()).await.unwrap();
 
         assert_eq!(content.rule_indices.len(), 2);

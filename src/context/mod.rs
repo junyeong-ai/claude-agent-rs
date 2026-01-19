@@ -1,6 +1,7 @@
 //! Context management with progressive disclosure for optimal token usage.
 
 pub mod builder;
+pub mod import_extractor;
 pub mod level;
 pub mod memory_loader;
 pub mod orchestrator;
@@ -11,11 +12,11 @@ pub mod static_context;
 
 pub use crate::types::TokenUsage;
 pub use builder::ContextBuilder;
+pub use import_extractor::ImportExtractor;
 pub use level::{LeveledMemoryProvider, enterprise_base_path, user_base_path};
-pub use memory_loader::MemoryContent;
-pub use memory_loader::MemoryLoader;
+pub use memory_loader::{MAX_IMPORT_DEPTH, MemoryContent, MemoryLoader};
 pub use orchestrator::PromptOrchestrator;
-pub use provider::{FileMemoryProvider, InMemoryProvider, MAX_IMPORT_DEPTH, MemoryProvider};
+pub use provider::{FileMemoryProvider, InMemoryProvider, MemoryProvider};
 pub use routing::RoutingStrategy;
 pub use rule_index::RuleIndex;
 pub use static_context::{McpToolMeta, StaticContext};

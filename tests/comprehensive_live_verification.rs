@@ -124,7 +124,7 @@ async fn test_3_claude_md_recursive_loading() {
     .unwrap();
 
     // Load all memory
-    let mut loader = MemoryLoader::new();
+    let loader = MemoryLoader::new();
     let content = loader.load(dir.path()).await.unwrap();
 
     println!("CLAUDE.md files: {}", content.claude_md.len());
@@ -185,7 +185,7 @@ End of file"#,
         .await
         .unwrap();
 
-    let mut loader = MemoryLoader::new();
+    let loader = MemoryLoader::new();
     let content = loader.load(dir.path()).await.unwrap();
     let combined = content.combined_claude_md();
 

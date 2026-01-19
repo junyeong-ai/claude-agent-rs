@@ -91,7 +91,7 @@ impl ContextBuilder {
 
     pub async fn load_from_directory(mut self, dir: impl AsRef<Path>) -> Self {
         let dir = dir.as_ref();
-        let mut loader = MemoryLoader::new();
+        let loader = MemoryLoader::new();
 
         if let Ok(content) = loader.load(dir).await {
             let combined = content.combined_claude_md();

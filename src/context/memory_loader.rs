@@ -1,70 +1,172 @@
-//! CLAUDE.md and CLAUDE.local.md loader with @import support.
+//! CLAUDE.md and CLAUDE.local.md loader with CLI-compatible @import processing.
+//!
+//! This module provides a memory loader that reads CLAUDE.md and CLAUDE.local.md files
+//! with support for recursive @import directives. It implements the same import behavior
+//! as Claude Code CLI 2.1.12.
 
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
-use super::provider::MAX_IMPORT_DEPTH;
+use super::import_extractor::ImportExtractor;
 use super::rule_index::RuleIndex;
 use super::{ContextError, ContextResult};
 
-#[derive(Debug, Default)]
+/// Maximum import depth to prevent infinite recursion (CLI: ZH5 = 5).
+pub const MAX_IMPORT_DEPTH: usize = 5;
+
+/// Memory loader with CLI-compatible @import processing.
+///
+/// # Features
+/// - Loads CLAUDE.md and CLAUDE.local.md from project directories
+/// - Supports recursive @import with depth limiting
+/// - Circular import detection using canonical path tracking
+/// - Scans .claude/rules/ directory for rule files
+///
+/// # CLI Compatibility
+/// This implementation matches Claude Code CLI 2.1.12 behavior:
+/// - Maximum import depth of 5
+/// - Same path validation rules
+/// - Same circular import prevention
 pub struct MemoryLoader {
-    loaded_paths: HashSet<PathBuf>,
-    current_depth: usize,
+    extractor: ImportExtractor,
 }
 
 impl MemoryLoader {
+    /// Creates a new MemoryLoader with CLI-compatible import extraction.
     pub fn new() -> Self {
-        Self::default()
+        Self {
+            extractor: ImportExtractor::new(),
+        }
     }
 
-    /// Loads all memory content (CLAUDE.md + CLAUDE.local.md + rules).
-    pub async fn load(&mut self, start_dir: &Path) -> ContextResult<MemoryContent> {
+    /// Loads all memory content (CLAUDE.md + CLAUDE.local.md + rules) from a directory.
+    ///
+    /// # Arguments
+    /// * `start_dir` - The project root directory to load from
+    ///
+    /// # Returns
+    /// Combined MemoryContent with all loaded files and rules
+    pub async fn load(&self, start_dir: &Path) -> ContextResult<MemoryContent> {
         let mut content = self.load_shared(start_dir).await?;
         let local = self.load_local(start_dir).await?;
         content.merge(local);
         Ok(content)
     }
 
-    /// Loads CLAUDE.md and rules from any resource level (enterprise/user/project).
-    pub async fn load_shared(&mut self, start_dir: &Path) -> ContextResult<MemoryContent> {
+    /// Loads shared CLAUDE.md and rules (visible to all team members).
+    pub async fn load_shared(&self, start_dir: &Path) -> ContextResult<MemoryContent> {
         let mut content = MemoryContent::default();
+        let mut visited = HashSet::new();
 
-        for path in self.find_claude_files(start_dir) {
-            if let Ok(text) = self.load_file_with_imports(&path).await {
-                content.claude_md.push(text);
+        for path in Self::find_claude_files(start_dir) {
+            match self.load_with_imports(&path, 0, &mut visited).await {
+                Ok(text) => content.claude_md.push(text),
+                Err(e) => tracing::debug!("Failed to load {}: {}", path.display(), e),
             }
         }
 
         let rules_dir = start_dir.join(".claude").join("rules");
         if rules_dir.exists() {
-            content.rule_indices = self.scan_rules_directory_recursive(&rules_dir).await?;
+            content.rule_indices = self.scan_rules(&rules_dir).await?;
         }
 
         Ok(content)
     }
 
-    /// Loads CLAUDE.local.md only (project-level private config).
-    pub async fn load_local(&mut self, start_dir: &Path) -> ContextResult<MemoryContent> {
+    /// Loads local CLAUDE.local.md (private to the user, not in version control).
+    pub async fn load_local(&self, start_dir: &Path) -> ContextResult<MemoryContent> {
         let mut content = MemoryContent::default();
+        let mut visited = HashSet::new();
 
-        for path in self.find_local_files(start_dir) {
-            if let Ok(text) = self.load_file_with_imports(&path).await {
-                content.local_md.push(text);
+        for path in Self::find_local_files(start_dir) {
+            match self.load_with_imports(&path, 0, &mut visited).await {
+                Ok(text) => content.local_md.push(text),
+                Err(e) => tracing::debug!("Failed to load {}: {}", path.display(), e),
             }
         }
 
         Ok(content)
     }
 
-    fn find_claude_files(&self, start_dir: &Path) -> Vec<PathBuf> {
+    /// Loads a file with recursive @import expansion.
+    ///
+    /// # Arguments
+    /// * `path` - Path to the file to load
+    /// * `depth` - Current import depth (0 = root)
+    /// * `visited` - Set of canonical paths already loaded (for circular detection)
+    ///
+    /// # Returns
+    /// File content with all imports expanded inline
+    fn load_with_imports<'a>(
+        &'a self,
+        path: &'a Path,
+        depth: usize,
+        visited: &'a mut HashSet<PathBuf>,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = ContextResult<String>> + Send + 'a>>
+    {
+        Box::pin(async move {
+            // Depth limit check (CLI: ZH5 = 5)
+            if depth > MAX_IMPORT_DEPTH {
+                tracing::warn!(
+                    "Import depth limit ({}) exceeded, skipping: {}",
+                    MAX_IMPORT_DEPTH,
+                    path.display()
+                );
+                return Ok(String::new());
+            }
+
+            // Circular import detection using canonical paths
+            let canonical = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
+            if visited.contains(&canonical) {
+                tracing::debug!("Circular import detected, skipping: {}", path.display());
+                return Ok(String::new());
+            }
+            visited.insert(canonical);
+
+            // Read file content
+            let content =
+                tokio::fs::read_to_string(path)
+                    .await
+                    .map_err(|e| ContextError::Source {
+                        message: format!("Failed to read {}: {}", path.display(), e),
+                    })?;
+
+            // Extract and process imports
+            let base_dir = path.parent().unwrap_or(Path::new("."));
+            let imports = self.extractor.extract(&content, base_dir);
+
+            // Build result with imported content appended
+            let mut result = content;
+            for import_path in imports {
+                if import_path.exists() {
+                    if let Ok(imported) = self
+                        .load_with_imports(&import_path, depth + 1, visited)
+                        .await
+                        && !imported.is_empty()
+                    {
+                        result.push_str("\n\n");
+                        result.push_str(&imported);
+                    }
+                } else {
+                    tracing::debug!("Import not found, skipping: {}", import_path.display());
+                }
+            }
+
+            Ok(result)
+        })
+    }
+
+    /// Finds CLAUDE.md files in standard locations.
+    fn find_claude_files(start_dir: &Path) -> Vec<PathBuf> {
         let mut files = Vec::new();
 
+        // Project root CLAUDE.md
         let claude_md = start_dir.join("CLAUDE.md");
         if claude_md.exists() {
             files.push(claude_md);
         }
 
+        // .claude/CLAUDE.md (alternative location)
         let claude_dir_md = start_dir.join(".claude").join("CLAUDE.md");
         if claude_dir_md.exists() {
             files.push(claude_dir_md);
@@ -73,14 +175,17 @@ impl MemoryLoader {
         files
     }
 
-    fn find_local_files(&self, start_dir: &Path) -> Vec<PathBuf> {
+    /// Finds CLAUDE.local.md files in standard locations.
+    fn find_local_files(start_dir: &Path) -> Vec<PathBuf> {
         let mut files = Vec::new();
 
+        // Project root CLAUDE.local.md
         let local_md = start_dir.join("CLAUDE.local.md");
         if local_md.exists() {
             files.push(local_md);
         }
 
+        // .claude/CLAUDE.local.md (alternative location)
         let local_dir_md = start_dir.join(".claude").join("CLAUDE.local.md");
         if local_dir_md.exists() {
             files.push(local_dir_md);
@@ -89,15 +194,20 @@ impl MemoryLoader {
         files
     }
 
-    fn scan_rules_directory_recursive<'a>(
+    /// Scans .claude/rules/ directory recursively for rule files.
+    async fn scan_rules(&self, dir: &Path) -> ContextResult<Vec<RuleIndex>> {
+        let mut indices = Vec::new();
+        self.scan_rules_recursive(dir, &mut indices).await?;
+        indices.sort_by(|a, b| b.priority.cmp(&a.priority));
+        Ok(indices)
+    }
+
+    fn scan_rules_recursive<'a>(
         &'a self,
         dir: &'a Path,
-    ) -> std::pin::Pin<
-        Box<dyn std::future::Future<Output = ContextResult<Vec<RuleIndex>>> + Send + 'a>,
-    > {
+        indices: &'a mut Vec<RuleIndex>,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = ContextResult<()>> + Send + 'a>> {
         Box::pin(async move {
-            let mut indices = Vec::new();
-
             let mut entries = tokio::fs::read_dir(dir)
                 .await
                 .map_err(|e| ContextError::Source {
@@ -115,8 +225,7 @@ impl MemoryLoader {
                 let path = entry.path();
 
                 if path.is_dir() {
-                    let sub_indices = self.scan_rules_directory_recursive(&path).await?;
-                    indices.extend(sub_indices);
+                    self.scan_rules_recursive(&path, indices).await?;
                 } else if path.extension().is_some_and(|e| e == "md")
                     && let Some(index) = RuleIndex::from_file(&path)
                 {
@@ -124,120 +233,30 @@ impl MemoryLoader {
                 }
             }
 
-            indices.sort_by(|a, b| b.priority.cmp(&a.priority));
-            Ok(indices)
-        })
-    }
-
-    fn load_file_with_imports<'a>(
-        &'a mut self,
-        path: &'a Path,
-    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = ContextResult<String>> + Send + 'a>>
-    {
-        Box::pin(async move {
-            if self.current_depth >= MAX_IMPORT_DEPTH {
-                tracing::warn!(
-                    "Import depth limit ({}) reached, skipping: {}",
-                    MAX_IMPORT_DEPTH,
-                    path.display()
-                );
-                return Ok(String::new());
-            }
-
-            let canonical = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
-            if self.loaded_paths.contains(&canonical) {
-                return Ok(String::new());
-            }
-            self.loaded_paths.insert(canonical.clone());
-
-            let content =
-                tokio::fs::read_to_string(path)
-                    .await
-                    .map_err(|e| ContextError::Source {
-                        message: format!("Failed to read {}: {}", path.display(), e),
-                    })?;
-
-            self.current_depth += 1;
-            let result = self
-                .process_imports(&content, path.parent().unwrap_or(Path::new(".")))
-                .await;
-            self.current_depth -= 1;
-
-            result
-        })
-    }
-
-    fn expand_home(path: &str) -> PathBuf {
-        if let Some(rest) = path.strip_prefix("~/")
-            && let Some(home) = crate::common::home_dir()
-        {
-            return home.join(rest);
-        }
-        PathBuf::from(path)
-    }
-
-    fn process_imports<'a>(
-        &'a mut self,
-        content: &'a str,
-        base_dir: &'a Path,
-    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = ContextResult<String>> + Send + 'a>>
-    {
-        Box::pin(async move {
-            let mut result = String::new();
-
-            for line in content.lines() {
-                let trimmed = line.trim();
-
-                if trimmed.starts_with('@') && !trimmed.starts_with("@@") {
-                    let import_path = trimmed.trim_start_matches('@').trim();
-                    if !import_path.is_empty() {
-                        let full_path = if import_path.starts_with("~/") {
-                            Self::expand_home(import_path)
-                        } else if import_path.starts_with('/') {
-                            PathBuf::from(import_path)
-                        } else {
-                            base_dir.join(import_path)
-                        };
-
-                        if full_path.exists() {
-                            match self.load_file_with_imports(&full_path).await {
-                                Ok(imported) => {
-                                    result.push_str(&imported);
-                                    result.push('\n');
-                                }
-                                Err(e) => {
-                                    tracing::warn!("Failed to import {}: {}", import_path, e);
-                                    result.push_str(line);
-                                    result.push('\n');
-                                }
-                            }
-                        } else {
-                            result.push_str(line);
-                            result.push('\n');
-                        }
-                    } else {
-                        result.push_str(line);
-                        result.push('\n');
-                    }
-                } else {
-                    result.push_str(line);
-                    result.push('\n');
-                }
-            }
-
-            Ok(result)
+            Ok(())
         })
     }
 }
 
+impl Default for MemoryLoader {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// Loaded memory content from CLAUDE.md files and rules.
 #[derive(Debug, Default, Clone)]
 pub struct MemoryContent {
+    /// Content from CLAUDE.md files (shared/team config).
     pub claude_md: Vec<String>,
+    /// Content from CLAUDE.local.md files (user-specific config).
     pub local_md: Vec<String>,
+    /// Rule indices from .claude/rules/ directory.
     pub rule_indices: Vec<RuleIndex>,
 }
 
 impl MemoryContent {
+    /// Combines all CLAUDE.md and CLAUDE.local.md content into a single string.
     pub fn combined_claude_md(&self) -> String {
         self.claude_md
             .iter()
@@ -248,10 +267,12 @@ impl MemoryContent {
             .join("\n\n")
     }
 
+    /// Returns true if no content was loaded.
     pub fn is_empty(&self) -> bool {
         self.claude_md.is_empty() && self.local_md.is_empty() && self.rule_indices.is_empty()
     }
 
+    /// Merges another MemoryContent into this one.
     pub fn merge(&mut self, other: MemoryContent) {
         self.claude_md.extend(other.claude_md);
         self.local_md.extend(other.local_md);
@@ -272,7 +293,7 @@ mod tests {
             .await
             .unwrap();
 
-        let mut loader = MemoryLoader::new();
+        let loader = MemoryLoader::new();
         let content = loader.load(dir.path()).await.unwrap();
 
         assert_eq!(content.claude_md.len(), 1);
@@ -286,7 +307,7 @@ mod tests {
             .await
             .unwrap();
 
-        let mut loader = MemoryLoader::new();
+        let loader = MemoryLoader::new();
         let content = loader.load(dir.path()).await.unwrap();
 
         assert_eq!(content.local_md.len(), 1);
@@ -314,7 +335,7 @@ mod tests {
         .await
         .unwrap();
 
-        let mut loader = MemoryLoader::new();
+        let loader = MemoryLoader::new();
         let content = loader.load(dir.path()).await.unwrap();
 
         assert_eq!(content.rule_indices.len(), 2);
@@ -339,7 +360,7 @@ mod tests {
             .await
             .unwrap();
 
-        let mut loader = MemoryLoader::new();
+        let loader = MemoryLoader::new();
         let content = loader.load(dir.path()).await.unwrap();
 
         assert!(content.combined_claude_md().contains("Imported content"));
@@ -355,11 +376,177 @@ mod tests {
             .await
             .unwrap();
 
-        let mut loader = MemoryLoader::new();
+        let loader = MemoryLoader::new();
         let content = loader.load(dir.path()).await.unwrap();
 
         let combined = content.combined_claude_md();
         assert!(combined.contains("Main content"));
         assert!(combined.contains("Local content"));
+    }
+
+    #[tokio::test]
+    async fn test_recursive_import() {
+        let dir = tempdir().unwrap();
+
+        // CLAUDE.md → docs/guide.md → docs/detail.md
+        fs::write(dir.path().join("CLAUDE.md"), "Root content @docs/guide.md")
+            .await
+            .unwrap();
+
+        let docs_dir = dir.path().join("docs");
+        fs::create_dir_all(&docs_dir).await.unwrap();
+        fs::write(docs_dir.join("guide.md"), "Guide content @detail.md")
+            .await
+            .unwrap();
+        fs::write(docs_dir.join("detail.md"), "Detail content")
+            .await
+            .unwrap();
+
+        let loader = MemoryLoader::new();
+        let content = loader.load(dir.path()).await.unwrap();
+        let combined = content.combined_claude_md();
+
+        assert!(combined.contains("Root content"));
+        assert!(combined.contains("Guide content"));
+        assert!(combined.contains("Detail content"));
+    }
+
+    #[tokio::test]
+    async fn test_depth_limit() {
+        let dir = tempdir().unwrap();
+
+        // Create chain: CLAUDE.md → level1.md → level2.md → ... → level6.md
+        // Should stop at level 5 (depth = 5 means 6 files deep: root + 5 imports)
+        fs::write(dir.path().join("CLAUDE.md"), "Level 0 @level1.md")
+            .await
+            .unwrap();
+
+        for i in 1..=6 {
+            let content = if i < 6 {
+                format!("Level {} @level{}.md", i, i + 1)
+            } else {
+                format!("Level {}", i)
+            };
+            fs::write(dir.path().join(format!("level{}.md", i)), content)
+                .await
+                .unwrap();
+        }
+
+        let loader = MemoryLoader::new();
+        let content = loader.load(dir.path()).await.unwrap();
+        let combined = content.combined_claude_md();
+
+        // Should have levels 0-5 but NOT level 6 (depth limit)
+        assert!(combined.contains("Level 0"));
+        assert!(combined.contains("Level 5"));
+        assert!(!combined.contains("Level 6"));
+    }
+
+    #[tokio::test]
+    async fn test_circular_import() {
+        let dir = tempdir().unwrap();
+
+        // CLAUDE.md → a.md → b.md → a.md (circular)
+        fs::write(dir.path().join("CLAUDE.md"), "Root @a.md")
+            .await
+            .unwrap();
+        fs::write(dir.path().join("a.md"), "A content @b.md")
+            .await
+            .unwrap();
+        fs::write(dir.path().join("b.md"), "B content @a.md")
+            .await
+            .unwrap();
+
+        let loader = MemoryLoader::new();
+        let result = loader.load(dir.path()).await;
+
+        // Should not infinite loop and should succeed
+        assert!(result.is_ok());
+        let combined = result.unwrap().combined_claude_md();
+        assert!(combined.contains("A content"));
+        assert!(combined.contains("B content"));
+    }
+
+    #[tokio::test]
+    async fn test_import_in_code_block_ignored() {
+        let dir = tempdir().unwrap();
+
+        fs::write(
+            dir.path().join("CLAUDE.md"),
+            "# Example\n```\n@should/not/import.md\n```\n@should/import.md",
+        )
+        .await
+        .unwrap();
+
+        fs::write(
+            dir.path().join("should").join("import.md"),
+            "This is imported",
+        )
+        .await
+        .ok();
+        let should_dir = dir.path().join("should");
+        fs::create_dir_all(&should_dir).await.unwrap();
+        fs::write(should_dir.join("import.md"), "Imported content")
+            .await
+            .unwrap();
+
+        let loader = MemoryLoader::new();
+        let content = loader.load(dir.path()).await.unwrap();
+        let combined = content.combined_claude_md();
+
+        assert!(combined.contains("Imported content"));
+        // The @should/not/import.md in code block should remain as-is, not be processed
+        assert!(combined.contains("@should/not/import.md"));
+    }
+
+    #[tokio::test]
+    async fn test_missing_import_ignored() {
+        let dir = tempdir().unwrap();
+
+        fs::write(
+            dir.path().join("CLAUDE.md"),
+            "# Main\n@nonexistent/file.md\nRest of content",
+        )
+        .await
+        .unwrap();
+
+        let loader = MemoryLoader::new();
+        let content = loader.load(dir.path()).await.unwrap();
+        let combined = content.combined_claude_md();
+
+        // Should still load the main content even if import doesn't exist
+        assert!(combined.contains("# Main"));
+        assert!(combined.contains("Rest of content"));
+    }
+
+    #[tokio::test]
+    async fn test_empty_content() {
+        let dir = tempdir().unwrap();
+
+        let loader = MemoryLoader::new();
+        let content = loader.load(dir.path()).await.unwrap();
+
+        assert!(content.is_empty());
+        assert!(content.combined_claude_md().is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_memory_content_merge() {
+        let mut content1 = MemoryContent {
+            claude_md: vec!["content1".to_string()],
+            local_md: vec!["local1".to_string()],
+            rule_indices: vec![],
+        };
+
+        let content2 = MemoryContent {
+            claude_md: vec!["content2".to_string()],
+            local_md: vec!["local2".to_string()],
+            rule_indices: vec![],
+        };
+
+        content1.merge(content2);
+
+        assert_eq!(content1.claude_md.len(), 2);
+        assert_eq!(content1.local_md.len(), 2);
     }
 }

@@ -769,7 +769,7 @@ mod memory_system_tests {
         .await
         .unwrap();
 
-        let mut loader = MemoryLoader::new();
+        let loader = MemoryLoader::new();
         let content = loader.load(dir.path()).await;
 
         let success = content.is_ok();
@@ -803,7 +803,7 @@ mod memory_system_tests {
             .await
             .unwrap();
 
-        let mut loader = MemoryLoader::new();
+        let loader = MemoryLoader::new();
         let content = loader.load(dir.path()).await;
 
         let success = content.is_ok();
@@ -844,7 +844,7 @@ mod memory_system_tests {
         .await
         .unwrap();
 
-        let mut loader = MemoryLoader::new();
+        let loader = MemoryLoader::new();
         let content = loader.load(dir.path()).await;
 
         let success = content.is_ok();
@@ -1096,7 +1096,7 @@ mod progressive_disclosure_tests {
             .unwrap();
 
         // Load rules
-        let mut loader = MemoryLoader::new();
+        let loader = MemoryLoader::new();
         let content = loader.load(dir.path()).await.unwrap();
 
         // Check rule matching

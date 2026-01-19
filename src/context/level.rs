@@ -64,10 +64,6 @@ impl MemoryProvider for LeveledMemoryProvider {
         }
         Ok(combined)
     }
-
-    fn priority(&self) -> i32 {
-        100
-    }
 }
 
 pub fn enterprise_base_path() -> Option<PathBuf> {

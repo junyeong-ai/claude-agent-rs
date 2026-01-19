@@ -118,7 +118,7 @@ mod memory_loader_tests {
             .await
             .unwrap();
 
-        let mut loader = MemoryLoader::new();
+        let loader = MemoryLoader::new();
         let content = loader.load(dir.path()).await.unwrap();
 
         assert_eq!(content.claude_md.len(), 1);
@@ -135,7 +135,7 @@ mod memory_loader_tests {
             .await
             .unwrap();
 
-        let mut loader = MemoryLoader::new();
+        let loader = MemoryLoader::new();
         let content = loader.load(dir.path()).await.unwrap();
 
         assert_eq!(content.claude_md.len(), 1);
@@ -164,7 +164,7 @@ mod memory_loader_tests {
         .await
         .unwrap();
 
-        let mut loader = MemoryLoader::new();
+        let loader = MemoryLoader::new();
         let content = loader.load(dir.path()).await.unwrap();
 
         assert_eq!(content.rule_indices.len(), 3);
@@ -201,7 +201,7 @@ mod memory_loader_tests {
         .await
         .unwrap();
 
-        let mut loader = MemoryLoader::new();
+        let loader = MemoryLoader::new();
         let content = loader.load(dir.path()).await.unwrap();
 
         let combined = content.combined_claude_md();
@@ -230,7 +230,7 @@ mod memory_loader_tests {
             .await
             .unwrap();
 
-        let mut loader = MemoryLoader::new();
+        let loader = MemoryLoader::new();
         let content = loader.load(dir.path()).await.unwrap();
 
         let combined = content.combined_claude_md();
@@ -254,7 +254,7 @@ mod memory_loader_tests {
             .await
             .unwrap();
 
-        let mut loader = MemoryLoader::new();
+        let loader = MemoryLoader::new();
         let result = loader.load(dir.path()).await;
 
         // Should not hang or crash
@@ -272,7 +272,7 @@ mod memory_loader_tests {
         .await
         .unwrap();
 
-        let mut loader = MemoryLoader::new();
+        let loader = MemoryLoader::new();
         let content = loader.load(dir.path()).await.unwrap();
 
         let combined = content.combined_claude_md();
@@ -294,7 +294,7 @@ mod memory_loader_tests {
             .await
             .unwrap();
 
-        let mut loader = MemoryLoader::new();
+        let loader = MemoryLoader::new();
         let content = loader.load(dir.path()).await.unwrap();
 
         let combined = content.combined_claude_md();
@@ -318,7 +318,7 @@ mod memory_loader_tests {
         .await
         .unwrap();
 
-        let mut loader = MemoryLoader::new();
+        let loader = MemoryLoader::new();
         let content = loader.load(dir.path()).await.unwrap();
 
         let combined = content.combined_claude_md();
@@ -678,7 +678,7 @@ mod home_dir_tests {
         .await
         .unwrap();
 
-        let mut loader = MemoryLoader::new();
+        let loader = MemoryLoader::new();
         let content = loader.load(dir.path()).await.unwrap();
 
         // Should gracefully handle missing home dir files

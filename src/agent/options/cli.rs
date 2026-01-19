@@ -147,7 +147,7 @@ impl AgentBuilder {
             self.apply_settings_mut(&settings);
         }
 
-        let mut loader = MemoryLoader::new();
+        let loader = MemoryLoader::new();
         if let Ok(content) = loader.load_local(&working_dir).await
             && !content.local_md.is_empty()
         {
@@ -209,7 +209,7 @@ impl AgentBuilder {
     }
 
     async fn load_memory_from(&mut self, base: &Path) {
-        let mut loader = MemoryLoader::new();
+        let loader = MemoryLoader::new();
         if let Ok(content) = loader.load_shared(base).await
             && !content.is_empty()
         {

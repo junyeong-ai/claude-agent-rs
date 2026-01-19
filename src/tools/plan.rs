@@ -74,7 +74,7 @@ Skip for simple tasks:
 - Single-line fixes (typos, obvious bugs)
 - Adding a single function with clear requirements
 - Tasks with specific, detailed instructions
-- Pure research (use Task tool with explore agent)
+- Pure research (use Task tool with Explore agent)
 
 ## Workflow
 

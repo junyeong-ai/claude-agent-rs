@@ -596,7 +596,7 @@ mod memory_system_tests {
         .await
         .unwrap();
 
-        let mut loader = MemoryLoader::new();
+        let loader = MemoryLoader::new();
         let content = loader.load(dir.path()).await.unwrap();
 
         assert!(!content.claude_md.is_empty());
@@ -623,7 +623,7 @@ mod memory_system_tests {
         .await
         .unwrap();
 
-        let mut loader = MemoryLoader::new();
+        let loader = MemoryLoader::new();
         let content = loader.load(dir.path()).await.unwrap();
 
         let combined = content.combined_claude_md();
@@ -651,7 +651,7 @@ mod memory_system_tests {
             .await
             .unwrap();
 
-        let mut loader = MemoryLoader::new();
+        let loader = MemoryLoader::new();
         let content = loader.load(dir.path()).await.unwrap();
 
         assert_eq!(content.rule_indices.len(), 2);

@@ -79,7 +79,6 @@ impl ImportExtractor {
         }
     }
 
-
     /// Resolves a path string to an absolute PathBuf.
     ///
     /// # Path Resolution Rules (CLI-compatible)
@@ -307,7 +306,10 @@ mod tests {
         // because @ follows [ and ( which are not whitespace
         let content = "See [@.agents/docs.md](@.agents/docs.md) for details";
         let imports = extractor.extract(content, Path::new("/project"));
-        assert!(imports.is_empty(), "Markdown links should not be extracted as imports");
+        assert!(
+            imports.is_empty(),
+            "Markdown links should not be extracted as imports"
+        );
     }
 
     #[test]

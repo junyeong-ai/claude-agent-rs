@@ -248,6 +248,15 @@ impl AgentBuilder {
         self
     }
 
+    /// Enables extended context window (1M tokens for supported models).
+    ///
+    /// Requires the `context-1m-2025-08-07` beta feature.
+    /// Currently supported: `claude-sonnet-4-5-20250929`
+    pub fn extended_context(mut self, enabled: bool) -> Self {
+        self.config.model.extended_context = enabled;
+        self
+    }
+
     // =========================================================================
     // Tools
     // =========================================================================
@@ -293,6 +302,20 @@ impl AgentBuilder {
     /// Default: `300 seconds`
     pub fn timeout(mut self, timeout: Duration) -> Self {
         self.config.execution.timeout = Some(timeout);
+        self
+    }
+
+    /// Sets the timeout between streaming chunks.
+    ///
+    /// This timeout detects stalled connections when no data is received
+    /// for the specified duration during streaming responses.
+    ///
+    /// Default: `60 seconds`
+    ///
+    /// For large projects or slow network conditions, consider increasing
+    /// this value (e.g., 180 seconds).
+    pub fn chunk_timeout(mut self, timeout: Duration) -> Self {
+        self.config.execution.chunk_timeout = timeout;
         self
     }
 

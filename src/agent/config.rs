@@ -20,6 +20,8 @@ pub struct AgentModelConfig {
     pub small: String,
     /// Maximum tokens per response
     pub max_tokens: u32,
+    /// Enable extended context window (1M for supported models)
+    pub extended_context: bool,
 }
 
 impl Default for AgentModelConfig {
@@ -28,6 +30,7 @@ impl Default for AgentModelConfig {
             primary: crate::client::DEFAULT_MODEL.to_string(),
             small: crate::client::DEFAULT_SMALL_MODEL.to_string(),
             max_tokens: DEFAULT_MAX_TOKENS,
+            extended_context: false,
         }
     }
 }
@@ -47,6 +50,11 @@ impl AgentModelConfig {
 
     pub fn with_max_tokens(mut self, tokens: u32) -> Self {
         self.max_tokens = tokens;
+        self
+    }
+
+    pub fn with_extended_context(mut self, enabled: bool) -> Self {
+        self.extended_context = enabled;
         self
     }
 }

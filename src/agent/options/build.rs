@@ -368,6 +368,12 @@ impl AgentBuilder {
             tracing::debug!("Enabled advanced tool use for tool search");
         }
 
+        // Enable 1M context window beta if extended context is enabled
+        if self.config.model.extended_context {
+            config.beta.add(crate::client::BetaFeature::Context1M);
+            tracing::debug!("Enabled extended context window (1M tokens)");
+        }
+
         let mut builder = crate::Client::builder().config(config);
 
         match provider {

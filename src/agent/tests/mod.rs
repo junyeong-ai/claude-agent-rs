@@ -176,7 +176,8 @@ fn test_session_usage_update() {
         ..Default::default()
     });
 
-    assert_eq!(session.current_input_tokens, 100);
+    // current_input_tokens now tracks context_usage() = input + cache_read + cache_write
+    assert_eq!(session.current_input_tokens, 110);
     assert_eq!(session.total_usage.input_tokens, 100);
     assert_eq!(session.total_usage.output_tokens, 50);
 }

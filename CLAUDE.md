@@ -1,7 +1,7 @@
 # CLAUDE.md
 
 ## Overview
-Production-ready Rust SDK for Claude API. 1000+ tests, zero runtime dependencies.
+Production-ready Rust SDK for Claude API. 1100+ tests, zero runtime dependencies.
 
 ## Commands
 ```bash
@@ -16,7 +16,7 @@ cargo fmt --all -- --check
 ### Core Patterns
 - **`Provider<T>`** trait: Separates Auth, Resources, Settings providers
 - **`Persistence`** trait: Memory, JSONL, PostgreSQL, Redis backends
-- **`Tool`** trait: 15+ built-in tools + MCP extension
+- **`Tool`** trait: 14 built-in tools (12 client + 2 server) + MCP extension
 
 ### Module Structure
 ```
@@ -38,7 +38,7 @@ src/
 ├── types/          # Message, Role, ContentBlock, ToolOutput
 ├── security/       # SecureFs, Sandbox, BashAnalyzer
 ├── session/        # Session state, Persistence backends
-├── tools/          # 15+ built-in tools (Read, Write, Bash, etc.)
+├── tools/          # 14 built-in tools (Read, Write, Bash, etc.)
 ├── mcp/            # MCP client integration
 ├── skills/         # Skill loader and execution
 └── subagents/      # Subagent spawning (explore, plan, general)

@@ -24,14 +24,14 @@ claude-agent-rs is a production-ready Rust SDK for Claude API with full Claude C
 │                                                                          │
 ├─────────────────────────────────────────────────────────────────────────┤
 │                           Supporting Systems                             │
-├──────────┬──────────┬──────────┬──────────┬──────────┬─────────────────┤
-│  Auth    │  Skills  │ Context  │ Session  │ Security │      MCP        │
-│ ┌──────┐ │ ┌──────┐ │ ┌──────┐ │ ┌──────┐ │ ┌──────┐ │ ┌─────────────┐ │
-│ │OAuth │ │ │Loader│ │ │Memory│ │ │Cache │ │ │ Fs   │ │ │   Client    │ │
-│ │APIKey│ │ │Exec  │ │ │Rules │ │ │State │ │ │ Bash │ │ │   Manager   │ │
-│ │Cloud │ │ │Tool  │ │ │Index │ │ │Compact│ │ │Network│ │ │   Resources │ │
-│ └──────┘ │ └──────┘ │ └──────┘ │ └──────┘ │ └──────┘ │ └─────────────┘ │
-└──────────┴──────────┴──────────┴──────────┴──────────┴─────────────────┘
+├─────────┬─────────┬─────────┬─────────┬─────────┬─────────┬────────────┤
+│  Auth   │ Models  │ Tokens  │ Context │ Session │Security │    MCP     │
+│ ┌─────┐ │ ┌─────┐ │ ┌─────┐ │ ┌─────┐ │ ┌─────┐ │ ┌─────┐ │ ┌────────┐ │
+│ │OAuth│ │ │Reg  │ │ │Budget│ │ │Mem  │ │ │Cache│ │ │ Fs  │ │ │ Client │ │
+│ │Key  │ │ │Spec │ │ │Window│ │ │Rules│ │ │State│ │ │ Bash│ │ │ Manager│ │
+│ │Cloud│ │ │Tier │ │ │Track │ │ │Index│ │ │Pers │ │ │ Net │ │ │ Resrc  │ │
+│ └─────┘ │ └─────┘ │ └─────┘ │ └─────┘ │ └─────┘ │ └─────┘ │ └────────┘ │
+└─────────┴─────────┴─────────┴─────────┴─────────┴─────────┴────────────┘
 ```
 
 ## Core Modules
@@ -119,6 +119,38 @@ Memory and rules management.
 - `orchestrator.rs`: Context assembly
 - `level.rs`: LeveledMemoryProvider for multi-level resource aggregation
 
+### Models (`src/models/`)
+
+Model registry with runtime extensibility and pricing tiers.
+
+| File | Purpose |
+|------|---------|
+| `registry.rs` | Global ModelRegistry with alias resolution |
+| `spec.rs` | ModelSpec with capabilities, context limits |
+| `family.rs` | ModelFamily (Opus, Sonnet, Haiku), ModelRole |
+| `pricing.rs` | PricingTier (Standard/Extended), cost calculation |
+| `builtin.rs` | Built-in model definitions |
+
+**Key Constants:**
+- `LONG_CONTEXT_THRESHOLD`: 200,000 tokens (Standard/Extended boundary)
+- Extended context: 1M tokens with 2x pricing multiplier
+
+### Tokens (`src/tokens/`)
+
+Token tracking and context window management.
+
+| File | Purpose |
+|------|---------|
+| `budget.rs` | TokenBudget - separates billing vs context tokens |
+| `window.rs` | ContextWindow - tracks usage against model limits |
+| `tier.rs` | PricingTier re-export, threshold constants |
+| `tracker.rs` | TokenTracker - pre-flight validation via `count_tokens` API |
+
+**Key Concepts:**
+- `context_usage() = input_tokens + cache_read_tokens + cache_write_tokens`
+- `WindowStatus`: Ok, Warning (80%), Critical (95%), Exceeded
+- Pre-flight validation prevents wasted API calls
+
 ### Session (`src/session/`)
 
 Prompt caching and conversation management.
@@ -165,6 +197,20 @@ Model Context Protocol integration for external tools.
 | `client.rs` | McpClient - single server connection (stdio, SSE) |
 | `manager.rs` | McpManager - multi-server, `mcp__server_tool` naming |
 | `resources.rs` | ResourceManager, ResourceQuery |
+
+### Subagents (`src/subagents/`)
+
+Independent agents with separate context windows.
+
+| Type | Model | Purpose |
+|------|-------|---------|
+| `explore` | Haiku | Fast codebase search |
+| `plan` | Sonnet | Implementation planning |
+| `general` | Sonnet | Complex multi-step tasks |
+
+- Context isolation: Clean context for task-specific execution
+- Background execution: Non-blocking async tasks
+- Tool restrictions: Security through capability limiting
 
 ### Config (`src/config/`)
 

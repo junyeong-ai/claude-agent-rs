@@ -2,6 +2,8 @@
 
 Cost control for agent sessions with automatic tracking and limits.
 
+> **Note**: This document covers **cost budget** (USD). For **token/context window tracking**, see [Token Tracking](tokens.md).
+
 ## Overview
 
 ```
@@ -158,3 +160,8 @@ pub struct Usage {
 // Cache creation: 25% more than input
 // Cache read: 90% discount
 ```
+
+## See Also
+
+- [Token Tracking](tokens.md) - Context window management and pre-flight validation
+- [Models](models.md) - Model registry and pricing tiers

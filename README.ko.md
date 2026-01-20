@@ -22,7 +22,7 @@
 | **TOCTOU-Safe 파일 연산** | `openat()` + `O_NOFOLLOW` | 표준 파일 I/O |
 | **멀티 클라우드 지원** | Bedrock, Vertex, Foundry | 제한적 또는 없음 |
 | **OS 레벨 샌드박싱** | Landlock, Seatbelt | 없음 |
-| **1000+ 테스트** | 프로덕션 검증됨 | 다양함 |
+| **1100+ 테스트** | 프로덕션 검증됨 | 다양함 |
 
 ---
 
@@ -385,7 +385,7 @@ cargo run --example server_tools       # WebFetch, WebSearch
 ## 테스트
 
 ```bash
-cargo test                    # 1000+ 테스트
+cargo test                    # 1100+ 테스트
 cargo test -- --ignored       # + 라이브 API 테스트
 cargo clippy --all-features   # 린트
 ```

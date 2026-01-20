@@ -22,7 +22,7 @@ English | [한국어](README.ko.md)
 | **TOCTOU-Safe File Operations** | `openat()` + `O_NOFOLLOW` | Standard file I/O |
 | **Multi-Cloud Support** | Bedrock, Vertex, Foundry | Limited or none |
 | **OS-Level Sandboxing** | Landlock, Seatbelt | None |
-| **1000+ Tests** | Production-proven | Varies |
+| **1100+ Tests** | Production-proven | Varies |
 
 ---
 
@@ -385,7 +385,7 @@ cargo run --example server_tools       # WebFetch, WebSearch
 ## Testing
 
 ```bash
-cargo test                    # 1000+ tests
+cargo test                    # 1100+ tests
 cargo test -- --ignored       # + live API tests
 cargo clippy --all-features   # Lint
 ```

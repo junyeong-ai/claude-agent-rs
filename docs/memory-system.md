@@ -108,9 +108,42 @@ Include content from other files:
 ```
 
 **Limits**:
-- Maximum 5 import hops (prevents cycles)
+- Default: 2 import depth (CLI compatible)
+- Maximum: 5 import depth with `full_expansion()`
 - Circular imports are detected and skipped
 - Missing files log warning, don't fail
+
+## Import Depth Configuration
+
+Control how deep @import directives are followed:
+
+```rust
+use claude_agent::context::{MemoryLoader, MemoryLoaderConfig};
+
+// Default (depth 2) - CLI compatible, ~24K tokens
+let loader = MemoryLoader::new();
+
+// Full expansion (depth 5) - all nested imports
+let loader = MemoryLoader::full_expansion();
+
+// Custom depth
+let loader = MemoryLoader::with_config(MemoryLoaderConfig::with_max_depth(3));
+```
+
+**Constants:**
+- `DEFAULT_IMPORT_DEPTH`: 2 (matches CLI behavior)
+- `MAX_IMPORT_DEPTH`: 5 (full expansion)
+
+**DFS Processing Order:**
+Imports are processed depth-first. Files referenced from multiple places are loaded at the shallowest depth they're first encountered.
+
+```
+CLAUDE.md (depth 0)
+└── AGENTS.md (depth 1)
+    ├── constitution.md (depth 2)
+    └── workflow.md (depth 2)
+        └── [depth 3+ skipped with default config]
+```
 
 ## Rules System
 

@@ -174,11 +174,14 @@ impl AgentBuilder {
         let skills_dir = base.join(".claude").join("skills");
         let loader = SkillIndexLoader::new();
         if let Ok(skills) = loader.scan_directory(&skills_dir).await {
+            let count = skills.len();
             for skill in skills {
+                tracing::debug!(skill_name = %skill.name, "Registering skill to builder");
                 self.skill_registry
                     .get_or_insert_with(IndexRegistry::new)
                     .register(skill);
             }
+            tracing::info!(skill_count = count, "Skills loaded from project");
         }
     }
 

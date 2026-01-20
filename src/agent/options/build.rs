@@ -287,6 +287,8 @@ impl AgentBuilder {
 
     async fn build_tools(&mut self) -> Arc<ToolRegistry> {
         let skill_registry = self.skill_registry.take().unwrap_or_default();
+        let skill_count = skill_registry.iter().count();
+        tracing::debug!(skill_count, "build_tools: skill_registry taken");
         let subagent_registry = self.subagent_registry.take();
         let skill_executor = SkillExecutor::new(skill_registry);
 

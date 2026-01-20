@@ -2,6 +2,8 @@
 
 The memory system provides project context through CLAUDE.md files and rules.
 
+> **Related**: [Session Guide](session.md) for conversation persistence and prompt caching
+
 ## Overview
 
 ```

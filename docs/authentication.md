@@ -163,6 +163,8 @@ let client = Client::from_env()?;
 
 ## Cloud Providers
 
+For detailed cloud provider configuration, see [Cloud Providers Guide](cloud-providers.md).
+
 ### AWS Bedrock
 
 ```rust

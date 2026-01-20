@@ -2,6 +2,8 @@
 
 OS-level process isolation for secure command execution.
 
+> For broader security features (TOCTOU-safe file operations, bash analysis, resource limits), see [Security Guide](security.md).
+
 ## Overview
 
 ```

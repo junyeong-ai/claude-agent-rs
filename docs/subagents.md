@@ -2,6 +2,8 @@
 
 Subagents are independent agents that execute in separate context windows.
 
+> **Related**: [Skills Guide](skills.md) for reusable workflows with similar configuration options (tools, model override)
+
 ## Overview
 
 ```
@@ -87,7 +89,7 @@ You are a code review specialist.
 4. Return a structured review report
     "#))
     .with_allowed_tools(["Read", "Grep", "Glob"])
-    .with_model("claude-sonnet-4-20250514")
+    .with_model("claude-sonnet-4-5-20250929")
     .with_permission_mode("plan");
 ```
 
@@ -103,7 +105,7 @@ tools:
   - Read
   - Grep
   - Glob
-model: claude-sonnet-4-20250514
+model: claude-sonnet-4-5-20250929
 permission-mode: plan
 ---
 
@@ -134,7 +136,7 @@ You are a code review specialist.
     "description": "Review authentication code",
     "prompt": "Review the auth module for security issues",
     "subagent_type": "code-reviewer",
-    "model": "claude-sonnet-4-20250514",  // optional override
+    "model": "claude-sonnet-4-5-20250929",  // optional override
     "run_in_background": false
 }
 ```

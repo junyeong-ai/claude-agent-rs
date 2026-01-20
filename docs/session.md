@@ -2,6 +2,8 @@
 
 Stateful conversation management with multi-backend persistence, prompt caching, and context compaction.
 
+> **Related**: [Memory System Guide](memory-system.md) for CLAUDE.md loading and @import
+
 ## Architecture
 
 ```

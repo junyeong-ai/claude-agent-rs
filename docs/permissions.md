@@ -2,6 +2,8 @@
 
 The permissions system controls tool execution through modes, rules, and limits.
 
+> **Related**: [Security Guide](security.md) for TOCTOU-safe operations | [Sandbox Guide](sandbox.md) for OS-level isolation
+
 ## Overview
 
 ```

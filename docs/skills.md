@@ -2,6 +2,8 @@
 
 Skills are specialized workflows that activate on-demand for context optimization.
 
+> **Related**: [Subagents Guide](subagents.md) for independent agent execution with similar configuration options
+
 ## Overview
 
 ```
@@ -46,7 +48,7 @@ Deploy the application to $ARGUMENTS environment:
     "#))
     .with_triggers(["deploy", "release"])
     .with_allowed_tools(["Bash", "Read"])
-    .with_model("claude-sonnet-4-20250514");
+    .with_model("claude-sonnet-4-5-20250929");
 ```
 
 ### File-based
@@ -60,7 +62,7 @@ description: Production deployment workflow
 allowed-tools:
   - Bash
   - Read
-model: claude-sonnet-4-20250514
+model: claude-sonnet-4-5-20250929
 ---
 
 Deploy the application to $ARGUMENTS environment:

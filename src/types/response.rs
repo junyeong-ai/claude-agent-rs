@@ -22,6 +22,10 @@ impl TokenUsage {
         self.input_tokens + self.output_tokens
     }
 
+    pub fn context_usage(&self) -> u64 {
+        self.input_tokens + self.cache_read_input_tokens + self.cache_creation_input_tokens
+    }
+
     pub fn add(&mut self, other: &TokenUsage) {
         self.input_tokens += other.input_tokens;
         self.output_tokens += other.output_tokens;
@@ -127,6 +131,12 @@ pub struct Usage {
 impl Usage {
     pub fn total(&self) -> u32 {
         self.input_tokens + self.output_tokens
+    }
+
+    pub fn context_usage(&self) -> u32 {
+        self.input_tokens
+            + self.cache_read_input_tokens.unwrap_or(0)
+            + self.cache_creation_input_tokens.unwrap_or(0)
     }
 
     pub fn estimated_cost(&self, model: &str) -> f64 {
@@ -384,7 +394,7 @@ pub struct ModelUsage {
 impl ModelUsage {
     pub fn from_usage(usage: &Usage, model: &str) -> Self {
         let cost = usage.estimated_cost(model);
-        let context_window = crate::types::models::context_window::for_model(model);
+        let context_window = crate::models::context_window::for_model(model);
         let (web_search, web_fetch) = usage
             .server_tool_use
             .as_ref()

@@ -62,6 +62,7 @@ pub mod config;
 pub mod context;
 pub mod hooks;
 pub mod mcp;
+pub mod models;
 pub mod observability;
 pub mod output_style;
 pub mod permissions;
@@ -71,6 +72,7 @@ pub mod security;
 pub mod session;
 pub mod skills;
 pub mod subagents;
+pub mod tokens;
 pub mod tools;
 pub mod types;
 
@@ -149,6 +151,17 @@ pub use mcp::{
 // Security re-exports
 pub use security::{SecurityContext, SecurityContextBuilder};
 
+// Model registry re-exports
+pub use models::{
+    Capabilities, ModelFamily, ModelId, ModelRegistry, ModelRole, ModelSpec, ModelVersion, Pricing,
+    ProviderIds, registry as model_registry,
+};
+
+// Token management re-exports
+pub use tokens::{
+    ContextWindow, PreflightResult, PricingTier, TokenBudget, TokenTracker, WindowStatus,
+};
+
 #[cfg(feature = "aws")]
 pub use client::BedrockAdapter;
 #[cfg(feature = "azure")]
@@ -210,6 +223,14 @@ pub enum Error {
     /// Context window token limit exceeded.
     #[error("Context limit exceeded: {current}/{max} tokens ({:.0}% used)", (*current as f64 / *max as f64) * 100.0)]
     ContextOverflow { current: usize, max: usize },
+
+    /// Context window would be exceeded by request.
+    #[error("Context window exceeded: {estimated} tokens > {limit} limit (overage: {overage})")]
+    ContextWindowExceeded {
+        estimated: u64,
+        limit: u64,
+        overage: u64,
+    },
 
     /// Operation exceeded timeout.
     #[error("Operation timed out after {:.1}s", .0.as_secs_f64())]
@@ -324,6 +345,7 @@ impl Error {
 
             Error::BudgetExceeded { .. }
             | Error::ContextOverflow { .. }
+            | Error::ContextWindowExceeded { .. }
             | Error::Timeout(_)
             | Error::ResourceExhausted(_) => ErrorCategory::ResourceLimit,
 

@@ -315,15 +315,8 @@ impl Session {
     }
 
     pub fn update_usage(&mut self, usage: &Usage) {
-        self.current_input_tokens = usage.input_tokens as u64;
-        self.total_usage.input_tokens += usage.input_tokens as u64;
-        self.total_usage.output_tokens += usage.output_tokens as u64;
-        if let Some(cache_read) = usage.cache_read_input_tokens {
-            self.total_usage.cache_read_input_tokens += cache_read as u64;
-        }
-        if let Some(cache_creation) = usage.cache_creation_input_tokens {
-            self.total_usage.cache_creation_input_tokens += cache_creation as u64;
-        }
+        self.current_input_tokens = usage.context_usage() as u64;
+        self.total_usage.add_usage(usage);
     }
 
     pub async fn compact(

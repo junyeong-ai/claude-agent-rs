@@ -328,7 +328,9 @@ Agent::builder().mcp_manager(mcp).build().await?
 | [권한](docs/permissions.md) | 권한 모드 및 정책 |
 | [보안](docs/security.md) | TOCTOU-safe 연산 |
 | [샌드박스](docs/sandbox.md) | Landlock 및 Seatbelt |
-| [예산](docs/budget.md) | 토큰/비용 제한 |
+| [모델](docs/models.md) | 모델 레지스트리 및 요금제 |
+| [토큰](docs/tokens.md) | 컨텍스트 윈도우 추적 |
+| [예산](docs/budget.md) | 비용 제한 (USD) |
 | [관측성](docs/observability.md) | OpenTelemetry 연동 |
 | [출력 스타일](docs/output-styles.md) | 응답 형식 |
 | [클라우드](docs/cloud-providers.md) | Bedrock, Vertex, Foundry |

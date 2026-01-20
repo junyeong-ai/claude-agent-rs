@@ -328,7 +328,9 @@ See: [Security Guide](docs/security.md) | [Sandbox Guide](docs/sandbox.md)
 | [Permissions](docs/permissions.md) | Permission modes and policies |
 | [Security](docs/security.md) | TOCTOU-safe operations |
 | [Sandbox](docs/sandbox.md) | Landlock and Seatbelt |
-| [Budget](docs/budget.md) | Token/cost limits |
+| [Models](docs/models.md) | Model registry and pricing tiers |
+| [Tokens](docs/tokens.md) | Context window tracking |
+| [Budget](docs/budget.md) | Cost limits (USD) |
 | [Observability](docs/observability.md) | OpenTelemetry integration |
 | [Output Styles](docs/output-styles.md) | Response formatting |
 | [Cloud Providers](docs/cloud-providers.md) | Bedrock, Vertex, Foundry |

@@ -4,6 +4,7 @@
 //! It skips code blocks (fenced and inline) to avoid extracting @paths from code examples.
 
 use regex::Regex;
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
 /// Extracts @import paths from Markdown content, CLI-compatible implementation.
@@ -42,31 +43,42 @@ impl ImportExtractor {
     /// * `base_dir` - Base directory for resolving relative paths
     ///
     /// # Returns
-    /// Vector of resolved PathBufs for valid import paths
+    /// Vector of unique resolved PathBufs for valid import paths (duplicates removed)
     pub fn extract(&self, content: &str, base_dir: &Path) -> Vec<PathBuf> {
         // Remove fenced code blocks first
         let without_fenced = self.code_block_regex.replace_all(content, " ");
         // Remove inline code spans
         let clean_content = self.inline_code_regex.replace_all(&without_fenced, " ");
 
-        // Extract paths from cleaned content
+        // Extract paths from cleaned content with deduplication
+        let mut seen = HashSet::new();
         let mut paths = Vec::new();
-        self.extract_from_text(&clean_content, base_dir, &mut paths);
+        self.extract_from_text_dedup(&clean_content, base_dir, &mut seen, &mut paths);
         paths
     }
 
-    /// Extracts @import paths from a text segment.
-    fn extract_from_text(&self, text: &str, base_dir: &Path, paths: &mut Vec<PathBuf>) {
+    /// Extracts @import paths with deduplication.
+    fn extract_from_text_dedup(
+        &self,
+        text: &str,
+        base_dir: &Path,
+        seen: &mut HashSet<PathBuf>,
+        paths: &mut Vec<PathBuf>,
+    ) {
         for cap in self.regex.captures_iter(text) {
             if let Some(m) = cap.get(1) {
                 // Unescape spaces (CLI compatibility: `\ ` -> ` `)
                 let raw_path = m.as_str().replace("\\ ", " ");
                 if let Some(resolved) = self.resolve_path(&raw_path, base_dir) {
-                    paths.push(resolved);
+                    // Only add if not seen before
+                    if seen.insert(resolved.clone()) {
+                        paths.push(resolved);
+                    }
                 }
             }
         }
     }
+
 
     /// Resolves a path string to an absolute PathBuf.
     ///
@@ -286,5 +298,49 @@ mod tests {
         let content = "# Title\n\nJust regular content without any imports.";
         let imports = extractor.extract(content, Path::new("/project"));
         assert!(imports.is_empty());
+    }
+
+    #[test]
+    fn test_markdown_link_not_imported() {
+        let extractor = ImportExtractor::new();
+        // Markdown link format: [@text](@path) should NOT be extracted
+        // because @ follows [ and ( which are not whitespace
+        let content = "See [@.agents/docs.md](@.agents/docs.md) for details";
+        let imports = extractor.extract(content, Path::new("/project"));
+        assert!(imports.is_empty(), "Markdown links should not be extracted as imports");
+    }
+
+    #[test]
+    fn test_duplicate_import_paths_deduped() {
+        let extractor = ImportExtractor::new();
+        // Same file referenced twice on different lines
+        let content = "@docs/api.md\nSome text\n@docs/api.md";
+        let imports = extractor.extract(content, Path::new("/project"));
+        println!("Extracted paths: {:?}", imports);
+        // Now deduplicates - only 1 unique path
+        assert_eq!(imports.len(), 1, "Duplicates should be removed");
+        assert!(imports[0].ends_with("docs/api.md"));
+    }
+
+    #[test]
+    fn test_same_file_inline_twice_deduped() {
+        let extractor = ImportExtractor::new();
+        // Same file mentioned twice on same line
+        let content = "See @docs/api.md and also @docs/api.md";
+        let imports = extractor.extract(content, Path::new("/project"));
+        println!("Extracted paths: {:?}", imports);
+        // Now deduplicates
+        assert_eq!(imports.len(), 1, "Duplicates should be removed");
+    }
+
+    #[test]
+    fn test_different_paths_not_deduped() {
+        let extractor = ImportExtractor::new();
+        // Different files should all be included
+        let content = "@docs/api.md\n@docs/guide.md\n@docs/api.md";
+        let imports = extractor.extract(content, Path::new("/project"));
+        println!("Extracted paths: {:?}", imports);
+        // Should have 2 unique paths (api.md and guide.md)
+        assert_eq!(imports.len(), 2, "Different paths should be preserved");
     }
 }

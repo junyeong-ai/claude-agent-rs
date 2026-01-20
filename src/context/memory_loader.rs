@@ -11,8 +11,43 @@ use super::import_extractor::ImportExtractor;
 use super::rule_index::RuleIndex;
 use super::{ContextError, ContextResult};
 
-/// Maximum import depth to prevent infinite recursion (CLI: ZH5 = 5).
+/// Default maximum import depth for CLI-like behavior.
+/// CLI uses depth 5 technically but loads ~24K tokens of memory.
+/// Depth 2 gives ~31K tokens which is the closest match.
+pub const DEFAULT_IMPORT_DEPTH: usize = 2;
+
+/// Maximum import depth when full expansion is needed (CLI's technical limit).
 pub const MAX_IMPORT_DEPTH: usize = 5;
+
+/// Configuration for MemoryLoader.
+#[derive(Debug, Clone)]
+pub struct MemoryLoaderConfig {
+    /// Maximum import depth (default: 2 for CLI-like token counts).
+    /// Use MAX_IMPORT_DEPTH (5) for full expansion.
+    pub max_depth: usize,
+}
+
+impl Default for MemoryLoaderConfig {
+    fn default() -> Self {
+        Self {
+            max_depth: DEFAULT_IMPORT_DEPTH,
+        }
+    }
+}
+
+impl MemoryLoaderConfig {
+    /// Creates config with full import expansion (depth 5).
+    pub fn full_expansion() -> Self {
+        Self {
+            max_depth: MAX_IMPORT_DEPTH,
+        }
+    }
+
+    /// Creates config with specified max depth.
+    pub fn with_max_depth(max_depth: usize) -> Self {
+        Self { max_depth }
+    }
+}
 
 /// Memory loader with CLI-compatible @import processing.
 ///
@@ -24,19 +59,31 @@ pub const MAX_IMPORT_DEPTH: usize = 5;
 ///
 /// # CLI Compatibility
 /// This implementation matches Claude Code CLI 2.1.12 behavior:
-/// - Maximum import depth of 5
+/// - Maximum import depth of 5 (configurable, default 3 for similar token counts)
 /// - Same path validation rules
 /// - Same circular import prevention
 pub struct MemoryLoader {
     extractor: ImportExtractor,
+    config: MemoryLoaderConfig,
 }
 
 impl MemoryLoader {
-    /// Creates a new MemoryLoader with CLI-compatible import extraction.
+    /// Creates a new MemoryLoader with default configuration (depth 3).
     pub fn new() -> Self {
+        Self::with_config(MemoryLoaderConfig::default())
+    }
+
+    /// Creates a new MemoryLoader with custom configuration.
+    pub fn with_config(config: MemoryLoaderConfig) -> Self {
         Self {
             extractor: ImportExtractor::new(),
+            config,
         }
+    }
+
+    /// Creates a new MemoryLoader with full import expansion (depth 5).
+    pub fn full_expansion() -> Self {
+        Self::with_config(MemoryLoaderConfig::full_expansion())
     }
 
     /// Loads all memory content (CLAUDE.md + CLAUDE.local.md + rules) from a directory.
@@ -59,7 +106,10 @@ impl MemoryLoader {
         let mut visited = HashSet::new();
 
         for path in Self::find_claude_files(start_dir) {
-            match self.load_with_imports(&path, 0, &mut visited).await {
+            match self
+                .load_with_imports(&path, start_dir, 0, &mut visited)
+                .await
+            {
                 Ok(text) => content.claude_md.push(text),
                 Err(e) => tracing::debug!("Failed to load {}: {}", path.display(), e),
             }
@@ -79,7 +129,10 @@ impl MemoryLoader {
         let mut visited = HashSet::new();
 
         for path in Self::find_local_files(start_dir) {
-            match self.load_with_imports(&path, 0, &mut visited).await {
+            match self
+                .load_with_imports(&path, start_dir, 0, &mut visited)
+                .await
+            {
                 Ok(text) => content.local_md.push(text),
                 Err(e) => tracing::debug!("Failed to load {}: {}", path.display(), e),
             }
@@ -92,6 +145,7 @@ impl MemoryLoader {
     ///
     /// # Arguments
     /// * `path` - Path to the file to load
+    /// * `project_root` - Project root directory for resolving @.agents/... style imports
     /// * `depth` - Current import depth (0 = root)
     /// * `visited` - Set of canonical paths already loaded (for circular detection)
     ///
@@ -100,16 +154,17 @@ impl MemoryLoader {
     fn load_with_imports<'a>(
         &'a self,
         path: &'a Path,
+        project_root: &'a Path,
         depth: usize,
         visited: &'a mut HashSet<PathBuf>,
     ) -> std::pin::Pin<Box<dyn std::future::Future<Output = ContextResult<String>> + Send + 'a>>
     {
         Box::pin(async move {
-            // Depth limit check (CLI: ZH5 = 5)
-            if depth > MAX_IMPORT_DEPTH {
+            // Depth limit check (configurable, default 3)
+            if depth > self.config.max_depth {
                 tracing::warn!(
                     "Import depth limit ({}) exceeded, skipping: {}",
-                    MAX_IMPORT_DEPTH,
+                    self.config.max_depth,
                     path.display()
                 );
                 return Ok(String::new());
@@ -132,15 +187,23 @@ impl MemoryLoader {
                     })?;
 
             // Extract and process imports
-            let base_dir = path.parent().unwrap_or(Path::new("."));
-            let imports = self.extractor.extract(&content, base_dir);
+            // Use current file's directory for relative path resolution
+            let file_dir = path.parent().unwrap_or(Path::new("."));
+            let imports = self.extractor.extract(&content, file_dir);
+
+            // Post-process: fix duplicated .agents/ or .claude/ paths
+            // e.g., /project/.agents/guides/.agents/patterns -> .agents/patterns
+            let imports: Vec<PathBuf> = imports
+                .into_iter()
+                .map(|p| Self::normalize_project_relative_path(&p, project_root))
+                .collect();
 
             // Build result with imported content appended
             let mut result = content;
             for import_path in imports {
                 if import_path.exists() {
                     if let Ok(imported) = self
-                        .load_with_imports(&import_path, depth + 1, visited)
+                        .load_with_imports(&import_path, project_root, depth + 1, visited)
                         .await
                         && !imported.is_empty()
                     {
@@ -192,6 +255,40 @@ impl MemoryLoader {
         }
 
         files
+    }
+
+    /// Normalizes paths with duplicated .agents/ or .claude/ segments.
+    ///
+    /// When imports are resolved from nested files (e.g., .agents/guides/workflow.md),
+    /// relative paths like @.agents/patterns/... get incorrectly expanded to
+    /// /project/.agents/guides/.agents/patterns/... (duplicated .agents/).
+    ///
+    /// This function detects such duplications and re-resolves from project root.
+    fn normalize_project_relative_path(path: &Path, project_root: &Path) -> PathBuf {
+        const MARKERS: [&str; 2] = ["/.agents/", "/.claude/"];
+
+        let path_str = path.to_string_lossy();
+
+        // Find the last occurrence of any project-relative marker
+        let last_marker_pos = MARKERS
+            .iter()
+            .filter_map(|marker| {
+                let count = path_str.matches(marker).count();
+                // Only fix if duplicated (count > 1) or mixed markers exist
+                if count > 1 || MARKERS.iter().filter(|m| path_str.contains(*m)).count() > 1 {
+                    path_str.rfind(marker).map(|pos| (pos, *marker))
+                } else {
+                    None
+                }
+            })
+            .max_by_key(|(pos, _)| *pos);
+
+        if let Some((idx, _)) = last_marker_pos {
+            let relative_part = &path_str[idx + 1..]; // Skip leading "/"
+            project_root.join(relative_part)
+        } else {
+            path.to_path_buf()
+        }
     }
 
     /// Scans .claude/rules/ directory recursively for rule files.
@@ -412,11 +509,42 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_depth_limit() {
+    async fn test_depth_limit_default() {
+        let dir = tempdir().unwrap();
+
+        // Create chain: CLAUDE.md → level1.md → level2.md → level3.md
+        // With default depth 2, should stop at level 2 (0,1,2 loaded, 3 not)
+        fs::write(dir.path().join("CLAUDE.md"), "Level 0 @level1.md")
+            .await
+            .unwrap();
+
+        for i in 1..=3 {
+            let content = if i < 3 {
+                format!("Level {} @level{}.md", i, i + 1)
+            } else {
+                format!("Level {}", i)
+            };
+            fs::write(dir.path().join(format!("level{}.md", i)), content)
+                .await
+                .unwrap();
+        }
+
+        let loader = MemoryLoader::new(); // Default depth 2
+        let content = loader.load(dir.path()).await.unwrap();
+        let combined = content.combined_claude_md();
+
+        // Should have levels 0-2 but NOT level 3 (default depth limit = 2)
+        assert!(combined.contains("Level 0"));
+        assert!(combined.contains("Level 2"));
+        assert!(!combined.contains("Level 3"));
+    }
+
+    #[tokio::test]
+    async fn test_depth_limit_full_expansion() {
         let dir = tempdir().unwrap();
 
         // Create chain: CLAUDE.md → level1.md → level2.md → ... → level6.md
-        // Should stop at level 5 (depth = 5 means 6 files deep: root + 5 imports)
+        // With full expansion (depth 5), should stop at level 5 (0-5 loaded, 6 not)
         fs::write(dir.path().join("CLAUDE.md"), "Level 0 @level1.md")
             .await
             .unwrap();
@@ -432,14 +560,44 @@ mod tests {
                 .unwrap();
         }
 
-        let loader = MemoryLoader::new();
+        let loader = MemoryLoader::full_expansion(); // Depth 5
         let content = loader.load(dir.path()).await.unwrap();
         let combined = content.combined_claude_md();
 
-        // Should have levels 0-5 but NOT level 6 (depth limit)
+        // Should have levels 0-5 but NOT level 6 (max depth limit = 5)
         assert!(combined.contains("Level 0"));
         assert!(combined.contains("Level 5"));
         assert!(!combined.contains("Level 6"));
+    }
+
+    #[tokio::test]
+    async fn test_depth_limit_custom() {
+        let dir = tempdir().unwrap();
+
+        // Create chain up to level 3
+        fs::write(dir.path().join("CLAUDE.md"), "Level 0 @level1.md")
+            .await
+            .unwrap();
+
+        for i in 1..=3 {
+            let content = if i < 3 {
+                format!("Level {} @level{}.md", i, i + 1)
+            } else {
+                format!("Level {}", i)
+            };
+            fs::write(dir.path().join(format!("level{}.md", i)), content)
+                .await
+                .unwrap();
+        }
+
+        // Custom depth 1: should only load levels 0-1
+        let loader = MemoryLoader::with_config(MemoryLoaderConfig::with_max_depth(1));
+        let content = loader.load(dir.path()).await.unwrap();
+        let combined = content.combined_claude_md();
+
+        assert!(combined.contains("Level 0"));
+        assert!(combined.contains("Level 1"));
+        assert!(!combined.contains("Level 2"));
     }
 
     #[tokio::test]

@@ -14,7 +14,9 @@ pub use crate::types::TokenUsage;
 pub use builder::ContextBuilder;
 pub use import_extractor::ImportExtractor;
 pub use level::{LeveledMemoryProvider, enterprise_base_path, user_base_path};
-pub use memory_loader::{MAX_IMPORT_DEPTH, MemoryContent, MemoryLoader};
+pub use memory_loader::{
+    DEFAULT_IMPORT_DEPTH, MAX_IMPORT_DEPTH, MemoryContent, MemoryLoader, MemoryLoaderConfig,
+};
 pub use orchestrator::PromptOrchestrator;
 pub use provider::{FileMemoryProvider, InMemoryProvider, MemoryProvider};
 pub use routing::RoutingStrategy;

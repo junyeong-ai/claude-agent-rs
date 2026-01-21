@@ -10,6 +10,13 @@ pub struct ServerToolUseBlock {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ServerToolError {
+    #[serde(rename = "type")]
+    pub error_type: String,
+    pub error_code: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WebSearchToolResultBlock {
     pub tool_use_id: String,
     pub content: WebSearchToolResultContent,
@@ -19,7 +26,7 @@ pub struct WebSearchToolResultBlock {
 #[serde(untagged)]
 pub enum WebSearchToolResultContent {
     Results(Vec<WebSearchResultItem>),
-    Error(WebSearchToolResultError),
+    Error(ServerToolError),
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -35,13 +42,6 @@ pub struct WebSearchResultItem {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct WebSearchToolResultError {
-    #[serde(rename = "type")]
-    pub error_type: String,
-    pub error_code: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WebFetchToolResultBlock {
     pub tool_use_id: String,
     pub content: WebFetchToolResultContent,
@@ -51,7 +51,7 @@ pub struct WebFetchToolResultBlock {
 #[serde(untagged)]
 pub enum WebFetchToolResultContent {
     Result(WebFetchResultItem),
-    Error(WebFetchToolResultError),
+    Error(ServerToolError),
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -62,13 +62,6 @@ pub struct WebFetchResultItem {
     pub content: serde_json::Value,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub retrieved_at: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct WebFetchToolResultError {
-    #[serde(rename = "type")]
-    pub error_type: String,
-    pub error_code: String,
 }
 
 #[cfg(test)]

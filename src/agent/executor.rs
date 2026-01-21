@@ -31,7 +31,7 @@ pub struct Agent {
 impl Agent {
     pub fn new(client: Client, config: AgentConfig) -> Self {
         let tools = ToolRegistry::default_tools(
-            &config.security.tool_access,
+            config.security.tool_access.clone(),
             config.working_dir.clone(),
             Some(config.security.permission_policy.clone()),
         );
@@ -50,7 +50,7 @@ impl Agent {
         skill_executor: crate::skills::SkillExecutor,
     ) -> Self {
         let mut builder = ToolRegistryBuilder::new()
-            .access(&config.security.tool_access)
+            .access(config.security.tool_access.clone())
             .skill_executor(skill_executor)
             .policy(config.security.permission_policy.clone());
 

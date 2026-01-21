@@ -14,11 +14,10 @@ pub use citations::{
     PageLocationCitation, SearchResultLocationCitation,
 };
 pub use content::{
-    ContentBlock, ImageSource, ServerToolUseBlock, TextBlock, ThinkingBlock, ToolResultBlock,
-    ToolResultContent, ToolResultContentBlock, ToolUseBlock, WebFetchResultItem,
-    WebFetchToolResultBlock, WebFetchToolResultContent, WebFetchToolResultError,
-    WebSearchResultItem, WebSearchToolResultBlock, WebSearchToolResultContent,
-    WebSearchToolResultError,
+    ContentBlock, ImageSource, ServerToolError, ServerToolUseBlock, TextBlock, ThinkingBlock,
+    ToolResultBlock, ToolResultContent, ToolResultContentBlock, ToolUseBlock, WebFetchResultItem,
+    WebFetchToolResultBlock, WebFetchToolResultContent, WebSearchResultItem,
+    WebSearchToolResultBlock, WebSearchToolResultContent,
 };
 pub use document::{DocumentBlock, DocumentContentBlock, DocumentSource};
 pub use message::{CacheControl, CacheTtl, CacheType, Message, Role, SystemBlock, SystemPrompt};

@@ -10,9 +10,9 @@ use serde::{Deserialize, Serialize};
 
 pub use image::ImageSource;
 pub use server_tools::{
-    ServerToolUseBlock, WebFetchResultItem, WebFetchToolResultBlock, WebFetchToolResultContent,
-    WebFetchToolResultError, WebSearchResultItem, WebSearchToolResultBlock,
-    WebSearchToolResultContent, WebSearchToolResultError,
+    ServerToolError, ServerToolUseBlock, WebFetchResultItem, WebFetchToolResultBlock,
+    WebFetchToolResultContent, WebSearchResultItem, WebSearchToolResultBlock,
+    WebSearchToolResultContent,
 };
 pub use tool_blocks::{ToolResultBlock, ToolResultContent, ToolResultContentBlock, ToolUseBlock};
 

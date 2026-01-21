@@ -40,7 +40,7 @@ impl ToolRegistry {
         }
     }
 
-    pub fn builder() -> ToolRegistryBuilder<'static> {
+    pub fn builder() -> ToolRegistryBuilder {
         ToolRegistryBuilder::new()
     }
 
@@ -53,7 +53,7 @@ impl ToolRegistry {
     }
 
     pub fn default_tools(
-        access: &ToolAccess,
+        access: ToolAccess,
         working_dir: Option<PathBuf>,
         policy: Option<PermissionPolicy>,
     ) -> Self {
@@ -204,7 +204,7 @@ mod tests {
 
     #[test]
     fn test_default_tools_count() {
-        let registry = ToolRegistry::default_tools(&ToolAccess::All, None, None);
+        let registry = ToolRegistry::default_tools(ToolAccess::All, None, None);
         assert!(registry.contains("Read"));
         assert!(registry.contains("Write"));
         assert!(registry.contains("Edit"));
@@ -221,8 +221,7 @@ mod tests {
 
     #[test]
     fn test_tool_access_filtering() {
-        let registry =
-            ToolRegistry::default_tools(&ToolAccess::only(["Read", "Write"]), None, None);
+        let registry = ToolRegistry::default_tools(ToolAccess::only(["Read", "Write"]), None, None);
         assert!(registry.contains("Read"));
         assert!(registry.contains("Write"));
         assert!(!registry.contains("Bash"));

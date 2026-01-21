@@ -16,8 +16,8 @@ use crate::session::session_state::ToolState;
 use crate::session::{MemoryPersistence, SessionId};
 use crate::subagents::SubagentIndex;
 
-pub struct ToolRegistryBuilder<'a> {
-    access: Option<&'a ToolAccess>,
+pub struct ToolRegistryBuilder {
+    access: ToolAccess,
     working_dir: Option<PathBuf>,
     task_registry: Option<TaskRegistry>,
     skill_executor: Option<crate::skills::SkillExecutor>,
@@ -28,10 +28,10 @@ pub struct ToolRegistryBuilder<'a> {
     session_id: Option<SessionId>,
 }
 
-impl<'a> ToolRegistryBuilder<'a> {
+impl ToolRegistryBuilder {
     pub fn new() -> Self {
         Self {
-            access: None,
+            access: ToolAccess::default(),
             working_dir: None,
             task_registry: None,
             skill_executor: None,
@@ -43,8 +43,8 @@ impl<'a> ToolRegistryBuilder<'a> {
         }
     }
 
-    pub fn access(mut self, access: &'a ToolAccess) -> Self {
-        self.access = Some(access);
+    pub fn access(mut self, access: ToolAccess) -> Self {
+        self.access = access;
         self
     }
 
@@ -89,7 +89,7 @@ impl<'a> ToolRegistryBuilder<'a> {
     }
 
     pub fn build(self) -> ToolRegistry {
-        let access = self.access.unwrap_or(&ToolAccess::All);
+        let access = &self.access;
         let wd = self
             .working_dir
             .unwrap_or_else(|| std::env::current_dir().unwrap_or_default());
@@ -167,7 +167,7 @@ impl<'a> ToolRegistryBuilder<'a> {
     }
 }
 
-impl Default for ToolRegistryBuilder<'_> {
+impl Default for ToolRegistryBuilder {
     fn default() -> Self {
         Self::new()
     }

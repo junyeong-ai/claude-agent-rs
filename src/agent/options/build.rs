@@ -315,7 +315,7 @@ impl AgentBuilder {
         };
 
         let mut builder = crate::tools::ToolRegistryBuilder::new()
-            .access(&self.config.security.tool_access)
+            .access(self.config.security.tool_access.clone())
             .working_dir(working_dir)
             .skill_executor(skill_executor)
             .policy(self.config.security.permission_policy.clone())

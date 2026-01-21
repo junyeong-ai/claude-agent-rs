@@ -1,14 +1,17 @@
 //! Environment Variable Configuration Provider
 //!
-//! Loads configuration from environment variables with optional prefix.
+//! Provides read-only access to configuration via environment variables.
+//! Environment variables are immutable at runtime for thread-safety.
 
 use super::provider::ConfigProvider;
 use super::{ConfigError, ConfigResult};
 
-/// Environment variable configuration provider
+/// Read-only environment variable configuration provider.
+///
+/// Environment variables are treated as immutable at runtime because
+/// modifying them is not thread-safe (requires unsafe in Rust 1.80+).
 #[derive(Debug, Clone)]
 pub struct EnvConfigProvider {
-    /// Prefix for environment variables (e.g., "CLAUDE_")
     prefix: Option<String>,
 }
 
@@ -69,19 +72,16 @@ impl ConfigProvider for EnvConfigProvider {
         }
     }
 
-    async fn set_raw(&self, key: &str, value: &str) -> ConfigResult<()> {
-        let env_key = self.env_key(key);
-        unsafe { std::env::set_var(&env_key, value) };
-        Ok(())
+    async fn set_raw(&self, _key: &str, _value: &str) -> ConfigResult<()> {
+        Err(ConfigError::Provider {
+            message: "Environment variables are read-only at runtime".into(),
+        })
     }
 
-    async fn delete(&self, key: &str) -> ConfigResult<bool> {
-        let env_key = self.env_key(key);
-        let existed = std::env::var(&env_key).is_ok();
-        if existed {
-            unsafe { std::env::remove_var(&env_key) };
-        }
-        Ok(existed)
+    async fn delete(&self, _key: &str) -> ConfigResult<bool> {
+        Err(ConfigError::Provider {
+            message: "Environment variables are read-only at runtime".into(),
+        })
     }
 
     async fn list_keys(&self, prefix: &str) -> ConfigResult<Vec<String>> {
@@ -114,9 +114,10 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_env_provider_get_set() {
+    async fn test_env_provider_get() {
         let provider = EnvConfigProvider::with_prefix("TEST_CONFIG_");
 
+        // SAFETY: Test-only environment setup
         unsafe { std::env::set_var("TEST_CONFIG_MY_KEY", "my_value") };
         let value = provider.get_raw("my.key").await.unwrap();
         assert_eq!(value, Some("my_value".to_string()));
@@ -124,28 +125,19 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_env_provider_set_and_delete() {
-        let provider = EnvConfigProvider::with_prefix("TEST_DEL_");
+    async fn test_env_provider_read_only() {
+        let provider = EnvConfigProvider::new();
 
-        // Set via provider
-        provider.set_raw("temp.key", "temp_value").await.unwrap();
-        assert_eq!(
-            provider.get_raw("temp.key").await.unwrap(),
-            Some("temp_value".to_string())
-        );
+        // set_raw should fail (read-only)
+        assert!(provider.set_raw("key", "value").await.is_err());
 
-        // Delete
-        assert!(provider.delete("temp.key").await.unwrap());
-        assert_eq!(provider.get_raw("temp.key").await.unwrap(), None);
-
-        // Delete non-existent
-        assert!(!provider.delete("temp.key").await.unwrap());
+        // delete should fail (read-only)
+        assert!(provider.delete("key").await.is_err());
     }
 
     #[tokio::test]
     async fn test_env_provider_not_found() {
         let provider = EnvConfigProvider::with_prefix("NONEXISTENT_PREFIX_");
-
         let value = provider.get_raw("some.key").await.unwrap();
         assert_eq!(value, None);
     }

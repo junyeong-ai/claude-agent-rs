@@ -53,6 +53,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_environment_provider_missing() {
+        // SAFETY: Test-only environment setup, single-threaded test context
         unsafe { std::env::remove_var("TEST_API_KEY_NOT_SET") };
         let provider = EnvironmentProvider::with_var("TEST_API_KEY_NOT_SET");
         assert!(provider.resolve().await.is_err());
@@ -60,6 +61,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_environment_provider_set() {
+        // SAFETY: Test-only environment setup, single-threaded test context
         unsafe { std::env::set_var("TEST_API_KEY_SET", "test-key") };
         let provider = EnvironmentProvider::with_var("TEST_API_KEY_SET");
         let cred = provider.resolve().await.unwrap();

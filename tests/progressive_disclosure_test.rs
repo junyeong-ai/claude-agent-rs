@@ -22,7 +22,7 @@ mod skill_tool_tests {
 
     #[tokio::test]
     async fn test_skill_tool_in_default_registry() {
-        let registry = ToolRegistry::default_tools(&ToolAccess::All, None, None);
+        let registry = ToolRegistry::default_tools(ToolAccess::All, None, None);
 
         // Skill tool should be in the default registry
         assert!(

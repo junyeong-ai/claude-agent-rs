@@ -88,7 +88,7 @@ mod progressive_disclosure {
     fn verify_tool_definitions_progressive() {
         println!("\n=== Progressive Disclosure - Tool Definitions ===\n");
 
-        let registry = ToolRegistry::default_tools(&ToolAccess::All, None, None);
+        let registry = ToolRegistry::default_tools(ToolAccess::All, None, None);
         let definitions = registry.definitions();
 
         println!("Total tools registered: {}", definitions.len());
@@ -141,7 +141,7 @@ mod progressive_disclosure {
     fn verify_tool_schemas_complete() {
         println!("\n=== Tool Schema Completeness ===\n");
 
-        let registry = ToolRegistry::default_tools(&ToolAccess::All, None, None);
+        let registry = ToolRegistry::default_tools(ToolAccess::All, None, None);
 
         for def in registry.definitions() {
             let schema = &def.input_schema;
@@ -168,26 +168,26 @@ mod progressive_disclosure {
         println!("\n=== Tool Access Filtering ===\n");
 
         // Test All
-        let all = ToolRegistry::default_tools(&ToolAccess::All, None, None);
+        let all = ToolRegistry::default_tools(ToolAccess::All, None, None);
         println!("All tools: {}", all.names().len());
         assert!(all.contains("Read"));
         assert!(all.contains("Bash"));
 
         // Test Only
-        let only = ToolRegistry::default_tools(&ToolAccess::only(["Read", "Write"]), None, None);
+        let only = ToolRegistry::default_tools(ToolAccess::only(["Read", "Write"]), None, None);
         println!("Only Read/Write: {}", only.names().len());
         assert!(only.contains("Read"));
         assert!(only.contains("Write"));
         assert!(!only.contains("Bash"));
 
         // Test Except
-        let except = ToolRegistry::default_tools(&ToolAccess::except(["Bash"]), None, None);
+        let except = ToolRegistry::default_tools(ToolAccess::except(["Bash"]), None, None);
         println!("Except Bash: {}", except.names().len());
         assert!(except.contains("Read"));
         assert!(!except.contains("Bash"));
 
         // Test None
-        let none = ToolRegistry::default_tools(&ToolAccess::None, None, None);
+        let none = ToolRegistry::default_tools(ToolAccess::None, None, None);
         println!("None: {}", none.names().len());
         assert_eq!(none.names().len(), 0);
 
@@ -214,7 +214,7 @@ mod tool_execution {
             .unwrap();
 
         let registry = ToolRegistry::default_tools(
-            &ToolAccess::All,
+            ToolAccess::All,
             Some(dir.path().to_path_buf()),
             Some(PermissionPolicy::permissive()),
         );
@@ -239,7 +239,7 @@ mod tool_execution {
         let file = dir.path().join("new.txt");
 
         let registry = ToolRegistry::default_tools(
-            &ToolAccess::All,
+            ToolAccess::All,
             Some(dir.path().to_path_buf()),
             Some(PermissionPolicy::permissive()),
         );
@@ -268,7 +268,7 @@ mod tool_execution {
         fs::write(&file, "Hello OLD World").await.unwrap();
 
         let registry = ToolRegistry::default_tools(
-            &ToolAccess::All,
+            ToolAccess::All,
             Some(dir.path().to_path_buf()),
             Some(PermissionPolicy::permissive()),
         );
@@ -309,7 +309,7 @@ mod tool_execution {
         fs::write(dir.path().join("c.rs"), "").await.unwrap();
 
         let registry = ToolRegistry::default_tools(
-            &ToolAccess::All,
+            ToolAccess::All,
             Some(dir.path().to_path_buf()),
             Some(PermissionPolicy::permissive()),
         );
@@ -344,7 +344,7 @@ mod tool_execution {
         .unwrap();
 
         let registry = ToolRegistry::default_tools(
-            &ToolAccess::All,
+            ToolAccess::All,
             Some(dir.path().to_path_buf()),
             Some(PermissionPolicy::permissive()),
         );
@@ -366,7 +366,7 @@ mod tool_execution {
     async fn verify_bash_tool() {
         println!("\n=== Bash Tool ===");
         let registry = ToolRegistry::default_tools(
-            &ToolAccess::All,
+            ToolAccess::All,
             None,
             Some(PermissionPolicy::permissive()),
         );
@@ -390,7 +390,7 @@ mod tool_execution {
     async fn verify_todowrite_tool() {
         println!("\n=== TodoWrite Tool ===");
         let registry = ToolRegistry::default_tools(
-            &ToolAccess::All,
+            ToolAccess::All,
             None,
             Some(PermissionPolicy::permissive()),
         );

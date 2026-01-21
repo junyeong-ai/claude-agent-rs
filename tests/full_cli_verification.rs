@@ -94,7 +94,7 @@ mod builtin_tools_tests {
         fs::write(&file_path, "Hello, Read Tool!").await.unwrap();
 
         let registry = ToolRegistry::default_tools(
-            &ToolAccess::All,
+            ToolAccess::All,
             Some(dir.path().to_path_buf()),
             Some(permissive_policy()),
         );
@@ -123,7 +123,7 @@ mod builtin_tools_tests {
         let file_path = dir.path().join("output.txt");
 
         let registry = ToolRegistry::default_tools(
-            &ToolAccess::All,
+            ToolAccess::All,
             Some(dir.path().to_path_buf()),
             Some(permissive_policy()),
         );
@@ -161,7 +161,7 @@ mod builtin_tools_tests {
             .unwrap();
 
         let registry = ToolRegistry::default_tools(
-            &ToolAccess::All,
+            ToolAccess::All,
             Some(dir.path().to_path_buf()),
             Some(permissive_policy()),
         );
@@ -197,7 +197,7 @@ mod builtin_tools_tests {
         .unwrap();
 
         let registry = ToolRegistry::default_tools(
-            &ToolAccess::All,
+            ToolAccess::All,
             Some(dir.path().to_path_buf()),
             Some(permissive_policy()),
         );
@@ -224,7 +224,7 @@ mod builtin_tools_tests {
     #[tokio::test]
     async fn test_bash_tool() {
         let registry = ToolRegistry::default_tools(
-            &ToolAccess::All,
+            ToolAccess::All,
             Some(PathBuf::from("/tmp")),
             Some(permissive_policy()),
         );
@@ -254,7 +254,7 @@ mod builtin_tools_tests {
         fs::write(&file_path, "Hello OLD World!").await.unwrap();
 
         let registry = ToolRegistry::default_tools(
-            &ToolAccess::All,
+            ToolAccess::All,
             Some(dir.path().to_path_buf()),
             Some(permissive_policy()),
         );
@@ -291,7 +291,7 @@ mod builtin_tools_tests {
     #[tokio::test]
     async fn test_todo_tool() {
         let registry =
-            ToolRegistry::default_tools(&ToolAccess::All, None, Some(permissive_policy()));
+            ToolRegistry::default_tools(ToolAccess::All, None, Some(permissive_policy()));
         let result = registry
             .execute(
                 "TodoWrite",
@@ -354,7 +354,7 @@ mod builtin_tools_tests {
     #[tokio::test]
     async fn test_all_tools_in_registry() {
         let registry =
-            ToolRegistry::default_tools(&ToolAccess::All, None, Some(permissive_policy()));
+            ToolRegistry::default_tools(ToolAccess::All, None, Some(permissive_policy()));
 
         let expected_tools = [
             "Bash",
@@ -838,7 +838,7 @@ mod error_handling_tests {
     #[tokio::test]
     async fn test_tool_error_handling() {
         let registry = ToolRegistry::default_tools(
-            &ToolAccess::All,
+            ToolAccess::All,
             Some(PathBuf::from("/tmp")),
             Some(permissive_policy()),
         );

@@ -180,7 +180,7 @@ mod tool_verification_tests {
         println!("TEST: All 14 Built-in Tools in Registry");
         println!("{}", "═".repeat(70));
 
-        let registry = ToolRegistry::default_tools(&ToolAccess::All, None, None);
+        let registry = ToolRegistry::default_tools(ToolAccess::All, None, None);
 
         let expected_tools = [
             "Read",

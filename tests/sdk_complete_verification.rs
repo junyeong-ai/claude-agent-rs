@@ -216,7 +216,7 @@ mod tool_registry_tests {
 
     #[test]
     fn test_all_14_tools_registered() {
-        let registry = ToolRegistry::default_tools(&ToolAccess::All, None, None);
+        let registry = ToolRegistry::default_tools(ToolAccess::All, None, None);
 
         let expected = [
             "Read",
@@ -268,7 +268,7 @@ mod tool_registry_tests {
 
     #[test]
     fn test_tool_definitions() {
-        let registry = ToolRegistry::default_tools(&ToolAccess::All, None, None);
+        let registry = ToolRegistry::default_tools(ToolAccess::All, None, None);
         let definitions = registry.definitions();
 
         // 12 local tools: Read, Write, Edit, Glob, Grep, Bash, KillShell,

@@ -165,7 +165,7 @@ mod tool_registry_tests {
 
     #[test]
     fn test_default_tools_registered() {
-        let registry = ToolRegistry::default_tools(&ToolAccess::All, None, None);
+        let registry = ToolRegistry::default_tools(ToolAccess::All, None, None);
 
         // Core file tools
         assert!(registry.contains("Read"), "Read tool should be registered");
@@ -196,8 +196,7 @@ mod tool_registry_tests {
     #[test]
     fn test_tool_access_filtering() {
         // Only allow Read and Write
-        let registry =
-            ToolRegistry::default_tools(&ToolAccess::only(["Read", "Write"]), None, None);
+        let registry = ToolRegistry::default_tools(ToolAccess::only(["Read", "Write"]), None, None);
 
         assert!(registry.contains("Read"));
         assert!(registry.contains("Write"));
@@ -208,7 +207,7 @@ mod tool_registry_tests {
     #[test]
     fn test_tool_access_except() {
         // Deny Bash only
-        let registry = ToolRegistry::default_tools(&ToolAccess::except(["Bash"]), None, None);
+        let registry = ToolRegistry::default_tools(ToolAccess::except(["Bash"]), None, None);
 
         assert!(registry.contains("Read"));
         assert!(registry.contains("Write"));
@@ -217,7 +216,7 @@ mod tool_registry_tests {
 
     #[test]
     fn test_tool_definitions_have_required_fields() {
-        let registry = ToolRegistry::default_tools(&ToolAccess::All, None, None);
+        let registry = ToolRegistry::default_tools(ToolAccess::All, None, None);
 
         for def in registry.definitions() {
             assert!(!def.name.is_empty(), "Tool name should not be empty");
@@ -236,7 +235,7 @@ mod tool_registry_tests {
 
     #[test]
     fn test_read_tool_schema() {
-        let registry = ToolRegistry::default_tools(&ToolAccess::All, None, None);
+        let registry = ToolRegistry::default_tools(ToolAccess::All, None, None);
         let read_tool = registry.get("Read").expect("Read tool should exist");
         let def = read_tool.definition();
 
@@ -259,7 +258,7 @@ mod tool_registry_tests {
 
     #[test]
     fn test_edit_tool_schema() {
-        let registry = ToolRegistry::default_tools(&ToolAccess::All, None, None);
+        let registry = ToolRegistry::default_tools(ToolAccess::All, None, None);
         let edit_tool = registry.get("Edit").expect("Edit tool should exist");
         let def = edit_tool.definition();
 
@@ -273,7 +272,7 @@ mod tool_registry_tests {
 
     #[test]
     fn test_bash_tool_schema() {
-        let registry = ToolRegistry::default_tools(&ToolAccess::All, None, None);
+        let registry = ToolRegistry::default_tools(ToolAccess::All, None, None);
         let bash_tool = registry.get("Bash").expect("Bash tool should exist");
         let def = bash_tool.definition();
 
@@ -391,7 +390,7 @@ mod tool_execution_tests {
             .unwrap();
 
         let registry = ToolRegistry::default_tools(
-            &ToolAccess::All,
+            ToolAccess::All,
             Some(dir.path().to_path_buf()),
             permissive_policy(),
         );
@@ -423,7 +422,7 @@ mod tool_execution_tests {
         fs::write(&file_path, "old content").await.unwrap();
 
         let registry = ToolRegistry::default_tools(
-            &ToolAccess::All,
+            ToolAccess::All,
             Some(dir.path().to_path_buf()),
             permissive_policy(),
         );
@@ -457,7 +456,7 @@ mod tool_execution_tests {
             .unwrap();
 
         let registry = ToolRegistry::default_tools(
-            &ToolAccess::All,
+            ToolAccess::All,
             Some(dir.path().to_path_buf()),
             permissive_policy(),
         );
@@ -493,7 +492,7 @@ mod tool_execution_tests {
         .unwrap();
 
         let registry = ToolRegistry::default_tools(
-            &ToolAccess::All,
+            ToolAccess::All,
             Some(dir.path().to_path_buf()),
             permissive_policy(),
         );
@@ -523,7 +522,7 @@ mod tool_execution_tests {
         fs::write(&file_path, "Hello OLD World").await.unwrap();
 
         let registry = ToolRegistry::default_tools(
-            &ToolAccess::All,
+            ToolAccess::All,
             Some(dir.path().to_path_buf()),
             permissive_policy(),
         );
@@ -546,7 +545,7 @@ mod tool_execution_tests {
 
     #[tokio::test]
     async fn test_unknown_tool_error() {
-        let registry = ToolRegistry::default_tools(&ToolAccess::All, None, None);
+        let registry = ToolRegistry::default_tools(ToolAccess::All, None, None);
 
         let result = registry
             .execute("NonexistentTool", serde_json::json!({}))
@@ -615,7 +614,7 @@ mod progressive_disclosure_tests {
 
     #[test]
     fn test_tool_descriptions_are_concise() {
-        let registry = ToolRegistry::default_tools(&ToolAccess::All, None, None);
+        let registry = ToolRegistry::default_tools(ToolAccess::All, None, None);
 
         for def in registry.definitions() {
             // Tool descriptions should be useful but not overwhelming
@@ -646,7 +645,7 @@ mod progressive_disclosure_tests {
 
     #[test]
     fn test_input_schemas_are_complete() {
-        let registry = ToolRegistry::default_tools(&ToolAccess::All, None, None);
+        let registry = ToolRegistry::default_tools(ToolAccess::All, None, None);
 
         for def in registry.definitions() {
             let schema = &def.input_schema;
@@ -669,7 +668,7 @@ mod progressive_disclosure_tests {
 
     #[test]
     fn test_tool_count_reasonable() {
-        let registry = ToolRegistry::default_tools(&ToolAccess::All, None, None);
+        let registry = ToolRegistry::default_tools(ToolAccess::All, None, None);
         let tool_count = registry.names().len();
 
         // Should have reasonable number of tools for progressive disclosure

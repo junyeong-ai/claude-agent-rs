@@ -61,7 +61,7 @@ Low-level API communication with multi-cloud support.
 
 ### Tools (`src/tools/`)
 
-12 built-in tools + 2 server tools with extensible architecture.
+12 built-in tools + 3 server tools with extensible architecture.
 
 | Category | Tools |
 |----------|-------|
@@ -70,7 +70,7 @@ Low-level API communication with multi-cloud support.
 | Agent | Task, TaskOutput, TodoWrite, Skill |
 | Planning | Plan |
 
-**Server Tools** (Anthropic API): WebFetch, WebSearch
+**Server Tools** (Anthropic API): WebFetch, WebSearch, ToolSearch
 
 ### Authentication (`src/auth/`)
 

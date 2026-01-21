@@ -172,17 +172,19 @@ See: [Authentication Guide](docs/authentication.md) | [Cloud Providers](docs/clo
 | **Agent** | Task, TaskOutput, TodoWrite, Skill |
 | **Planning** | Plan |
 
-### 2 Server Tools (Anthropic API only)
+### 3 Server Tools (Anthropic API only)
 
 | Tool | Description |
 |------|-------------|
 | **WebFetch** | Fetch and process URL content |
 | **WebSearch** | Web search with citations |
+| **ToolSearch** | Search tools by regex or BM25 |
 
 ```rust
 Agent::builder()
     .with_web_fetch()
     .with_web_search()
+    .with_tool_search()
 ```
 
 ### Tool Access Control
@@ -318,7 +320,7 @@ See: [Security Guide](docs/security.md) | [Sandbox Guide](docs/sandbox.md)
 |----------|-------------|
 | [Architecture](docs/architecture.md) | System structure and data flow |
 | [Authentication](docs/authentication.md) | OAuth, API Key, cloud integration |
-| [Tools](docs/tools.md) | 12 built-in + 2 server tools |
+| [Tools](docs/tools.md) | 12 built-in + 3 server tools |
 | [Skills](docs/skills.md) | Slash commands and skill definitions |
 | [Subagents](docs/subagents.md) | Subagent spawning and management |
 | [Memory](docs/memory-system.md) | CLAUDE.md and @import |

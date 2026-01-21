@@ -1,6 +1,6 @@
 # Built-in Tools
 
-claude-agent-rs includes 12 built-in tools + 2 server tools.
+claude-agent-rs includes 12 built-in tools + 3 server tools.
 
 ## Overview
 
@@ -17,6 +17,7 @@ claude-agent-rs includes 12 built-in tools + 2 server tools.
 |------|-------------|--------|
 | WebFetch | Fetch URL content | `.with_web_fetch()` |
 | WebSearch | Web search | `.with_web_search()` |
+| ToolSearch | Search tools (regex/BM25) | `.with_tool_search()` |
 
 ## File Tools
 
@@ -188,6 +189,24 @@ let agent = Agent::builder()
 | `allowed_domains` | array | Domain whitelist |
 | `blocked_domains` | array | Domain blacklist |
 | `user_location` | object | User location for localized results |
+
+### ToolSearch
+
+Search available tools using regex or BM25 algorithms.
+
+```rust
+use claude_agent::ToolSearchTool;
+
+let agent = Agent::builder()
+    .auth(Auth::from_env()).await?
+    .with_tool_search(ToolSearchTool::regex())  // or ToolSearchTool::bm25()
+    .build().await?;
+```
+
+| Variant | Type ID | Description |
+|---------|---------|-------------|
+| `regex()` | `tool_search_tool_regex_20251119` | Regex-based tool search |
+| `bm25()` | `tool_search_tool_bm25_20251119` | BM25-based tool search |
 
 ## Tool Access Control
 

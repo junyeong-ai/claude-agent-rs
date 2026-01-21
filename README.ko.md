@@ -172,17 +172,19 @@ Agent::builder()
 | **에이전트** | Task, TaskOutput, TodoWrite, Skill |
 | **계획** | Plan |
 
-### 2개 서버 도구 (Anthropic API 전용)
+### 3개 서버 도구 (Anthropic API 전용)
 
 | 도구 | 설명 |
 |------|------|
 | **WebFetch** | URL 콘텐츠 가져오기 및 처리 |
 | **WebSearch** | 인용과 함께 웹 검색 |
+| **ToolSearch** | 정규식 또는 BM25로 도구 검색 |
 
 ```rust
 Agent::builder()
     .with_web_fetch()
     .with_web_search()
+    .with_tool_search()
 ```
 
 ### 도구 접근 제어
@@ -318,7 +320,7 @@ Agent::builder().mcp_manager(mcp).build().await?
 |------|------|
 | [아키텍처](docs/architecture.md) | 시스템 구조 및 데이터 흐름 |
 | [인증](docs/authentication.md) | OAuth, API Key, 클라우드 연동 |
-| [도구](docs/tools.md) | 12개 내장 + 2개 서버 도구 |
+| [도구](docs/tools.md) | 12개 내장 + 3개 서버 도구 |
 | [스킬](docs/skills.md) | 슬래시 명령 및 스킬 정의 |
 | [서브에이전트](docs/subagents.md) | 서브에이전트 생성 및 관리 |
 | [메모리](docs/memory-system.md) | CLAUDE.md 및 @import |

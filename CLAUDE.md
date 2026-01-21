@@ -16,7 +16,7 @@ cargo fmt --all -- --check
 ### Core Patterns
 - **`Provider<T>`** trait: Separates Auth, Resources, Settings providers
 - **`Persistence`** trait: Memory, JSONL, PostgreSQL, Redis backends
-- **`Tool`** trait: 14 built-in tools (12 client + 2 server) + MCP extension
+- **`Tool`** trait: 15 tools (12 client + 3 server) + MCP extension
 
 ### Module Structure
 ```
@@ -38,7 +38,7 @@ src/
 ├── types/          # Message, Role, ContentBlock, ToolOutput
 ├── security/       # SecureFs, Sandbox, BashAnalyzer
 ├── session/        # Session state, Persistence backends
-├── tools/          # 14 built-in tools (Read, Write, Bash, etc.)
+├── tools/          # 12 client tools (Read, Write, Edit, Bash, etc.)
 ├── mcp/            # MCP client integration
 ├── skills/         # Skill loader and execution
 └── subagents/      # Subagent spawning (explore, plan, general)

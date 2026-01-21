@@ -187,17 +187,13 @@ mod tests {
 
     #[test]
     fn test_landlock_availability() {
-        let supported = is_landlock_supported();
-        println!("Landlock supported: {}", supported);
+        let _supported = is_landlock_supported();
     }
 
     #[test]
     fn test_landlock_sandbox_creation() {
         let config = SandboxConfig::new(PathBuf::from("/tmp"));
         let sandbox = LandlockSandbox::new(config);
-
-        if sandbox.is_available() {
-            println!("Landlock ABI: {:?}", sandbox.abi);
-        }
+        let _available = sandbox.is_available();
     }
 }

@@ -315,11 +315,8 @@ mod tests {
     #[test]
     fn test_duplicate_import_paths_deduped() {
         let extractor = ImportExtractor::new();
-        // Same file referenced twice on different lines
         let content = "@docs/api.md\nSome text\n@docs/api.md";
         let imports = extractor.extract(content, Path::new("/project"));
-        println!("Extracted paths: {:?}", imports);
-        // Now deduplicates - only 1 unique path
         assert_eq!(imports.len(), 1, "Duplicates should be removed");
         assert!(imports[0].ends_with("docs/api.md"));
     }
@@ -327,22 +324,16 @@ mod tests {
     #[test]
     fn test_same_file_inline_twice_deduped() {
         let extractor = ImportExtractor::new();
-        // Same file mentioned twice on same line
         let content = "See @docs/api.md and also @docs/api.md";
         let imports = extractor.extract(content, Path::new("/project"));
-        println!("Extracted paths: {:?}", imports);
-        // Now deduplicates
         assert_eq!(imports.len(), 1, "Duplicates should be removed");
     }
 
     #[test]
     fn test_different_paths_not_deduped() {
         let extractor = ImportExtractor::new();
-        // Different files should all be included
         let content = "@docs/api.md\n@docs/guide.md\n@docs/api.md";
         let imports = extractor.extract(content, Path::new("/project"));
-        println!("Extracted paths: {:?}", imports);
-        // Should have 2 unique paths (api.md and guide.md)
         assert_eq!(imports.len(), 2, "Different paths should be preserved");
     }
 }

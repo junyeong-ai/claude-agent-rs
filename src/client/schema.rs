@@ -2,14 +2,55 @@
 
 use serde_json::Value;
 
+/// Properties not supported by Claude API structured outputs.
+///
+/// Per Claude API docs (2025-11-13):
+/// - Numerical constraints: minimum, maximum, exclusiveMinimum, exclusiveMaximum, multipleOf
+/// - String constraints: minLength, maxLength
+/// - Array constraints: minItems (only 0,1 supported), maxItems
+/// - Object constraints: minProperties, maxProperties
+///
+/// Supported but kept:
+/// - default: supported for all types
+/// - format: supported for date-time, time, date, duration, email, hostname, uri, ipv4, ipv6, uuid
+/// - pattern: supported for simple regex (no backreferences, lookahead, word boundaries)
+const UNSUPPORTED_PROPERTIES: &[&str] = &[
+    // Numerical constraints
+    "minimum",
+    "maximum",
+    "exclusiveMinimum",
+    "exclusiveMaximum",
+    "multipleOf",
+    // String constraints
+    "minLength",
+    "maxLength",
+    // Array constraints (minItems only supports 0,1; maxItems not supported)
+    "minItems",
+    "maxItems",
+    // Object constraints
+    "minProperties",
+    "maxProperties",
+];
+
 /// Transform a schema for strict mode compatibility.
-/// Adds `additionalProperties: false` to all objects and ensures `required` fields are present.
+///
+/// This function prepares a JSON schema for Claude's structured outputs:
+/// - Adds `additionalProperties: false` to all objects
+/// - Auto-generates `required` array if not present (all properties become required)
+/// - Removes unsupported constraints (see `UNSUPPORTED_PROPERTIES`)
+///
+/// Supported properties are preserved: `default`, `format`, `pattern`, `enum`, `const`.
 pub fn transform_for_strict(schema: Value) -> Value {
     transform_object(schema)
 }
 
 fn transform_object(mut value: Value) -> Value {
     if let Value::Object(ref mut map) = value {
+        // Remove unsupported properties
+        for prop in UNSUPPORTED_PROPERTIES {
+            map.remove(*prop);
+        }
+
         if map.get("type") == Some(&Value::String("object".to_string())) {
             map.insert("additionalProperties".to_string(), Value::Bool(false));
 

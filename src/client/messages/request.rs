@@ -207,8 +207,15 @@ impl CreateMessageRequest {
         self
     }
 
+    /// Set JSON schema for structured output.
+    ///
+    /// Automatically transforms the schema for strict mode compatibility:
+    /// - Adds `additionalProperties: false` to all objects
+    /// - Removes unsupported constraints (minimum, maximum, minLength, maxLength, etc.)
+    /// - Ensures `required` fields are present
     pub fn with_json_schema(mut self, schema: serde_json::Value) -> Self {
-        self.output_format = Some(OutputFormat::json_schema(schema));
+        let strict_schema = crate::client::schema::transform_for_strict(schema);
+        self.output_format = Some(OutputFormat::json_schema(strict_schema));
         self
     }
 

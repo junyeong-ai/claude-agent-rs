@@ -5,7 +5,7 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use tokio::sync::RwLock;
 
-use super::config::ProviderConfig;
+use super::config::{BetaFeature, ProviderConfig};
 use super::traits::ProviderAdapter;
 use crate::auth::{Credential, CredentialProvider, OAuthConfig};
 use crate::client::messages::{
@@ -239,6 +239,8 @@ impl ProviderAdapter for AnthropicAdapter {
         http: &reqwest::Client,
         request: CreateMessageRequest,
     ) -> Result<ApiResponse> {
+        let needs_structured_outputs = request.output_format.is_some();
+
         let (url, body) = {
             let auth = self.auth.read().await;
             let url = self.build_endpoint_url(&auth, "/v1/messages");
@@ -246,12 +248,17 @@ impl ProviderAdapter for AnthropicAdapter {
             (url, serde_json::to_value(&prepared)?)
         };
 
-        let response = self
-            .apply_auth_headers(http.post(&url))
-            .await
-            .json(&body)
-            .send()
-            .await?;
+        let mut req = self.apply_auth_headers(http.post(&url)).await;
+
+        // Auto-add structured outputs beta header when output_format is used
+        if needs_structured_outputs && !self.config.beta.has(BetaFeature::StructuredOutputs) {
+            req = req.header(
+                "anthropic-beta",
+                BetaFeature::StructuredOutputs.header_value(),
+            );
+        }
+
+        let response = req.json(&body).send().await?;
 
         if !response.status().is_success() {
             let status = response.status().as_u16();
@@ -268,6 +275,7 @@ impl ProviderAdapter for AnthropicAdapter {
         http: &reqwest::Client,
         mut request: CreateMessageRequest,
     ) -> Result<reqwest::Response> {
+        let needs_structured_outputs = request.output_format.is_some();
         request.stream = Some(true);
 
         let (url, body) = {
@@ -277,12 +285,17 @@ impl ProviderAdapter for AnthropicAdapter {
             (url, serde_json::to_value(&prepared)?)
         };
 
-        let response = self
-            .apply_auth_headers(http.post(&url))
-            .await
-            .json(&body)
-            .send()
-            .await?;
+        let mut req = self.apply_auth_headers(http.post(&url)).await;
+
+        // Auto-add structured outputs beta header when output_format is used
+        if needs_structured_outputs && !self.config.beta.has(BetaFeature::StructuredOutputs) {
+            req = req.header(
+                "anthropic-beta",
+                BetaFeature::StructuredOutputs.header_value(),
+            );
+        }
+
+        let response = req.json(&body).send().await?;
 
         if !response.status().is_success() {
             let status = response.status().as_u16();

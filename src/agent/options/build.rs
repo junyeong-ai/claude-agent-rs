@@ -378,7 +378,9 @@ impl AgentBuilder {
 
         // Enable structured outputs beta if output_schema is configured
         if self.config.prompt.output_schema.is_some() {
-            config.beta.add(crate::client::BetaFeature::StructuredOutputs);
+            config
+                .beta
+                .add(crate::client::BetaFeature::StructuredOutputs);
             tracing::debug!("Enabled structured outputs beta for JSON schema");
         }
 

@@ -145,6 +145,22 @@ impl StreamState {
         }
     }
 
+    /// Extract structured output from text if output_schema is configured.
+    ///
+    /// When structured outputs are enabled via `output_format`, the API returns
+    /// pure JSON in `response.content[0].text`. This method parses that JSON.
+    ///
+    /// Returns `None` if:
+    /// - `output_schema` is not configured
+    /// - The response is not valid JSON (e.g., `stop_reason: "refusal"` or `"max_tokens"`)
+    fn extract_structured_output(&self, text: &str) -> Option<serde_json::Value> {
+        // Only extract if output_schema is configured
+        self.cfg.config.prompt.output_schema.as_ref()?;
+
+        // With structured outputs enabled, API returns pure JSON directly
+        serde_json::from_str(text).ok()
+    }
+
     async fn next_event(&mut self) -> Option<crate::Result<AgentEvent>> {
         loop {
             if matches!(self.phase, Phase::Done) {
@@ -228,6 +244,7 @@ impl StreamState {
                 .with_session(|session| session.to_api_messages())
                 .await;
 
+            let structured_output = self.extract_structured_output(&self.final_text);
             return Some(Ok(AgentEvent::Complete(Box::new(AgentResult {
                 text: self.final_text.clone(),
                 usage: self.total_usage,
@@ -237,7 +254,7 @@ impl StreamState {
                 state: AgentState::Completed,
                 metrics: self.metrics.clone(),
                 session_id: self.cfg.session_id.to_string(),
-                structured_output: None,
+                structured_output,
                 messages,
                 uuid: uuid::Uuid::new_v4().to_string(),
             }))));
@@ -415,6 +432,7 @@ impl StreamState {
                 .with_session(|session| session.to_api_messages())
                 .await;
 
+            let structured_output = self.extract_structured_output(&self.final_text);
             return Some(Ok(AgentEvent::Complete(Box::new(AgentResult {
                 text: self.final_text.clone(),
                 usage: self.total_usage,
@@ -424,7 +442,7 @@ impl StreamState {
                 state: AgentState::Completed,
                 metrics: self.metrics.clone(),
                 session_id: self.cfg.session_id.to_string(),
-                structured_output: None,
+                structured_output,
                 messages,
                 uuid: uuid::Uuid::new_v4().to_string(),
             }))));

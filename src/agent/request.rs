@@ -21,6 +21,8 @@ pub struct RequestBuilder {
     base_system_prompt: String,
     cache_config: CacheConfig,
     prepared_mcp_tools: Option<PreparedTools>,
+    /// JSON schema for structured output
+    output_schema: Option<serde_json::Value>,
 }
 
 impl RequestBuilder {
@@ -42,6 +44,7 @@ impl RequestBuilder {
             base_system_prompt,
             cache_config: config.cache.clone(),
             prepared_mcp_tools: None,
+            output_schema: config.prompt.output_schema.clone(),
         }
     }
 
@@ -115,6 +118,11 @@ impl RequestBuilder {
         if self.tool_access.is_allowed("WebFetch") {
             let web_fetch = self.server_tools.web_fetch.clone().unwrap_or_default();
             request = request.with_web_fetch(web_fetch);
+        }
+
+        // Add structured output schema if configured
+        if let Some(ref schema) = self.output_schema {
+            request = request.with_json_schema(schema.clone());
         }
 
         request

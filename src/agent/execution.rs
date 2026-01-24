@@ -475,6 +475,7 @@ impl Agent {
 
         drop(guard);
 
+        let structured_output = self.extract_structured_output(&final_text);
         Ok(AgentResult {
             text: final_text,
             usage: total_usage,
@@ -484,7 +485,7 @@ impl Agent {
             state: AgentState::Completed,
             metrics,
             session_id: self.session_id.to_string(),
-            structured_output: None,
+            structured_output,
             messages,
             uuid: uuid::Uuid::new_v4().to_string(),
         })
@@ -494,6 +495,22 @@ impl Agent {
         HookContext::new(&*self.session_id)
             .with_cwd(self.config.working_dir.clone().unwrap_or_default())
             .with_env(self.config.security.env.clone())
+    }
+
+    /// Extract structured output from text if output_schema is configured.
+    ///
+    /// When structured outputs are enabled via `output_format`, the API returns
+    /// pure JSON in `response.content[0].text`. This method parses that JSON.
+    ///
+    /// Returns `None` if:
+    /// - `output_schema` is not configured
+    /// - The response is not valid JSON (e.g., `stop_reason: "refusal"` or `"max_tokens"`)
+    fn extract_structured_output(&self, text: &str) -> Option<serde_json::Value> {
+        // Only extract if output_schema is configured
+        self.config.prompt.output_schema.as_ref()?;
+
+        // With structured outputs enabled, API returns pure JSON directly
+        serde_json::from_str(text).ok()
     }
 }
 

@@ -99,6 +99,9 @@ pub enum StopReason {
     MaxTokens,
     StopSequence,
     ToolUse,
+    /// Model refused to generate output due to safety reasons.
+    /// When using structured outputs, the response may not match the schema.
+    Refusal,
 }
 
 /// Server-side tool usage from API response.

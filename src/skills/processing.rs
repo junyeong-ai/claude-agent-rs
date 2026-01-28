@@ -53,7 +53,7 @@ pub async fn process_bash_backticks(content: &str, working_dir: &Path) -> String
     let mut replacements = Vec::new();
 
     for cap in re.captures_iter(content) {
-        let full_match = cap.get(0).expect("capture group 0 always exists").as_str();
+        let full_match = &cap[0];
         let cmd = &cap[1];
 
         let output = match Command::new("sh")

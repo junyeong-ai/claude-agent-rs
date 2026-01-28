@@ -229,9 +229,8 @@ impl Session {
         if let Some(n) = name {
             plan = plan.with_name(n);
         }
-        self.current_plan = Some(plan);
         self.updated_at = Utc::now();
-        self.current_plan.as_ref().expect("plan was just set")
+        self.current_plan.insert(plan)
     }
 
     pub fn update_plan_content(&mut self, content: String) {

@@ -1,5 +1,6 @@
 //! Command-based hooks that execute shell commands.
 
+use std::collections::HashMap;
 use std::process::Stdio;
 use std::time::Duration;
 
@@ -17,6 +18,7 @@ pub struct CommandHook {
     events: Vec<HookEvent>,
     tool_pattern: Option<Regex>,
     timeout_secs: u64,
+    extra_env: HashMap<String, String>,
 }
 
 impl CommandHook {
@@ -31,6 +33,7 @@ impl CommandHook {
             events,
             tool_pattern: None,
             timeout_secs: 60,
+            extra_env: HashMap::new(),
         }
     }
 
@@ -44,60 +47,59 @@ impl CommandHook {
         self
     }
 
+    pub fn with_env(mut self, key: impl Into<String>, value: impl Into<String>) -> Self {
+        self.extra_env.insert(key.into(), value.into());
+        self
+    }
+
     pub fn from_settings(settings: &HooksSettings) -> Vec<Self> {
         let mut hooks = Vec::new();
 
         for (name, config) in &settings.pre_tool_use {
-            let (command, matcher, timeout) = Self::parse_config(config);
-            let mut hook = Self::new(name, command, vec![HookEvent::PreToolUse]);
-            if let Some(m) = matcher {
-                hook = hook.with_matcher(&m);
-            }
-            if let Some(t) = timeout {
-                hook = hook.with_timeout(t);
-            }
-            hooks.push(hook);
+            hooks.push(Self::from_event_config(name, HookEvent::PreToolUse, config));
         }
 
         for (name, config) in &settings.post_tool_use {
-            let (command, matcher, timeout) = Self::parse_config(config);
-            let mut hook = Self::new(name, command, vec![HookEvent::PostToolUse]);
-            if let Some(m) = matcher {
-                hook = hook.with_matcher(&m);
-            }
-            if let Some(t) = timeout {
-                hook = hook.with_timeout(t);
-            }
-            hooks.push(hook);
+            hooks.push(Self::from_event_config(
+                name,
+                HookEvent::PostToolUse,
+                config,
+            ));
         }
 
         for (i, config) in settings.session_start.iter().enumerate() {
-            let (command, _, timeout) = Self::parse_config(config);
-            let mut hook = Self::new(
+            hooks.push(Self::from_event_config(
                 format!("session-start-{}", i),
-                command,
-                vec![HookEvent::SessionStart],
-            );
-            if let Some(t) = timeout {
-                hook = hook.with_timeout(t);
-            }
-            hooks.push(hook);
+                HookEvent::SessionStart,
+                config,
+            ));
         }
 
         for (i, config) in settings.session_end.iter().enumerate() {
-            let (command, _, timeout) = Self::parse_config(config);
-            let mut hook = Self::new(
+            hooks.push(Self::from_event_config(
                 format!("session-end-{}", i),
-                command,
-                vec![HookEvent::SessionEnd],
-            );
-            if let Some(t) = timeout {
-                hook = hook.with_timeout(t);
-            }
-            hooks.push(hook);
+                HookEvent::SessionEnd,
+                config,
+            ));
         }
 
         hooks
+    }
+
+    pub fn from_event_config(
+        name: impl Into<String>,
+        event: HookEvent,
+        config: &HookConfig,
+    ) -> Self {
+        let (command, matcher, timeout) = Self::parse_config(config);
+        let mut hook = Self::new(name, command, vec![event]);
+        if let Some(m) = matcher {
+            hook = hook.with_matcher(&m);
+        }
+        if let Some(t) = timeout {
+            hook = hook.with_timeout(t);
+        }
+        hook
     }
 
     fn parse_config(config: &HookConfig) -> (String, Option<String>, Option<u64>) {
@@ -151,6 +153,7 @@ impl Hook for CommandHook {
                     .unwrap_or(std::path::Path::new(".")),
             )
             .envs(&hook_context.env)
+            .envs(&self.extra_env)
             .spawn()
             .map_err(|e| crate::Error::Config(format!("Failed to spawn hook command: {}", e)))?;
 
@@ -214,9 +217,7 @@ struct OutputPayload {
     updated_input: Option<serde_json::Value>,
 }
 
-fn default_true() -> bool {
-    true
-}
+use crate::common::serde_defaults::default_true;
 
 impl OutputPayload {
     fn into_output(self) -> HookOutput {

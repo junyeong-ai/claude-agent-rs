@@ -47,8 +47,21 @@ impl HookEvent {
         )
     }
 
-    pub fn can_modify_input(&self) -> bool {
-        matches!(self, Self::PreToolUse | Self::UserPromptSubmit)
+    /// Parse a PascalCase event name (as used in hooks.json configs).
+    pub fn from_pascal_case(s: &str) -> Option<Self> {
+        match s {
+            "PreToolUse" => Some(Self::PreToolUse),
+            "PostToolUse" => Some(Self::PostToolUse),
+            "PostToolUseFailure" => Some(Self::PostToolUseFailure),
+            "UserPromptSubmit" => Some(Self::UserPromptSubmit),
+            "Stop" => Some(Self::Stop),
+            "SubagentStart" => Some(Self::SubagentStart),
+            "SubagentStop" => Some(Self::SubagentStop),
+            "PreCompact" => Some(Self::PreCompact),
+            "SessionStart" => Some(Self::SessionStart),
+            "SessionEnd" => Some(Self::SessionEnd),
+            _ => None,
+        }
     }
 
     pub fn all() -> &'static [HookEvent] {
@@ -177,11 +190,6 @@ impl HookInput {
             data,
             metadata: None,
         }
-    }
-
-    pub fn with_metadata(mut self, metadata: Value) -> Self {
-        self.metadata = Some(metadata);
-        self
     }
 
     pub fn event_type(&self) -> HookEvent {

@@ -156,10 +156,6 @@ impl CircuitBreaker {
     pub fn failure_count(&self) -> u32 {
         self.failure_count.load(Ordering::SeqCst)
     }
-
-    pub fn success_count(&self) -> u32 {
-        self.success_count.load(Ordering::SeqCst)
-    }
 }
 
 #[cfg(test)]

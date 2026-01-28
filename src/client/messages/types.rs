@@ -71,6 +71,15 @@ impl From<WebFetchTool> for ApiTool {
     }
 }
 
+impl ApiTool {
+    pub fn is_strict(&self) -> bool {
+        match self {
+            Self::Custom(def) => def.strict == Some(true),
+            _ => false,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Deserialize)]
 pub struct ErrorResponse {
     #[serde(rename = "type")]

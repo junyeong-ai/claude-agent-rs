@@ -90,11 +90,6 @@ impl CreateMessageRequest {
         self.max_tokens > DEFAULT_MAX_TOKENS
     }
 
-    pub fn with_metadata(mut self, metadata: RequestMetadata) -> Self {
-        self.metadata = Some(metadata);
-        self
-    }
-
     pub fn with_system(mut self, system: impl Into<SystemPrompt>) -> Self {
         self.system = Some(system.into());
         self

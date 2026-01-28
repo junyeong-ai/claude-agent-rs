@@ -225,10 +225,6 @@ impl ProviderAdapter for AnthropicAdapter {
         serde_json::to_value(&prepared).map_err(|e| Error::InvalidRequest(e.to_string()))
     }
 
-    fn transform_response(&self, response: serde_json::Value) -> Result<ApiResponse> {
-        serde_json::from_value(response).map_err(|e| Error::Parse(e.to_string()))
-    }
-
     async fn apply_auth_headers(&self, req: reqwest::RequestBuilder) -> reqwest::RequestBuilder {
         let auth = self.auth.read().await;
         self.build_headers(req, &auth)
@@ -239,7 +235,12 @@ impl ProviderAdapter for AnthropicAdapter {
         http: &reqwest::Client,
         request: CreateMessageRequest,
     ) -> Result<ApiResponse> {
-        let needs_structured_outputs = request.output_format.is_some();
+        let has_strict_tools = request
+            .tools
+            .as_ref()
+            .map(|tools| tools.iter().any(|t| t.is_strict()))
+            .unwrap_or(false);
+        let needs_structured_outputs = request.output_format.is_some() || has_strict_tools;
 
         let (url, body) = {
             let auth = self.auth.read().await;
@@ -250,7 +251,7 @@ impl ProviderAdapter for AnthropicAdapter {
 
         let mut req = self.apply_auth_headers(http.post(&url)).await;
 
-        // Auto-add structured outputs beta header when output_format is used
+        // Auto-add structured outputs beta header when output_format or strict tools are used
         if needs_structured_outputs && !self.config.beta.has(BetaFeature::StructuredOutputs) {
             req = req.header(
                 "anthropic-beta",
@@ -275,7 +276,12 @@ impl ProviderAdapter for AnthropicAdapter {
         http: &reqwest::Client,
         mut request: CreateMessageRequest,
     ) -> Result<reqwest::Response> {
-        let needs_structured_outputs = request.output_format.is_some();
+        let has_strict_tools = request
+            .tools
+            .as_ref()
+            .map(|tools| tools.iter().any(|t| t.is_strict()))
+            .unwrap_or(false);
+        let needs_structured_outputs = request.output_format.is_some() || has_strict_tools;
         request.stream = Some(true);
 
         let (url, body) = {
@@ -287,7 +293,7 @@ impl ProviderAdapter for AnthropicAdapter {
 
         let mut req = self.apply_auth_headers(http.post(&url)).await;
 
-        // Auto-add structured outputs beta header when output_format is used
+        // Auto-add structured outputs beta header when output_format or strict tools are used
         if needs_structured_outputs && !self.config.beta.has(BetaFeature::StructuredOutputs) {
             req = req.header(
                 "anthropic-beta",

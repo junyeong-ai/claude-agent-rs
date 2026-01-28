@@ -27,7 +27,9 @@ pub trait ProviderAdapter: Send + Sync + Debug {
 
     async fn transform_request(&self, request: CreateMessageRequest) -> Result<serde_json::Value>;
 
-    fn transform_response(&self, response: serde_json::Value) -> Result<ApiResponse>;
+    fn transform_response(&self, response: serde_json::Value) -> Result<ApiResponse> {
+        serde_json::from_value(response).map_err(|e| Error::Parse(e.to_string()))
+    }
 
     async fn apply_auth_headers(&self, req: reqwest::RequestBuilder) -> reqwest::RequestBuilder {
         req

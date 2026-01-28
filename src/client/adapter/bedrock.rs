@@ -282,11 +282,6 @@ impl ProviderAdapter for BedrockAdapter {
         Ok(self.build_request_body(&request))
     }
 
-    fn transform_response(&self, response: serde_json::Value) -> Result<ApiResponse> {
-        // InvokeModel returns Messages API format directly
-        serde_json::from_value(response).map_err(|e| Error::Parse(e.to_string()))
-    }
-
     async fn send(
         &self,
         http: &reqwest::Client,

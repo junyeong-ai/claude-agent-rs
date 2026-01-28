@@ -33,15 +33,6 @@ impl PoolConfig {
             http2_keep_alive: None,
         }
     }
-
-    pub fn high_throughput() -> Self {
-        Self {
-            idle_timeout: Duration::from_secs(120),
-            max_idle_per_host: 64,
-            tcp_keepalive: Some(Duration::from_secs(30)),
-            http2_keep_alive: Some(Duration::from_secs(15)),
-        }
-    }
 }
 
 /// Network configuration for HTTP client.

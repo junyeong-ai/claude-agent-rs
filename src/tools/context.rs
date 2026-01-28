@@ -34,6 +34,10 @@ impl ExecutionContext {
         Ok(Self::new(security))
     }
 
+    /// Create a permissive ExecutionContext that allows all operations.
+    ///
+    /// # Panics
+    /// Panics if the root filesystem cannot be accessed.
     pub fn permissive() -> Self {
         Self {
             security: Arc::new(SecurityContext::permissive()),

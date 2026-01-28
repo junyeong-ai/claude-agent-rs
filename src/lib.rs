@@ -66,6 +66,8 @@ pub mod models;
 pub mod observability;
 pub mod output_style;
 pub mod permissions;
+#[cfg(feature = "plugins")]
+pub mod plugins;
 pub mod prelude;
 pub mod prompts;
 pub mod security;
@@ -110,7 +112,10 @@ pub use context::{
     ContextBuilder, FileMemoryProvider, InMemoryProvider, LeveledMemoryProvider, MemoryContent,
     MemoryLoader, MemoryProvider, PromptOrchestrator, RoutingStrategy, RuleIndex, StaticContext,
 };
-pub use hooks::{CommandHook, Hook, HookContext, HookEvent, HookInput, HookManager, HookOutput};
+pub use hooks::{
+    CommandHook, Hook, HookAction, HookContext, HookEvent, HookInput, HookManager, HookOutput,
+    HookRule,
+};
 pub use observability::{
     AgentMetrics as ObservabilityMetrics, MetricsConfig, MetricsRegistry, ObservabilityConfig,
     SpanContext, TracingConfig,
@@ -141,6 +146,10 @@ pub use types::{
     CompactResult, ContentBlock, DocumentBlock, ImageSource, Message, Role, ToolError, ToolOutput,
     UserLocation, WebSearchTool,
 };
+
+// Plugin re-exports
+#[cfg(feature = "plugins")]
+pub use plugins::{PluginDescriptor, PluginDiscovery, PluginError, PluginManager, PluginManifest};
 
 // MCP re-exports
 pub use mcp::{
@@ -290,6 +299,11 @@ pub enum Error {
     /// Hook timed out (blockable hooks only).
     #[error("Hook '{hook}' timed out after {duration_secs}s")]
     HookTimeout { hook: String, duration_secs: u64 },
+
+    /// Plugin system error.
+    #[cfg(feature = "plugins")]
+    #[error("Plugin error: {0}")]
+    Plugin(#[from] plugins::PluginError),
 }
 
 /// Error category for unified error handling.
@@ -354,6 +368,9 @@ impl Error {
             | Error::Tool(_)
             | Error::Api { .. }
             | Error::NotSupported { .. } => ErrorCategory::Internal,
+
+            #[cfg(feature = "plugins")]
+            Error::Plugin(_) => ErrorCategory::Configuration,
         }
     }
 

@@ -3,19 +3,19 @@ mod directory;
 mod file_provider;
 mod frontmatter;
 mod index;
+pub(crate) mod index_loader;
 mod index_registry;
 mod path_matched;
 mod provider;
+pub(crate) mod serde_defaults;
 mod source_type;
+mod tool_matcher;
 
 use std::path::PathBuf;
 
 pub use content_source::ContentSource;
 pub use directory::{is_markdown, is_skill_file, load_files};
 
-/// Get the user's home directory.
-///
-/// Uses `directories` crate for cross-platform compatibility.
 pub fn home_dir() -> Option<PathBuf> {
     directories::UserDirs::new().map(|d| d.home_dir().to_path_buf())
 }
@@ -29,6 +29,7 @@ pub use index_registry::{IndexRegistry, LoadedEntry};
 pub use path_matched::PathMatched;
 pub use provider::{ChainProvider, InMemoryProvider, Provider};
 pub use source_type::SourceType;
+pub use tool_matcher::{is_tool_allowed, matches_tool_pattern};
 
 pub trait Named {
     fn name(&self) -> &str;
@@ -42,6 +43,6 @@ pub trait ToolRestricted {
     }
 
     fn is_tool_allowed(&self, tool_name: &str) -> bool {
-        crate::tools::is_tool_allowed(self.allowed_tools(), tool_name)
+        tool_matcher::is_tool_allowed(self.allowed_tools(), tool_name)
     }
 }

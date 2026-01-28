@@ -52,8 +52,9 @@ pub trait Index: Named + Clone + Send + Sync + 'static {
         match self.source_type() {
             SourceType::Project => 20,
             SourceType::User => 10,
-            SourceType::Builtin => 0,
             SourceType::Managed => 5,
+            SourceType::Builtin => 0,
+            SourceType::Plugin => -5,
         }
     }
 
@@ -138,8 +139,17 @@ mod tests {
             source_type: SourceType::Project,
         };
 
+        let plugin = TestIndex {
+            name: "test".into(),
+            desc: "desc".into(),
+            source: ContentSource::in_memory(""),
+            source_type: SourceType::Plugin,
+        };
+
         assert!(project.priority() > user.priority());
         assert!(user.priority() > builtin.priority());
+        assert!(builtin.priority() > plugin.priority());
+        assert_eq!(plugin.priority(), -5);
     }
 
     #[tokio::test]

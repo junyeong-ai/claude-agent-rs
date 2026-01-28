@@ -90,7 +90,7 @@ impl Session {
             parent_id,
             session_type,
             tenant_id: None,
-            mode: config.mode.clone(),
+            mode: config.mode,
             state: SessionState::Created,
             permission_policy: config.permission_policy.clone(),
             config,
@@ -207,10 +207,6 @@ impl Session {
         }
     }
 
-    pub fn branch_length(&self) -> usize {
-        self.get_current_branch().len()
-    }
-
     pub fn set_state(&mut self, state: SessionState) {
         self.state = state;
         self.updated_at = Utc::now();
@@ -303,10 +299,6 @@ impl Session {
             results.into_iter().map(ContentBlock::ToolResult).collect();
         let msg = SessionMessage::user(content);
         self.add_message(msg);
-    }
-
-    pub fn current_tokens(&self) -> u64 {
-        self.current_input_tokens
     }
 
     pub fn should_compact(&self, max_tokens: u64, threshold: f32, keep_messages: usize) -> bool {

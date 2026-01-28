@@ -174,6 +174,18 @@ impl PlanStatus {
     pub fn can_execute(&self) -> bool {
         matches!(self, Self::Approved)
     }
+
+    /// Parse from string with legacy alias support.
+    pub fn from_str_lenient(s: &str) -> Self {
+        match s.to_lowercase().as_str() {
+            "approved" => Self::Approved,
+            "executing" | "inprogress" | "in_progress" => Self::Executing,
+            "completed" => Self::Completed,
+            "cancelled" | "canceled" => Self::Cancelled,
+            "failed" => Self::Failed,
+            _ => Self::Draft,
+        }
+    }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -252,6 +264,17 @@ pub enum TodoStatus {
     Completed,
 }
 
+impl TodoStatus {
+    /// Parse from string with legacy alias support.
+    pub fn from_str_lenient(s: &str) -> Self {
+        match s.to_lowercase().as_str() {
+            "in_progress" | "inprogress" => Self::InProgress,
+            "completed" | "done" => Self::Completed,
+            _ => Self::Pending,
+        }
+    }
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct TodoItem {
     pub id: Uuid,
@@ -315,6 +338,17 @@ pub enum CompactTrigger {
     Manual,
     Auto,
     Threshold,
+}
+
+impl CompactTrigger {
+    /// Parse from string with legacy alias support.
+    pub fn from_str_lenient(s: &str) -> Self {
+        match s.to_lowercase().as_str() {
+            "auto" | "automatic" => Self::Auto,
+            "threshold" => Self::Threshold,
+            _ => Self::Manual,
+        }
+    }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -413,8 +447,6 @@ impl SummarySnapshot {
 #[serde(rename_all = "snake_case")]
 pub enum QueueOperation {
     Enqueue,
-    Dequeue,
-    Cancel,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -470,43 +502,6 @@ impl QueueItem {
     pub fn cancel(&mut self) {
         self.status = QueueStatus::Cancelled;
         self.processed_at = Some(Utc::now());
-    }
-}
-
-#[derive(Clone, Debug, Default)]
-pub struct ToolExecutionFilter {
-    pub tool_name: Option<String>,
-    pub plan_id: Option<Uuid>,
-    pub is_error: Option<bool>,
-    pub limit: Option<usize>,
-    pub offset: Option<usize>,
-}
-
-impl ToolExecutionFilter {
-    pub fn by_tool(tool_name: impl Into<String>) -> Self {
-        Self {
-            tool_name: Some(tool_name.into()),
-            ..Default::default()
-        }
-    }
-
-    pub fn by_plan(plan_id: Uuid) -> Self {
-        Self {
-            plan_id: Some(plan_id),
-            ..Default::default()
-        }
-    }
-
-    pub fn errors_only() -> Self {
-        Self {
-            is_error: Some(true),
-            ..Default::default()
-        }
-    }
-
-    pub fn with_limit(mut self, limit: usize) -> Self {
-        self.limit = Some(limit);
-        self
     }
 }
 
@@ -665,5 +660,60 @@ mod tests {
 
         assert!((stats.tool_success_rate() - 0.8).abs() < 0.001);
         assert_eq!(stats.total_tokens(), 1500);
+    }
+
+    #[test]
+    fn test_status_from_str_lenient() {
+        // TodoStatus
+        assert_eq!(
+            TodoStatus::from_str_lenient("in_progress"),
+            TodoStatus::InProgress
+        );
+        assert_eq!(
+            TodoStatus::from_str_lenient("inprogress"),
+            TodoStatus::InProgress
+        );
+        assert_eq!(
+            TodoStatus::from_str_lenient("completed"),
+            TodoStatus::Completed
+        );
+        assert_eq!(TodoStatus::from_str_lenient("unknown"), TodoStatus::Pending);
+
+        // PlanStatus
+        assert_eq!(
+            PlanStatus::from_str_lenient("approved"),
+            PlanStatus::Approved
+        );
+        assert_eq!(
+            PlanStatus::from_str_lenient("executing"),
+            PlanStatus::Executing
+        );
+        assert_eq!(
+            PlanStatus::from_str_lenient("inprogress"),
+            PlanStatus::Executing
+        );
+        assert_eq!(
+            PlanStatus::from_str_lenient("cancelled"),
+            PlanStatus::Cancelled
+        );
+        assert_eq!(PlanStatus::from_str_lenient("unknown"), PlanStatus::Draft);
+
+        // CompactTrigger
+        assert_eq!(
+            CompactTrigger::from_str_lenient("auto"),
+            CompactTrigger::Auto
+        );
+        assert_eq!(
+            CompactTrigger::from_str_lenient("automatic"),
+            CompactTrigger::Auto
+        );
+        assert_eq!(
+            CompactTrigger::from_str_lenient("threshold"),
+            CompactTrigger::Threshold
+        );
+        assert_eq!(
+            CompactTrigger::from_str_lenient("unknown"),
+            CompactTrigger::Manual
+        );
     }
 }

@@ -8,7 +8,7 @@ use std::time::Duration;
 use super::persistence::Persistence;
 use super::state::{Session, SessionId};
 use super::types::{QueueItem, SummarySnapshot};
-use super::{SessionError, SessionResult};
+use super::{SessionError, SessionResult, StorageResultExt};
 use uuid::Uuid;
 
 #[derive(Clone, Debug)]
@@ -171,9 +171,7 @@ impl Persistence for RedisPersistence {
         let mut conn = self.get_connection().await?;
         let key = self.session_key(id);
 
-        let data: Option<String> = conn.get(&key).await.map_err(|e| SessionError::Storage {
-            message: e.to_string(),
-        })?;
+        let data: Option<String> = conn.get(&key).await.storage_err()?;
 
         match data {
             Some(json) => {
@@ -210,9 +208,7 @@ impl Persistence for RedisPersistence {
                 message: e.to_string(),
             })?;
 
-        let deleted: i32 = conn.del(&key).await.map_err(|e| SessionError::Storage {
-            message: e.to_string(),
-        })?;
+        let deleted: i32 = conn.del(&key).await.storage_err()?;
 
         Ok(deleted > 0)
     }

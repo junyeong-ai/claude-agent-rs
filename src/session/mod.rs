@@ -37,7 +37,6 @@ pub use state::{
 pub use types::{
     CompactRecord, CompactTrigger, EnvironmentContext, Plan, PlanStatus, QueueItem, QueueOperation,
     QueueStatus, SessionStats, SessionTree, SummarySnapshot, TodoItem, TodoStatus, ToolExecution,
-    ToolExecutionFilter,
 };
 
 use thiserror::Error;
@@ -70,6 +69,26 @@ pub enum SessionError {
 }
 
 pub type SessionResult<T> = std::result::Result<T, SessionError>;
+
+/// Extension trait for converting errors to SessionError::Storage.
+pub trait StorageResultExt<T> {
+    fn storage_err(self) -> SessionResult<T>;
+    fn storage_err_ctx(self, context: &str) -> SessionResult<T>;
+}
+
+impl<T, E: std::fmt::Display> StorageResultExt<T> for std::result::Result<T, E> {
+    fn storage_err(self) -> SessionResult<T> {
+        self.map_err(|e| SessionError::Storage {
+            message: e.to_string(),
+        })
+    }
+
+    fn storage_err_ctx(self, context: &str) -> SessionResult<T> {
+        self.map_err(|e| SessionError::Storage {
+            message: format!("{}: {}", context, e),
+        })
+    }
+}
 
 #[cfg(test)]
 mod tests {

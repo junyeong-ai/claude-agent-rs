@@ -904,14 +904,7 @@ impl JsonlPersistence {
                         serde_json::from_value(m.session_type).unwrap_or(SessionType::Main);
                     session.mode = serde_json::from_str(&format!("\"{}\"", m.mode))
                         .unwrap_or(SessionMode::default());
-                    session.state = match m.state.as_str() {
-                        "active" => SessionState::Active,
-                        "completed" => SessionState::Completed,
-                        "failed" => SessionState::Failed,
-                        "cancelled" => SessionState::Cancelled,
-                        "waitingfortools" => SessionState::WaitingForTools,
-                        _ => SessionState::Created,
-                    };
+                    session.state = SessionState::from_str_lenient(&m.state);
                     session.config = serde_json::from_value(m.config).unwrap_or_default();
                     session.permission_policy =
                         serde_json::from_value(m.permission_policy).unwrap_or_default();
@@ -927,17 +920,12 @@ impl JsonlPersistence {
                     session.summary = Some(s.summary);
                 }
                 JsonlEntry::Todo(t) => {
-                    let status = match t.status.as_str() {
-                        "in_progress" | "inprogress" => TodoStatus::InProgress,
-                        "completed" => TodoStatus::Completed,
-                        _ => TodoStatus::Pending,
-                    };
                     let todo = TodoItem {
                         id: Uuid::parse_str(&t.id).unwrap_or_else(|_| Uuid::new_v4()),
                         session_id,
                         content: t.content,
                         active_form: t.active_form,
-                        status,
+                        status: TodoStatus::from_str_lenient(&t.status),
                         plan_id: t.plan_id.and_then(|s| Uuid::parse_str(&s).ok()),
                         created_at: t.created_at,
                         started_at: t.started_at,
@@ -947,20 +935,12 @@ impl JsonlPersistence {
                     todos_map.insert(t.id, todo);
                 }
                 JsonlEntry::Plan(p) => {
-                    let status = match p.status.as_str() {
-                        "approved" => PlanStatus::Approved,
-                        "executing" | "inprogress" | "in_progress" => PlanStatus::Executing,
-                        "completed" => PlanStatus::Completed,
-                        "cancelled" => PlanStatus::Cancelled,
-                        "failed" => PlanStatus::Failed,
-                        _ => PlanStatus::Draft,
-                    };
                     let plan = Plan {
                         id: Uuid::parse_str(&p.id).unwrap_or_else(|_| Uuid::new_v4()),
                         session_id,
                         name: p.name,
                         content: p.content,
-                        status,
+                        status: PlanStatus::from_str_lenient(&p.status),
                         error: p.error,
                         created_at: p.created_at,
                         approved_at: p.approved_at,
@@ -971,15 +951,10 @@ impl JsonlPersistence {
                     latest_plan = Some(plan);
                 }
                 JsonlEntry::Compact(c) => {
-                    let trigger = match c.trigger.as_str() {
-                        "auto" | "automatic" => CompactTrigger::Auto,
-                        "threshold" => CompactTrigger::Threshold,
-                        _ => CompactTrigger::Manual,
-                    };
                     compacts.push(CompactRecord {
                         id: Uuid::parse_str(&c.id).unwrap_or_else(|_| Uuid::new_v4()),
                         session_id,
-                        trigger,
+                        trigger: CompactTrigger::from_str_lenient(&c.trigger),
                         pre_tokens: c.pre_tokens,
                         post_tokens: c.post_tokens,
                         saved_tokens: c.saved_tokens,

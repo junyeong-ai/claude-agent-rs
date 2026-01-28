@@ -19,10 +19,6 @@ impl SessionManager {
         Self::new(Arc::new(MemoryPersistence::new()))
     }
 
-    pub fn backend_name(&self) -> &str {
-        self.persistence.name()
-    }
-
     pub async fn create(&self, config: SessionConfig) -> SessionResult<Session> {
         let session = Session::new(config);
         self.persistence.save(&session).await?;

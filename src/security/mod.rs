@@ -48,6 +48,10 @@ impl SecurityContext {
         SecurityContextBuilder::default()
     }
 
+    /// Create a permissive SecurityContext that allows all operations.
+    ///
+    /// # Panics
+    /// Panics if the root filesystem cannot be accessed.
     pub fn permissive() -> Self {
         Self {
             fs: SecureFs::permissive(),
@@ -160,7 +164,8 @@ impl SecurityContextBuilder {
             &root,
             self.allowed_paths.clone(),
             &self.denied_patterns,
-            self.max_symlink_depth.unwrap_or(10),
+            self.max_symlink_depth
+                .unwrap_or(crate::security::path::DEFAULT_MAX_SYMLINK_DEPTH),
         )?;
 
         let sandbox_config = self.sandbox_config.unwrap_or_else(|| {

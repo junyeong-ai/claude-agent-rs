@@ -34,6 +34,8 @@ pub enum McpServerConfig {
         args: Vec<String>,
         #[serde(default)]
         env: HashMap<String, String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        cwd: Option<String>,
     },
     /// Server-Sent Events transport (requires rmcp SSE support)
     Sse {
@@ -377,6 +379,7 @@ mod tests {
             command: "npx".to_string(),
             args: vec!["server".to_string()],
             env: HashMap::new(),
+            cwd: None,
         };
 
         let json = serde_json::to_string(&config).unwrap();
@@ -392,6 +395,7 @@ mod tests {
                 command: "test".to_string(),
                 args: vec![],
                 env: HashMap::new(),
+                cwd: None,
             },
         );
 

@@ -1167,6 +1167,7 @@ mod mcp_tests {
             command: "npx".to_string(),
             args: vec!["@modelcontextprotocol/server".to_string()],
             env: HashMap::new(),
+            cwd: None,
         };
 
         let json = serde_json::to_string(&stdio_config).unwrap();
@@ -1192,6 +1193,7 @@ mod mcp_tests {
                 command: "test".to_string(),
                 args: vec![],
                 env: HashMap::new(),
+                cwd: None,
             },
         );
 

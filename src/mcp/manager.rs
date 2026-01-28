@@ -364,6 +364,7 @@ mod tests {
             command: "echo".to_string(),
             args: vec![],
             env: HashMap::new(),
+            cwd: None,
         };
 
         // This will fail because "echo" isn't a valid MCP server

@@ -63,7 +63,9 @@ impl McpClient {
     #[cfg(feature = "mcp")]
     pub async fn connect(&mut self) -> McpResult<()> {
         match &self.state.config {
-            McpServerConfig::Stdio { command, args, env } => {
+            McpServerConfig::Stdio {
+                command, args, env, ..
+            } => {
                 self.connect_stdio(command.clone(), args.clone(), env.clone())
                     .await
             }
@@ -421,6 +423,7 @@ mod tests {
                 command: "echo".to_string(),
                 args: vec![],
                 env: std::collections::HashMap::new(),
+                cwd: None,
             },
         );
 

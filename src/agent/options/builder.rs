@@ -91,6 +91,9 @@ pub struct AgentBuilder {
     pub(super) gcp_region: Option<String>,
     #[cfg(feature = "azure")]
     pub(super) azure_resource: Option<String>,
+
+    #[cfg(feature = "plugins")]
+    pub(super) plugin_dirs: Vec<PathBuf>,
 }
 
 impl AgentBuilder {
@@ -601,6 +604,7 @@ impl AgentBuilder {
                 command: command.into(),
                 args,
                 env: std::collections::HashMap::new(),
+                cwd: None,
             },
         );
         self
@@ -737,6 +741,28 @@ impl AgentBuilder {
                 registry
             })
             .register(subagent);
+        self
+    }
+
+    // =========================================================================
+    // Plugins
+    // =========================================================================
+
+    /// Adds a plugin directory to discover and load plugins from.
+    ///
+    /// Each plugin requires a `.claude-plugin/plugin.json` manifest.
+    /// If `dir` is a plugin root, it is loaded directly.
+    /// Otherwise, child directories with manifests are discovered automatically.
+    #[cfg(feature = "plugins")]
+    pub fn plugin_dir(mut self, dir: impl Into<PathBuf>) -> Self {
+        self.plugin_dirs.push(dir.into());
+        self
+    }
+
+    /// Adds multiple plugin directories.
+    #[cfg(feature = "plugins")]
+    pub fn plugin_dirs(mut self, dirs: impl IntoIterator<Item = impl Into<PathBuf>>) -> Self {
+        self.plugin_dirs.extend(dirs.into_iter().map(Into::into));
         self
     }
 

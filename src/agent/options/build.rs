@@ -17,6 +17,9 @@ impl AgentBuilder {
         // Order: Enterprise → User → Project → Local (later overrides earlier)
         self.load_resources_by_level().await;
 
+        #[cfg(feature = "plugins")]
+        self.load_plugins().await;
+
         self.resolve_output_style().await?;
         self.resolve_model_aliases();
         self.connect_mcp_servers().await?;
@@ -233,6 +236,67 @@ impl AgentBuilder {
     #[cfg(not(feature = "cli-integration"))]
     async fn load_resources_by_level(&mut self) {
         // No-op when cli-integration is disabled
+    }
+
+    #[cfg(feature = "plugins")]
+    async fn load_plugins(&mut self) {
+        use crate::plugins::{PluginDiscovery, PluginManager};
+        use crate::subagents::builtin_subagents;
+
+        let mut dirs = std::mem::take(&mut self.plugin_dirs);
+        if let Some(default_dir) = PluginDiscovery::default_plugins_dir()
+            && default_dir.exists()
+            && !dirs.contains(&default_dir)
+        {
+            dirs.push(default_dir);
+        }
+        if dirs.is_empty() {
+            return;
+        }
+
+        let manager = match PluginManager::load_from_dirs(&dirs).await {
+            Ok(m) => m,
+            Err(e) => {
+                tracing::warn!(error = %e, "Failed to load plugins");
+                return;
+            }
+        };
+
+        if manager.plugin_count() == 0 {
+            return;
+        }
+
+        let skill_registry = self.skill_registry.get_or_insert_with(IndexRegistry::new);
+        manager.register_skills(skill_registry);
+
+        let subagent_registry = self.subagent_registry.get_or_insert_with(|| {
+            let mut registry = IndexRegistry::new();
+            registry.register_all(builtin_subagents());
+            registry
+        });
+        manager.register_subagents(subagent_registry);
+
+        for (name, config) in manager.mcp_servers() {
+            self.mcp_configs.insert(name.clone(), config.clone());
+        }
+
+        let mut hook_counters = std::collections::HashMap::<String, usize>::new();
+        for entry in manager.hooks() {
+            let key = format!("{}:{}", entry.plugin, entry.event);
+            let count = hook_counters.entry(key).or_insert(0);
+            let hook_name = crate::plugins::namespace::namespaced(
+                &entry.plugin,
+                &format!("{}-{}", entry.event, count),
+            );
+            *count += 1;
+            let mut hook =
+                crate::hooks::CommandHook::from_event_config(hook_name, entry.event, &entry.config);
+            hook = hook.with_env(
+                "CLAUDE_PLUGIN_ROOT",
+                entry.plugin_root.display().to_string(),
+            );
+            self.hooks.register(hook);
+        }
     }
 
     async fn build_orchestrator(&mut self) -> PromptOrchestrator {

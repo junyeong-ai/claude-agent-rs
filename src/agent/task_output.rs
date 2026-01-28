@@ -64,13 +64,12 @@ pub enum TaskStatus {
 impl From<SessionState> for TaskStatus {
     fn from(state: SessionState) -> Self {
         match state {
-            SessionState::Active | SessionState::WaitingForTools | SessionState::WaitingForUser => {
+            SessionState::Created | SessionState::Active | SessionState::WaitingForTools => {
                 TaskStatus::Running
             }
             SessionState::Completed => TaskStatus::Completed,
             SessionState::Failed => TaskStatus::Failed,
             SessionState::Cancelled => TaskStatus::Cancelled,
-            SessionState::Created | SessionState::Paused => TaskStatus::Running,
         }
     }
 }

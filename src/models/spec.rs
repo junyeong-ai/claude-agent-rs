@@ -1,5 +1,5 @@
 use super::family::ModelFamily;
-use super::provider::{CloudProvider, ProviderIds};
+use super::provider::{ProviderIds, ProviderKind};
 use serde::{Deserialize, Serialize};
 
 pub type ModelId = String;
@@ -92,7 +92,7 @@ impl Pricing {
 }
 
 impl ModelSpec {
-    pub fn provider_id(&self, provider: CloudProvider) -> Option<&str> {
+    pub fn provider_id(&self, provider: ProviderKind) -> Option<&str> {
         self.provider_ids.for_provider(provider)
     }
 }

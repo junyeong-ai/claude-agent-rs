@@ -20,7 +20,7 @@ impl SecurityGuard {
         let limits = security
             .policy
             .permission
-            .get_limits(tool_name)
+            .limits(tool_name)
             .cloned()
             .unwrap_or_default();
         let schema = ToolPathSchema::for_tool(tool_name);

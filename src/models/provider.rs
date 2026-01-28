@@ -3,7 +3,7 @@ use std::env;
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
-pub enum CloudProvider {
+pub enum ProviderKind {
     #[default]
     Anthropic,
     Bedrock,
@@ -11,7 +11,7 @@ pub enum CloudProvider {
     Foundry,
 }
 
-impl CloudProvider {
+impl ProviderKind {
     pub fn from_env() -> Self {
         if env::var("CLAUDE_CODE_USE_BEDROCK").is_ok() {
             Self::Bedrock
@@ -34,12 +34,12 @@ pub struct ProviderIds {
 }
 
 impl ProviderIds {
-    pub fn for_provider(&self, provider: CloudProvider) -> Option<&str> {
+    pub fn for_provider(&self, provider: ProviderKind) -> Option<&str> {
         match provider {
-            CloudProvider::Anthropic => self.anthropic.as_deref(),
-            CloudProvider::Bedrock => self.bedrock.as_deref(),
-            CloudProvider::Vertex => self.vertex.as_deref(),
-            CloudProvider::Foundry => self.foundry.as_deref(),
+            ProviderKind::Anthropic => self.anthropic.as_deref(),
+            ProviderKind::Bedrock => self.bedrock.as_deref(),
+            ProviderKind::Vertex => self.vertex.as_deref(),
+            ProviderKind::Foundry => self.foundry.as_deref(),
         }
     }
 }

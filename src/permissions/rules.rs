@@ -354,7 +354,7 @@ impl PermissionPolicy {
         }
     }
 
-    pub fn get_limits(&self, tool_name: &str) -> Option<&ToolLimits> {
+    pub fn limits(&self, tool_name: &str) -> Option<&ToolLimits> {
         self.tool_limits.get(tool_name)
     }
 
@@ -532,9 +532,9 @@ mod tests {
             .tool_limits("Bash", ToolLimits::with_timeout(30000))
             .build();
 
-        let limits = policy.get_limits("Bash").unwrap();
+        let limits = policy.limits("Bash").unwrap();
         assert_eq!(limits.timeout_ms, Some(30000));
-        assert!(policy.get_limits("Read").is_none());
+        assert!(policy.limits("Read").is_none());
     }
 
     #[test]

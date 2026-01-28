@@ -286,7 +286,7 @@ pub enum Error {
 
     /// MCP server communication failed.
     #[error("MCP error: {0}")]
-    Mcp(String),
+    Mcp(mcp::McpError),
 
     /// System resource limit reached (memory, processes, etc.)
     #[error("Resource exhausted: {0}")]
@@ -537,7 +537,7 @@ impl From<mcp::McpError> for Error {
         match err {
             mcp::McpError::Io(e) => Error::Io(e),
             mcp::McpError::Json(e) => Error::Json(e),
-            _ => Error::Mcp(err.to_string()),
+            other => Error::Mcp(other),
         }
     }
 }

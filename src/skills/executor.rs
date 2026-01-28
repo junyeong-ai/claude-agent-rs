@@ -181,13 +181,13 @@ impl SkillExecutor {
         self.registry.contains(name)
     }
 
-    /// Get a skill by name.
-    pub fn get_skill(&self, name: &str) -> Option<&SkillIndex> {
+    /// Look up a skill by name.
+    pub fn skill(&self, name: &str) -> Option<&SkillIndex> {
         self.registry.get(name)
     }
 
     /// Find skill by trigger match.
-    pub fn get_by_trigger(&self, input: &str) -> Option<&SkillIndex> {
+    pub fn find_by_trigger(&self, input: &str) -> Option<&SkillIndex> {
         self.registry.iter().find(|s| s.matches_triggers(input))
     }
 

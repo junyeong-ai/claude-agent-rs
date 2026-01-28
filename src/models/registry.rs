@@ -3,7 +3,7 @@ use std::sync::{OnceLock, RwLock, RwLockReadGuard};
 
 use super::builtin;
 use super::family::{ModelFamily, ModelRole};
-use super::provider::CloudProvider;
+use super::provider::ProviderKind;
 use super::spec::{ModelId, ModelSpec};
 
 static REGISTRY: OnceLock<RwLock<ModelRegistry>> = OnceLock::new();
@@ -107,7 +107,7 @@ impl ModelRegistry {
         self.models.get(id)
     }
 
-    pub fn for_provider(&self, provider: CloudProvider, provider_id: &str) -> Option<&ModelSpec> {
+    pub fn for_provider(&self, provider: ProviderKind, provider_id: &str) -> Option<&ModelSpec> {
         self.models
             .values()
             .find(|spec| spec.provider_ids.for_provider(provider) == Some(provider_id))

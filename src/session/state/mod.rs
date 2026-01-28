@@ -145,7 +145,7 @@ impl Session {
         self.updated_at = Utc::now();
     }
 
-    pub fn get_current_branch(&self) -> Vec<&SessionMessage> {
+    pub fn current_branch(&self) -> Vec<&SessionMessage> {
         let index: HashMap<&MessageId, &SessionMessage> =
             self.messages.iter().map(|m| (&m.id, m)).collect();
 
@@ -175,7 +175,7 @@ impl Session {
     /// Per Anthropic best practices, caches the last user message with the specified TTL.
     /// Pass `None` to disable caching.
     pub fn to_api_messages_with_cache(&self, ttl: Option<CacheTtl>) -> Vec<Message> {
-        let branch = self.get_current_branch();
+        let branch = self.current_branch();
         if branch.is_empty() {
             return Vec::new();
         }
@@ -450,7 +450,7 @@ mod tests {
         let assistant_msg = SessionMessage::assistant(vec![ContentBlock::text("Hi there!")]);
         session.add_message(assistant_msg);
 
-        let branch = session.get_current_branch();
+        let branch = session.current_branch();
         assert_eq!(branch.len(), 2);
         assert_eq!(branch[0].role, Role::User);
         assert_eq!(branch[1].role, Role::Assistant);

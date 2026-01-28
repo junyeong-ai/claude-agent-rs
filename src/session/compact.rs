@@ -129,7 +129,7 @@ impl CompactExecutor {
             });
         }
 
-        let messages = session.get_current_branch();
+        let messages = session.current_branch();
         if messages.is_empty() {
             return Ok(PreparedCompact::NotNeeded);
         }

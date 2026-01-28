@@ -97,7 +97,7 @@ impl ResourceManager {
     /// Subscribe to resource changes (placeholder for future implementation)
     ///
     /// Returns the index of the newly created subscription, which can be used
-    /// with `get_subscription()` to retrieve it.
+    /// with `subscription()` to retrieve it.
     pub fn subscribe(&mut self, server_name: &str, uri: &str) -> usize {
         let subscription = ResourceSubscription {
             server_name: server_name.to_string(),
@@ -109,7 +109,7 @@ impl ResourceManager {
     }
 
     /// Get a subscription by index
-    pub fn get_subscription(&self, index: usize) -> Option<&ResourceSubscription> {
+    pub fn subscription(&self, index: usize) -> Option<&ResourceSubscription> {
         self.subscriptions.get(index)
     }
 

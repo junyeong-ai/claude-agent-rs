@@ -156,10 +156,11 @@ impl AgentBuilder {
             .unwrap_or_else(|| std::sync::Arc::new(crate::mcp::McpManager::new()));
 
         for (name, config) in std::mem::take(&mut self.mcp_configs) {
-            manager
-                .add_server(&name, config)
-                .await
-                .map_err(|e| crate::Error::Mcp(format!("{}: {}", name, e)))?;
+            manager.add_server(&name, config).await.map_err(|e| {
+                crate::Error::Mcp(crate::mcp::McpError::ConnectionFailed {
+                    message: format!("{}: {}", name, e),
+                })
+            })?;
         }
 
         self.mcp_manager = Some(manager);

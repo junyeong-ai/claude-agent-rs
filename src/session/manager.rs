@@ -87,7 +87,7 @@ impl SessionManager {
         forked.summary = original.summary.clone();
 
         // Copy messages up to current leaf
-        for msg in original.get_current_branch() {
+        for msg in original.current_branch() {
             let mut cloned = msg.clone();
             cloned.is_sidechain = true;
             forked.messages.push(cloned);

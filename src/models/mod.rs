@@ -5,7 +5,7 @@ mod registry;
 mod spec;
 
 pub use family::{ModelFamily, ModelRole};
-pub use provider::{CloudProvider, ProviderIds};
+pub use provider::{ProviderIds, ProviderKind};
 pub use registry::{ModelRegistry, read_registry, registry};
 pub use spec::{Capabilities, LONG_CONTEXT_THRESHOLD, ModelId, ModelSpec, ModelVersion, Pricing};
 

@@ -4,12 +4,14 @@
 //! always loaded in the system prompt. The full skill content is loaded on-demand
 //! only when the skill is executed.
 
+use std::collections::HashMap;
 use std::path::PathBuf;
 
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 
 use crate::common::{ContentSource, Index, Named, SourceType, ToolRestricted};
+use crate::hooks::HookRule;
 
 use super::processing;
 
@@ -56,10 +58,32 @@ pub struct SkillIndex {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub argument_hint: Option<String>,
 
+    /// When true, the skill cannot be invoked by the model (only by user)
+    #[serde(default)]
+    pub disable_model_invocation: bool,
+
+    /// Whether this skill is user-invocable via slash commands (default: true)
+    #[serde(default = "default_true")]
+    pub user_invocable: bool,
+
+    /// Context mode (e.g., "fork" for forked context)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub context: Option<String>,
+
+    /// Agent to delegate execution to (e.g., "Explore", "Plan")
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agent: Option<String>,
+
+    /// Lifecycle hooks (event name → rules)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hooks: Option<HashMap<String, Vec<HookRule>>>,
+
     /// Base directory for relative path resolution (override for InMemory sources)
     #[serde(default, skip_serializing_if = "Option::is_none")]
     base_dir_override: Option<PathBuf>,
 }
+
+use crate::common::serde_defaults::default_true;
 
 impl SkillIndex {
     /// Create a new skill index entry.
@@ -73,6 +97,11 @@ impl SkillIndex {
             source_type: SourceType::default(),
             model: None,
             argument_hint: None,
+            disable_model_invocation: false,
+            user_invocable: true,
+            context: None,
+            agent: None,
+            hooks: None,
             base_dir_override: None,
         }
     }

@@ -4,11 +4,14 @@
 //! always loaded in the Task tool description. The full prompt content is loaded
 //! on-demand only when the subagent is spawned.
 
+use std::collections::HashMap;
+
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 
 use crate::client::{ModelConfig, ModelType};
 use crate::common::{ContentSource, Index, Named, SourceType, ToolRestricted};
+use crate::hooks::HookRule;
 
 /// Subagent index entry - minimal metadata always available in context.
 ///
@@ -52,6 +55,18 @@ pub struct SubagentIndex {
     /// Skills available to this subagent
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub skills: Vec<String>,
+
+    /// Tools explicitly disallowed for this subagent
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub disallowed_tools: Vec<String>,
+
+    /// Permission mode (e.g., "dontAsk", "allowAll")
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub permission_mode: Option<String>,
+
+    /// Lifecycle hooks (event name → rules)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hooks: Option<HashMap<String, Vec<HookRule>>>,
 }
 
 impl SubagentIndex {
@@ -66,6 +81,9 @@ impl SubagentIndex {
             model: None,
             model_type: None,
             skills: Vec::new(),
+            disallowed_tools: Vec::new(),
+            permission_mode: None,
+            hooks: None,
         }
     }
 

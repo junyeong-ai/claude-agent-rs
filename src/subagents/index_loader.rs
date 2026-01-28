@@ -1,5 +1,6 @@
-//! Subagent Index Loader - loads only metadata, defers prompt loading.
+//! Subagent index loader.
 
+use std::collections::HashMap;
 use std::path::Path;
 
 use serde::{Deserialize, Serialize};
@@ -7,6 +8,7 @@ use serde::{Deserialize, Serialize};
 use super::SubagentIndex;
 use crate::client::ModelType;
 use crate::common::{ContentSource, SourceType, is_markdown, parse_frontmatter};
+use crate::hooks::HookRule;
 
 /// Frontmatter for subagent files.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -23,9 +25,19 @@ pub struct SubagentFrontmatter {
     pub skills: Option<String>,
     #[serde(default, rename = "source-type")]
     pub source_type: Option<String>,
+    #[serde(default, alias = "disallowedTools")]
+    pub disallowed_tools: Option<String>,
+    #[serde(default, alias = "permissionMode")]
+    pub permission_mode: Option<String>,
+    #[serde(default)]
+    pub hooks: Option<HashMap<String, Vec<HookRule>>>,
 }
 
-/// Loader for SubagentIndex - only loads metadata, not full prompt.
+fn split_csv(s: Option<String>) -> Vec<String> {
+    s.map(|v| v.split(',').map(|s| s.trim().to_string()).collect())
+        .unwrap_or_default()
+}
+
 #[derive(Debug, Clone, Copy, Default)]
 pub struct SubagentIndexLoader;
 
@@ -34,40 +46,27 @@ impl SubagentIndexLoader {
         Self
     }
 
-    /// Parse a subagent file and create an index (metadata only).
-    /// The prompt content is NOT loaded - it will be loaded lazily via ContentSource.
     pub fn parse_index(&self, content: &str, path: &Path) -> crate::Result<SubagentIndex> {
         let doc = parse_frontmatter::<SubagentFrontmatter>(content)?;
         Ok(self.build_index(doc.frontmatter, path))
     }
 
-    /// Parse frontmatter only from content, returning the index.
-    pub fn parse_frontmatter_only(
-        &self,
-        content: &str,
-        path: &Path,
-    ) -> crate::Result<SubagentIndex> {
-        self.parse_index(content, path)
-    }
-
     fn build_index(&self, fm: SubagentFrontmatter, path: &Path) -> SubagentIndex {
         let source_type = SourceType::from_str_opt(fm.source_type.as_deref());
 
-        let tools: Vec<String> = fm
-            .tools
-            .map(|t| t.split(',').map(|s| s.trim().to_string()).collect())
-            .unwrap_or_default();
-
-        let skills: Vec<String> = fm
-            .skills
-            .map(|s| s.split(',').map(|s| s.trim().to_string()).collect())
-            .unwrap_or_default();
+        let tools = split_csv(fm.tools);
+        let skills = split_csv(fm.skills);
+        let disallowed_tools = split_csv(fm.disallowed_tools);
 
         let mut index = SubagentIndex::new(fm.name, fm.description)
             .with_source(ContentSource::file(path))
             .with_source_type(source_type)
             .with_tools(tools)
             .with_skills(skills);
+
+        index.disallowed_tools = disallowed_tools;
+        index.permission_mode = fm.permission_mode;
+        index.hooks = fm.hooks;
 
         if let Some(model) = fm.model {
             index = index.with_model(model);
@@ -87,54 +86,22 @@ impl SubagentIndexLoader {
 
     /// Load a subagent index from a file.
     pub async fn load_file(&self, path: &Path) -> crate::Result<SubagentIndex> {
-        let content = tokio::fs::read_to_string(path).await.map_err(|e| {
-            crate::Error::Config(format!("Failed to read subagent file {:?}: {}", path, e))
-        })?;
-
-        self.parse_index(&content, path)
+        crate::common::index_loader::load_file(path, |c, p| self.parse_index(c, p), "subagent")
+            .await
     }
 
     /// Scan a directory for subagent files and create indices.
     pub async fn scan_directory(&self, dir: &Path) -> crate::Result<Vec<SubagentIndex>> {
-        let mut indices = Vec::new();
+        use crate::common::index_loader::{self, DirAction};
 
-        if !dir.exists() {
-            return Ok(indices);
-        }
-
-        self.scan_directory_recursive(dir, &mut indices).await?;
-        Ok(indices)
-    }
-
-    fn scan_directory_recursive<'a>(
-        &'a self,
-        dir: &'a Path,
-        indices: &'a mut Vec<SubagentIndex>,
-    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = crate::Result<()>> + Send + 'a>> {
-        Box::pin(async move {
-            let mut entries = tokio::fs::read_dir(dir).await.map_err(|e| {
-                crate::Error::Config(format!("Failed to read directory {:?}: {}", dir, e))
-            })?;
-
-            while let Some(entry) = entries.next_entry().await.map_err(|e| {
-                crate::Error::Config(format!("Failed to read directory entry: {}", e))
-            })? {
-                let path = entry.path();
-
-                if path.is_dir() {
-                    self.scan_directory_recursive(&path, indices).await?;
-                } else if is_markdown(&path) {
-                    match self.load_file(&path).await {
-                        Ok(index) => indices.push(index),
-                        Err(e) => {
-                            tracing::warn!("Failed to load subagent from {:?}: {}", path, e);
-                        }
-                    }
-                }
-            }
-
-            Ok(())
-        })
+        let loader = Self::new();
+        index_loader::scan_directory(
+            dir,
+            |p| Box::pin(async move { loader.load_file(p).await }),
+            is_markdown,
+            |_| DirAction::Recurse,
+        )
+        .await
     }
 
     /// Create an inline subagent index with in-memory content.
@@ -217,5 +184,56 @@ Full agent prompt.
         let content = "Just content without frontmatter";
         let loader = SubagentIndexLoader::new();
         assert!(loader.parse_index(content, Path::new("/test.md")).is_err());
+    }
+
+    #[test]
+    fn test_parse_disallowed_tools() {
+        let content = r#"---
+name: restricted-agent
+description: Agent with disallowed tools
+disallowedTools: Write, Edit
+---
+Restricted prompt"#;
+
+        let loader = SubagentIndexLoader::new();
+        let index = loader
+            .parse_index(content, Path::new("/test/restricted.md"))
+            .unwrap();
+
+        assert_eq!(index.disallowed_tools, vec!["Write", "Edit"]);
+    }
+
+    #[test]
+    fn test_parse_permission_mode() {
+        let content = r#"---
+name: auto-agent
+description: Agent with permission mode
+permissionMode: dontAsk
+---
+Auto prompt"#;
+
+        let loader = SubagentIndexLoader::new();
+        let index = loader
+            .parse_index(content, Path::new("/test/auto.md"))
+            .unwrap();
+
+        assert_eq!(index.permission_mode, Some("dontAsk".to_string()));
+    }
+
+    #[test]
+    fn test_defaults_for_new_subagent_fields() {
+        let content = r#"---
+name: basic-agent
+description: Basic agent
+---
+Prompt"#;
+
+        let loader = SubagentIndexLoader::new();
+        let index = loader
+            .parse_index(content, Path::new("/test/basic.md"))
+            .unwrap();
+
+        assert!(index.disallowed_tools.is_empty());
+        assert!(index.permission_mode.is_none());
     }
 }

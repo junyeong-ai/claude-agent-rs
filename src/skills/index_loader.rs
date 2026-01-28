@@ -1,14 +1,13 @@
-//! Skill index loader for progressive disclosure.
-//!
-//! Parses skill files to extract metadata (frontmatter) only,
-//! without loading the full content into memory.
+//! Skill index loader.
 
+use std::collections::HashMap;
 use std::path::Path;
 
 use serde::{Deserialize, Serialize};
 
 use super::SkillIndex;
 use crate::common::{ContentSource, SourceType, is_skill_file, parse_frontmatter};
+use crate::hooks::HookRule;
 
 /// Frontmatter schema for skill files.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -25,7 +24,19 @@ pub struct SkillFrontmatter {
     pub model: Option<String>,
     #[serde(default, alias = "argument-hint")]
     pub argument_hint: Option<String>,
+    #[serde(default, alias = "disable-model-invocation")]
+    pub disable_model_invocation: bool,
+    #[serde(default = "default_true", alias = "user-invocable")]
+    pub user_invocable: bool,
+    #[serde(default)]
+    pub context: Option<String>,
+    #[serde(default)]
+    pub agent: Option<String>,
+    #[serde(default)]
+    pub hooks: Option<HashMap<String, Vec<HookRule>>>,
 }
+
+use crate::common::serde_defaults::default_true;
 
 /// Loader for creating SkillIndex entries from files.
 ///
@@ -40,18 +51,9 @@ impl SkillIndexLoader {
         Self
     }
 
-    /// Parse a skill file to create a SkillIndex.
-    ///
-    /// Only the frontmatter is parsed; the body is NOT loaded into memory.
-    /// Instead, a ContentSource::File is created for lazy loading.
     pub fn parse_index(&self, content: &str, path: &Path) -> crate::Result<SkillIndex> {
         let doc = parse_frontmatter::<SkillFrontmatter>(content)?;
         Ok(self.build_index(doc.frontmatter, path))
-    }
-
-    /// Parse frontmatter only from content, returning the index.
-    pub fn parse_frontmatter_only(&self, content: &str, path: &Path) -> crate::Result<SkillIndex> {
-        self.parse_index(content, path)
     }
 
     fn build_index(&self, fm: SkillFrontmatter, path: &Path) -> SkillIndex {
@@ -77,16 +79,18 @@ impl SkillIndexLoader {
             index = index.with_argument_hint(hint);
         }
 
+        index.disable_model_invocation = fm.disable_model_invocation;
+        index.user_invocable = fm.user_invocable;
+        index.context = fm.context;
+        index.agent = fm.agent;
+        index.hooks = fm.hooks;
+
         index
     }
 
     /// Load a skill index from a file.
     pub async fn load_file(&self, path: &Path) -> crate::Result<SkillIndex> {
-        let content = tokio::fs::read_to_string(path).await.map_err(|e| {
-            crate::Error::Config(format!("Failed to read skill file {:?}: {}", path, e))
-        })?;
-
-        self.parse_index(&content, path)
+        crate::common::index_loader::load_file(path, |c, p| self.parse_index(c, p), "skill").await
     }
 
     /// Scan a directory for skill files and create indices.
@@ -94,51 +98,23 @@ impl SkillIndexLoader {
     /// This recursively scans the directory for skill files (.skill.md or SKILL.md)
     /// and creates SkillIndex entries for each.
     pub async fn scan_directory(&self, dir: &Path) -> crate::Result<Vec<SkillIndex>> {
-        let mut indices = Vec::new();
+        use crate::common::index_loader::{self, DirAction};
 
-        if !dir.exists() {
-            return Ok(indices);
-        }
-
-        self.scan_directory_recursive(dir, &mut indices).await?;
-        Ok(indices)
-    }
-
-    fn scan_directory_recursive<'a>(
-        &'a self,
-        dir: &'a Path,
-        indices: &'a mut Vec<SkillIndex>,
-    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = crate::Result<()>> + Send + 'a>> {
-        Box::pin(async move {
-            let mut entries = tokio::fs::read_dir(dir).await.map_err(|e| {
-                crate::Error::Config(format!("Failed to read directory {:?}: {}", dir, e))
-            })?;
-
-            while let Some(entry) = entries.next_entry().await.map_err(|e| {
-                crate::Error::Config(format!("Failed to read directory entry: {}", e))
-            })? {
-                let path = entry.path();
-
-                if path.is_dir() {
-                    // Check for SKILL.md in subdirectory (skill folder pattern)
-                    let skill_file = path.join("SKILL.md");
-                    if skill_file.exists() {
-                        if let Ok(index) = self.load_file(&skill_file).await {
-                            indices.push(index);
-                        }
-                    } else {
-                        // Recurse into subdirectory
-                        self.scan_directory_recursive(&path, indices).await?;
-                    }
-                } else if is_skill_file(&path)
-                    && let Ok(index) = self.load_file(&path).await
-                {
-                    indices.push(index);
+        let loader = Self::new();
+        index_loader::scan_directory(
+            dir,
+            |p| Box::pin(async move { loader.load_file(p).await }),
+            is_skill_file,
+            |p| {
+                let skill_file = p.join("SKILL.md");
+                if skill_file.exists() {
+                    DirAction::LoadFile(skill_file)
+                } else {
+                    DirAction::Recurse
                 }
-            }
-
-            Ok(())
-        })
+            },
+        )
+        .await
     }
 
     /// Create an inline skill index with content already available.
@@ -317,5 +293,79 @@ Content"#,
             .await
             .unwrap();
         assert!(indices.is_empty());
+    }
+
+    #[test]
+    fn test_parse_disable_model_invocation() {
+        let content = r#"---
+name: system-only
+description: System only skill
+disable-model-invocation: true
+---
+Content"#;
+
+        let loader = SkillIndexLoader::new();
+        let index = loader
+            .parse_index(content, Path::new("/skills/system.skill.md"))
+            .unwrap();
+
+        assert!(index.disable_model_invocation);
+        assert!(index.user_invocable);
+    }
+
+    #[test]
+    fn test_parse_user_invocable_false() {
+        let content = r#"---
+name: internal
+description: Internal skill
+user-invocable: false
+---
+Content"#;
+
+        let loader = SkillIndexLoader::new();
+        let index = loader
+            .parse_index(content, Path::new("/skills/internal.skill.md"))
+            .unwrap();
+
+        assert!(!index.user_invocable);
+        assert!(!index.disable_model_invocation);
+    }
+
+    #[test]
+    fn test_parse_context_and_agent() {
+        let content = r#"---
+name: explore-skill
+description: Explore codebase
+context: fork
+agent: Explore
+---
+Content"#;
+
+        let loader = SkillIndexLoader::new();
+        let index = loader
+            .parse_index(content, Path::new("/skills/explore.skill.md"))
+            .unwrap();
+
+        assert_eq!(index.context, Some("fork".to_string()));
+        assert_eq!(index.agent, Some("Explore".to_string()));
+    }
+
+    #[test]
+    fn test_defaults_for_new_fields() {
+        let content = r#"---
+name: basic
+description: Basic skill
+---
+Content"#;
+
+        let loader = SkillIndexLoader::new();
+        let index = loader
+            .parse_index(content, Path::new("/skills/basic.skill.md"))
+            .unwrap();
+
+        assert!(!index.disable_model_invocation);
+        assert!(index.user_invocable);
+        assert!(index.context.is_none());
+        assert!(index.agent.is_none());
     }
 }

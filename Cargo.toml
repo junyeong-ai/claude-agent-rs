@@ -119,6 +119,9 @@ cli-integration = []    # ClaudeCliProvider, file-based loaders
 
 mcp = ["rmcp"]
 
+# Plugin system with namespace-based resource management
+plugins = ["cli-integration", "dirs"]
+
 # Multimedia support for Read tool (PDF, images)
 multimedia = ["pdf-extract"]
 
@@ -140,7 +143,7 @@ persistence-all = ["jsonl", "postgres", "redis-backend"]
 otel = ["opentelemetry", "opentelemetry_sdk", "opentelemetry-otlp", "opentelemetry-semantic-conventions", "tracing-opentelemetry", "tracing-subscriber"]
 
 # Full feature set
-full = ["mcp", "cloud-all", "persistence-all", "otel"]
+full = ["mcp", "cloud-all", "persistence-all", "otel", "plugins"]
 
 [[example]]
 name = "advanced_test"

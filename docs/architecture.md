@@ -185,8 +185,42 @@ Event-driven interception system for agent lifecycle.
 | `traits.rs` | Hook trait, HookEvent (10 types), HookInput/Output |
 | `manager.rs` | HookManager with priority-based execution |
 | `command.rs` | CommandHook for shell-based hooks |
+| `rule.rs` | HookRule, HookAction shared types |
 
 Events: PreToolUse, PostToolUse, UserPromptSubmit, SessionStart/End, SubagentStart/Stop, etc.
+
+### Common (`src/common/`)
+
+Shared traits, utilities, and abstractions used across modules.
+
+| File | Purpose |
+|------|---------|
+| `mod.rs` | Module exports and re-exports |
+| `provider.rs` | `Provider<T>` trait for dependency injection |
+| `index.rs` | `Index` trait, `Named` trait for registry patterns |
+| `index_loader.rs` | `IndexLoader` trait for loading index entries from config |
+| `index_registry.rs` | Generic registry for index-based lookups |
+| `source_type.rs` | `SourceType` enum (Builtin, Plugin, User) |
+| `tool_matcher.rs` | Tool name matching with glob support |
+| `serde_defaults.rs` | Default value helpers for serde deserialization |
+| `frontmatter.rs` | YAML frontmatter parsing |
+| `content_source.rs` | Content source abstraction |
+| `file_provider.rs` | File-based provider utilities |
+| `directory.rs` | Directory scanning helpers |
+| `path_matched.rs` | Path-matched result wrapper |
+
+### Plugins (`src/plugins/`)
+
+Namespace-based resource management for bundled extensions.
+
+| File | Purpose |
+|------|---------|
+| `discovery.rs` | PluginDiscovery - scan directories for plugins |
+| `manifest.rs` | PluginManifest, PluginDescriptor |
+| `loader.rs` | PluginLoader - load skills, subagents, hooks, MCP |
+| `manager.rs` | PluginManager - runtime management |
+| `namespace.rs` | `plugin-name:resource-name` namespacing |
+| `error.rs` | PluginError types |
 
 ### MCP (`src/mcp/`)
 
@@ -260,6 +294,7 @@ User Request
 | Add subagent | Create `.md` file or use `SubagentIndex::new()` |
 | Add hook | Implement `Hook` trait, register via `HookManager::register()` |
 | Add MCP server | `McpManager::add_server()` with `McpServerConfig` |
+| Add plugin | Create `.claude-plugin/plugin.json` + resources |
 | Custom output style | Create `.claude/output-styles/*.md` |
 
 ## Key Design Decisions

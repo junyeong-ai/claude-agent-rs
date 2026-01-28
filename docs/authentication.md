@@ -169,8 +169,9 @@ For detailed cloud provider configuration, see [Cloud Providers Guide](cloud-pro
 
 ```rust
 let client = Client::builder()
-    .bedrock("us-east-1")
-    .build()?;
+    .auth(Auth::bedrock("us-east-1").await?)
+    .build()
+    .await?;
 ```
 
 **Authentication**: Uses AWS credential chain (environment, config, IAM role).
@@ -184,8 +185,9 @@ let client = Client::builder()
 
 ```rust
 let client = Client::builder()
-    .vertex("my-gcp-project", "us-central1")
-    .build()?;
+    .auth(Auth::vertex("my-gcp-project", "us-central1").await?)
+    .build()
+    .await?;
 ```
 
 **Authentication**: Uses Google Application Default Credentials.
@@ -199,8 +201,9 @@ let client = Client::builder()
 
 ```rust
 let client = Client::builder()
-    .foundry("my-resource", "claude-sonnet")
-    .build()?;
+    .auth(Auth::foundry("my-resource").await?)
+    .build()
+    .await?;
 ```
 
 **Authentication**: Uses Azure Identity chain.

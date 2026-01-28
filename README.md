@@ -22,7 +22,7 @@ English | [한국어](README.ko.md)
 | **TOCTOU-Safe File Operations** | `openat()` + `O_NOFOLLOW` | Standard file I/O |
 | **Multi-Cloud Support** | Bedrock, Vertex, Foundry | Limited or none |
 | **OS-Level Sandboxing** | Landlock, Seatbelt | None |
-| **1100+ Tests** | Production-proven | Varies |
+| **Comprehensive Tests** | Production-proven | Varies |
 
 ---
 
@@ -274,9 +274,9 @@ See: [Session Guide](docs/session.md)
 
 | Blockable | Non-Blockable |
 |-----------|---------------|
-| PreToolUse | PostToolUse, PostToolUseFailure |
-| UserPromptSubmit | Stop, SubagentStart, SubagentStop |
-| | PreCompact, SessionStart, SessionEnd |
+| PreToolUse, UserPromptSubmit | PostToolUse, PostToolUseFailure |
+| SessionStart, PreCompact | Stop, SubagentStop |
+| SubagentStart | SessionEnd |
 
 See: [Hooks Guide](docs/hooks.md)
 
@@ -291,6 +291,7 @@ mcp.add_server("filesystem", McpServerConfig::Stdio {
     command: "npx".into(),
     args: vec!["-y".into(), "@anthropic-ai/mcp-server-filesystem".into()],
     env: HashMap::new(),
+    cwd: None,
 }).await?;
 
 Agent::builder().mcp_manager(mcp).build().await?
@@ -325,6 +326,7 @@ See: [Security Guide](docs/security.md) | [Sandbox Guide](docs/sandbox.md)
 | [Subagents](docs/subagents.md) | Subagent spawning and management |
 | [Memory](docs/memory-system.md) | CLAUDE.md and @import |
 | [Hooks](docs/hooks.md) | 10 lifecycle events |
+| [Plugins](docs/plugins.md) | Plugin system and namespacing |
 | [MCP](docs/mcp.md) | External MCP servers |
 | [Session](docs/session.md) | Persistence and prompt caching |
 | [Permissions](docs/permissions.md) | Permission modes and policies |
@@ -357,6 +359,7 @@ claude-agent = { version = "0.2", features = ["mcp", "postgres"] }
 | `jsonl` | JSONL persistence (CLI-compatible) |
 | `postgres` | PostgreSQL persistence |
 | `redis-backend` | Redis persistence |
+| `plugins` | Plugin system |
 | `otel` | OpenTelemetry |
 | `full` | All features |
 
@@ -387,7 +390,7 @@ cargo run --example server_tools       # WebFetch, WebSearch
 ## Testing
 
 ```bash
-cargo test                    # 1100+ tests
+cargo test                    # Full test suite
 cargo test -- --ignored       # + live API tests
 cargo clippy --all-features   # Lint
 ```

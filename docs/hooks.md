@@ -35,10 +35,10 @@ The hooks system allows intercepting and controlling agent execution at specific
 | `PostToolUseFailure` | After failed execution | No | executor.rs |
 | `UserPromptSubmit` | When user submits prompt | Yes | executor.rs |
 | `Stop` | When agent stops | No | executor.rs |
-| `SubagentStart` | When subagent spawns | No | task.rs |
+| `SubagentStart` | When subagent spawns | Yes | task.rs |
 | `SubagentStop` | When subagent completes | No | task.rs |
-| `PreCompact` | Before context compaction | No | executor.rs |
-| `SessionStart` | When session begins | No | executor.rs |
+| `PreCompact` | Before context compaction | Yes | executor.rs |
+| `SessionStart` | When session begins | Yes | executor.rs |
 | `SessionEnd` | When session ends | No | executor.rs |
 
 ## Core Types
@@ -371,15 +371,12 @@ impl Hook for SubagentMonitorHook {
 ## Integration with Agent
 
 ```rust
-use claude_agent::{Agent, hooks::HookManager};
-
-let mut hook_manager = HookManager::new();
-hook_manager.register(SecurityHook::new());
-hook_manager.register(LoggingHook);
+use claude_agent::Agent;
 
 let agent = Agent::builder()
     .from_claude_code(".").await?
-    .with_hooks(hook_manager)
+    .hook(SecurityHook::new())
+    .hook(LoggingHook)
     .build()
     .await?;
 ```
@@ -413,3 +410,51 @@ ctx.fire_hook(
 | `FnHook` | hooks/traits.rs |
 | `HookManager` | hooks/manager.rs |
 | `CommandHook` | hooks/command.rs |
+| `HookRule` | hooks/rule.rs |
+| `HookAction` | hooks/rule.rs |
+
+## Shared Types: HookRule & HookAction
+
+`HookRule` and `HookAction` are shared types used by plugins, skills, and subagents to define lifecycle hooks in frontmatter.
+
+```rust
+pub struct HookRule {
+    pub matcher: Option<String>,   // Tool pattern (e.g., "Write|Edit")
+    pub hooks: Vec<HookAction>,
+}
+
+pub struct HookAction {
+    pub hook_type: String,         // Currently only "command"
+    pub command: Option<String>,
+    pub timeout: Option<u64>,
+}
+```
+
+### Usage in frontmatter (skills/subagents)
+
+```yaml
+hooks:
+  PreToolUse:
+    - matcher: "Write|Edit"
+      hooks:
+        - type: command
+          command: scripts/format.sh
+          timeout: 10
+```
+
+### Official hooks.json format (plugins)
+
+```json
+{
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Write|Edit",
+        "hooks": [
+          { "type": "command", "command": "fmt.sh" }
+        ]
+      }
+    ]
+  }
+}
+```

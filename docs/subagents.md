@@ -118,15 +118,18 @@ You are a code review specialist.
 
 ## Configuration Options
 
-| Field | Type | Description |
-|-------|------|-------------|
-| `name` | string | Unique identifier |
-| `description` | string | Brief description |
-| `prompt` | string | Agent instructions |
-| `tools` | array | Allowed tools |
-| `model` | string | Model override |
-| `permission-mode` | string | Permission level |
-| `skills` | array | Available skills |
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `name` | string | (required) | Unique identifier |
+| `description` | string | (required) | Brief description |
+| `tools` | string | — | Comma-separated allowed tools |
+| `model` | string | — | Model override |
+| `model_type` | string | — | Model type hint |
+| `skills` | string | — | Comma-separated available skills |
+| `permission-mode` | string | — | Permission level (see below) |
+| `disallowedTools` | string | — | Comma-separated blocked tools |
+| `source-type` | string | — | Source type (Builtin, Project, Managed, Plugin) |
+| `hooks` | object | — | Lifecycle hooks (map of event → `HookRule[]`) |
 
 ## Usage via Task Tool
 
@@ -196,12 +199,12 @@ Pattern-based restrictions:
 
 ## Permission Modes
 
-| Mode | Description |
-|------|-------------|
-| `bypass` | All operations allowed |
-| `plan` | Read-only tools only |
-| `accept-edits` | File tools only |
-| `default` | Explicit rules required |
+| Mode | Aliases | Description |
+|------|---------|-------------|
+| `bypassPermissions` | `bypass` | All operations allowed |
+| `plan` | `readonly`, `read-only` | Read-only tools only |
+| `acceptEdits` | `accept-edits` | Auto-approve file operations |
+| `default` | — | Standard permission flow with allow/deny rules |
 
 ```rust
 let subagent = SubagentIndex::new("safe-agent", "Safe agent")

@@ -1,7 +1,7 @@
 # CLAUDE.md
 
 ## Overview
-Production-ready Rust SDK for Claude API. 1100+ tests, zero runtime dependencies.
+Production-ready Rust SDK for Claude API. Comprehensive test suite, zero runtime dependencies.
 
 ## Commands
 ```bash
@@ -25,10 +25,10 @@ src/
 ├── auth/           # CredentialProvider chain, OAuth, API Key
 ├── budget/         # BudgetTracker, TenantBudgetManager, ModelPricing
 ├── client/         # API client, Provider adapters (Anthropic/Bedrock/Vertex/Foundry)
-├── common/         # Provider trait, Index trait, Named trait, SourceType
+├── common/         # Provider trait, Index trait, Named trait, SourceType, IndexLoader, ToolMatcher, SerdeDefaults
 ├── config/         # SandboxSettings, ConfigError, validation
 ├── context/        # MemoryLoader, ImportExtractor, RuleIndex
-├── hooks/          # HookManager, HookEvent (10 types), CommandHook
+├── hooks/          # HookManager, HookEvent (10 types), CommandHook, HookRule, HookAction
 ├── models/         # ModelRegistry, ModelSpec, Pricing, ProviderIds
 ├── observability/  # MetricsRegistry, TracingConfig, SpanContext
 ├── output_style/   # OutputStyle, SystemPromptGenerator
@@ -40,6 +40,7 @@ src/
 ├── session/        # Session state, Persistence backends
 ├── tools/          # 12 client tools (Read, Write, Edit, Bash, etc.)
 ├── mcp/            # MCP client integration
+├── plugins/        # PluginManager, PluginLoader, PluginDiscovery, namespace
 ├── skills/         # Skill loader and execution
 └── subagents/      # Subagent spawning (explore, plan, general)
 ```

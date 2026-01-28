@@ -74,12 +74,25 @@ Deploy the application to $ARGUMENTS environment:
 
 ## Frontmatter Options
 
-| Field | Type | Description |
-|-------|------|-------------|
-| `name` | string | Skill identifier |
-| `description` | string | Brief description |
-| `allowed-tools` | array | Tool restrictions |
-| `model` | string | Model override |
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `name` | string | (required) | Skill identifier |
+| `description` | string | (required) | Brief description |
+| `allowed-tools` | array | `[]` | Tool restrictions |
+| `model` | string | — | Model override |
+| `triggers` | array | `[]` | Keywords for auto-activation |
+| `argument-hint` | string | — | Usage hint (e.g., `"[file or PR]"`) |
+| `disable-model-invocation` | bool | `false` | Prevent model from invoking this skill |
+| `user-invocable` | bool | `true` | Whether users can invoke via slash command |
+| `context` | string | — | Additional context identifier |
+| `agent` | string | — | Target agent for execution |
+| `hooks` | object | — | Lifecycle hooks (map of event → `HookRule[]`) |
+
+## File Patterns
+
+Skills can be defined as:
+- **File**: `.claude/skills/deploy.skill.md`
+- **Directory**: `.claude/skills/deploy/SKILL.md` (for skills with supporting files)
 
 ## Activation Methods
 

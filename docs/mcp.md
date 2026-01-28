@@ -39,7 +39,6 @@ Three transport protocols supported:
 | Transport | Description | Use Case |
 |-----------|-------------|----------|
 | `Stdio` | stdin/stdout communication | Local servers |
-| `Http` | HTTP POST requests | REST APIs (not recommended) |
 | `Sse` | Server-Sent Events | Remote servers, streaming |
 
 ## Configuration
@@ -52,10 +51,7 @@ pub enum McpServerConfig {
         command: String,
         args: Vec<String>,
         env: HashMap<String, String>,
-    },
-    Http {
-        url: String,
-        headers: HashMap<String, String>,
+        cwd: Option<String>,            // Working directory
     },
     Sse {
         url: String,
@@ -85,7 +81,8 @@ In `~/.claude/settings.json` or `.claude/settings.json`:
       "args": ["-y", "@anthropic-ai/mcp-server-github"],
       "env": {
         "GITHUB_TOKEN": "${GITHUB_TOKEN}"
-      }
+      },
+      "cwd": "/path/to/project"
     },
     "remote-api": {
       "type": "sse",
@@ -109,6 +106,7 @@ let mut client = McpClient::new("filesystem", McpServerConfig::Stdio {
     command: "npx".to_string(),
     args: vec!["-y".into(), "@anthropic-ai/mcp-server-filesystem".into()],
     env: HashMap::new(),
+    cwd: None,
 });
 
 // Connect
@@ -394,18 +392,18 @@ Uses [rmcp](https://github.com/anthropics/rmcp) crate for protocol implementatio
 
 ## File Locations
 
-| Type | File | Line |
-|------|------|------|
-| `McpServerConfig` | mcp/mod.rs | 16-46 |
-| `McpConnectionStatus` | mcp/mod.rs | 48-62 |
-| `McpServerInfo` | mcp/mod.rs | 64-75 |
-| `McpToolDefinition` | mcp/mod.rs | 77-89 |
-| `McpResourceDefinition` | mcp/mod.rs | 91-105 |
-| `McpServerState` | mcp/mod.rs | 107-141 |
-| `McpError` | mcp/mod.rs | 143-213 |
-| `McpToolResult` | mcp/mod.rs | 218-226 |
-| `McpContent` | mcp/mod.rs | 228-258 |
-| `McpClient` | mcp/client.rs | 36-400 |
-| `McpManager` | mcp/manager.rs | 22-319 |
-| `ResourceManager` | mcp/resources.rs | 17-146 |
-| `ResourceQuery` | mcp/resources.rs | 148-226 |
+| Type | File |
+|------|------|
+| `McpServerConfig` | mcp/mod.rs |
+| `McpConnectionStatus` | mcp/mod.rs |
+| `McpServerInfo` | mcp/mod.rs |
+| `McpToolDefinition` | mcp/mod.rs |
+| `McpResourceDefinition` | mcp/mod.rs |
+| `McpServerState` | mcp/mod.rs |
+| `McpError` | mcp/mod.rs |
+| `McpToolResult` | mcp/mod.rs |
+| `McpContent` | mcp/mod.rs |
+| `McpClient` | mcp/client.rs |
+| `McpManager` | mcp/manager.rs |
+| `ResourceManager` | mcp/resources.rs |
+| `ResourceQuery` | mcp/resources.rs |

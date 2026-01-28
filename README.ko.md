@@ -22,7 +22,7 @@
 | **TOCTOU-Safe 파일 연산** | `openat()` + `O_NOFOLLOW` | 표준 파일 I/O |
 | **멀티 클라우드 지원** | Bedrock, Vertex, Foundry | 제한적 또는 없음 |
 | **OS 레벨 샌드박싱** | Landlock, Seatbelt | 없음 |
-| **1100+ 테스트** | 프로덕션 검증됨 | 다양함 |
+| **포괄적 테스트** | 프로덕션 검증됨 | 다양함 |
 
 ---
 
@@ -274,9 +274,9 @@ $ARGUMENTS 환경에 배포합니다.
 
 | 차단 가능 | 차단 불가 |
 |-----------|-----------|
-| PreToolUse | PostToolUse, PostToolUseFailure |
-| UserPromptSubmit | Stop, SubagentStart, SubagentStop |
-| | PreCompact, SessionStart, SessionEnd |
+| PreToolUse, UserPromptSubmit | PostToolUse, PostToolUseFailure |
+| SessionStart, PreCompact | Stop, SubagentStop |
+| SubagentStart | SessionEnd |
 
 자세한 내용: [훅 가이드](docs/hooks.md)
 
@@ -291,6 +291,7 @@ mcp.add_server("filesystem", McpServerConfig::Stdio {
     command: "npx".into(),
     args: vec!["-y".into(), "@anthropic-ai/mcp-server-filesystem".into()],
     env: HashMap::new(),
+    cwd: None,
 }).await?;
 
 Agent::builder().mcp_manager(mcp).build().await?
@@ -325,6 +326,7 @@ Agent::builder().mcp_manager(mcp).build().await?
 | [서브에이전트](docs/subagents.md) | 서브에이전트 생성 및 관리 |
 | [메모리](docs/memory-system.md) | CLAUDE.md 및 @import |
 | [훅](docs/hooks.md) | 10개 라이프사이클 이벤트 |
+| [플러그인](docs/plugins.md) | 플러그인 시스템 및 네임스페이스 |
 | [MCP](docs/mcp.md) | 외부 MCP 서버 |
 | [세션](docs/session.md) | 영속성 및 프롬프트 캐싱 |
 | [권한](docs/permissions.md) | 권한 모드 및 정책 |
@@ -357,6 +359,7 @@ claude-agent = { version = "0.2", features = ["mcp", "postgres"] }
 | `jsonl` | JSONL 영속성 (CLI 호환) |
 | `postgres` | PostgreSQL 영속성 |
 | `redis-backend` | Redis 영속성 |
+| `plugins` | 플러그인 시스템 |
 | `otel` | OpenTelemetry |
 | `full` | 모든 기능 |
 
@@ -387,7 +390,7 @@ cargo run --example server_tools       # WebFetch, WebSearch
 ## 테스트
 
 ```bash
-cargo test                    # 1100+ 테스트
+cargo test                    # 전체 테스트 스위트
 cargo test -- --ignored       # + 라이브 API 테스트
 cargo clippy --all-features   # 린트
 ```

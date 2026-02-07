@@ -62,14 +62,13 @@ tokio-util = { version = "0.7", features = ["time"] }
 
 # Utilities
 tracing = "^0.1"
-bytes = "^1.7"
+bytes = "^1.11.1"
 uuid = { version = "^1.10", features = ["v4", "serde"] }
 base64 = "0.22"
 rand = "0.9"
 
 # Authentication & directories
 directories = "6"
-dirs = { version = "6", optional = true }
 
 # MCP support - optional
 rmcp = { version = "0.12", optional = true, features = ["client", "transport-child-process", "client-side-sse", "reqwest"] }
@@ -87,9 +86,15 @@ gcp_auth = { version = "0.12", optional = true }
 azure_identity = { version = "0.30", optional = true }
 azure_core = { version = "0.30", optional = true }
 
+# Credential protection - zeroize-on-drop, redacted Debug
+secrecy = { version = "0.10", features = ["serde"] }
+
+# Decimal precision for financial calculations
+rust_decimal = { version = "1", features = ["serde", "serde-with-str"] }
+rust_decimal_macros = "1"
+
 # Persistence backends - optional
 sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio", "postgres", "json", "chrono", "uuid", "rust_decimal"], optional = true }
-rust_decimal = { version = "1", optional = true }
 redis = { version = "1", features = ["tokio-comp", "connection-manager"], optional = true }
 
 # OpenTelemetry - optional
@@ -104,6 +109,7 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"], optional = tr
 pdf-extract = { version = "0.10", optional = true }
 
 dashmap = "^6.1"
+ahash = "0.8"
 
 [dev-dependencies]
 tokio-test = "0.4"
@@ -120,7 +126,7 @@ cli-integration = []    # ClaudeCliProvider, file-based loaders
 mcp = ["rmcp"]
 
 # Plugin system with namespace-based resource management
-plugins = ["cli-integration", "dirs"]
+plugins = ["cli-integration"]
 
 # Multimedia support for Read tool (PDF, images)
 multimedia = ["pdf-extract"]
@@ -134,15 +140,15 @@ azure = ["azure_identity", "azure_core"]
 cloud-all = ["aws", "gcp", "azure"]
 
 # Persistence backends
-jsonl = ["dirs"]
-postgres = ["sqlx", "rust_decimal"]
+jsonl = []
+postgres = ["sqlx"]
 redis-backend = ["redis"]
 persistence-all = ["jsonl", "postgres", "redis-backend"]
 
 # OpenTelemetry observability
 otel = ["opentelemetry", "opentelemetry_sdk", "opentelemetry-otlp", "opentelemetry-semantic-conventions", "tracing-opentelemetry", "tracing-subscriber"]
 
-# Full feature set
+# Full feature set (excludes multimedia - heavy native dependency, enable separately if needed)
 full = ["mcp", "cloud-all", "persistence-all", "otel", "plugins"]
 
 [[example]]
@@ -156,6 +162,10 @@ path = "examples/all_tools_test.rs"
 [[example]]
 name = "server_tools"
 path = "examples/server_tools.rs"
+
+[[example]]
+name = "sandbox_verification"
+path = "examples/sandbox_verification.rs"
 
 [package.metadata.docs.rs]
 all-features = true

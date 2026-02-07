@@ -48,17 +48,21 @@ impl RequestBuilder {
         }
     }
 
-    pub fn with_prepared_tools(mut self, prepared: PreparedTools) -> Self {
+    pub fn prepared_tools(mut self, prepared: PreparedTools) -> Self {
         self.prepared_mcp_tools = Some(prepared);
         self
+    }
+
+    pub fn set_model(&mut self, model: &str) {
+        self.model = model.to_string();
     }
 
     pub fn build(&self, messages: Vec<Message>, dynamic_rules: &str) -> CreateMessageRequest {
         let system_prompt = self.build_system_prompt_blocks(dynamic_rules);
 
         let mut request = CreateMessageRequest::new(&self.model, messages)
-            .with_max_tokens(self.max_tokens)
-            .with_system(system_prompt);
+            .max_tokens(self.max_tokens)
+            .system(system_prompt);
 
         // Build tool definitions with optional Progressive Disclosure
         request = match &self.prepared_mcp_tools {
@@ -85,7 +89,7 @@ impl RequestBuilder {
                 tools.extend(prepared.deferred.iter().cloned());
 
                 if !tools.is_empty() {
-                    request = request.with_tools(tools);
+                    request = request.tools(tools);
                 }
 
                 // Add ToolSearchTool when threshold exceeded
@@ -94,7 +98,7 @@ impl RequestBuilder {
                         SearchMode::Regex => ToolSearchTool::regex(),
                         SearchMode::Bm25 => ToolSearchTool::bm25(),
                     };
-                    request = request.with_tool_search(tool_search);
+                    request = request.tool_search(tool_search);
                 }
 
                 request
@@ -103,7 +107,7 @@ impl RequestBuilder {
                 // Standard mode: all tools from registry
                 let tool_defs = self.tools.definitions();
                 if !tool_defs.is_empty() {
-                    request.with_tools(tool_defs)
+                    request.tools(tool_defs)
                 } else {
                     request
                 }
@@ -112,17 +116,17 @@ impl RequestBuilder {
 
         if self.tool_access.is_allowed("WebSearch") {
             let web_search = self.server_tools.web_search.clone().unwrap_or_default();
-            request = request.with_web_search(web_search);
+            request = request.web_search(web_search);
         }
 
         if self.tool_access.is_allowed("WebFetch") {
             let web_fetch = self.server_tools.web_fetch.clone().unwrap_or_default();
-            request = request.with_web_fetch(web_fetch);
+            request = request.web_fetch(web_fetch);
         }
 
         // Add structured output schema if configured
         if let Some(ref schema) = self.output_schema {
-            request = request.with_json_schema(schema.clone());
+            request = request.json_schema(schema.clone());
         }
 
         request
@@ -172,14 +176,14 @@ impl RequestBuilder {
         working_dir: Option<&PathBuf>,
         output_style: Option<&OutputStyle>,
     ) -> String {
-        let mut generator = SystemPromptGenerator::new().with_model(model);
+        let mut generator = SystemPromptGenerator::new().model(model);
 
         if let Some(dir) = working_dir {
-            generator = generator.with_working_dir(dir);
+            generator = generator.working_dir(dir);
         }
 
         if let Some(style) = output_style {
-            generator = generator.with_style(style.clone());
+            generator = generator.output_style(style.clone());
         }
 
         generator.generate()

@@ -219,8 +219,8 @@ fn test_agent_state_transitions() {
 #[test]
 fn test_hook_context_builder() {
     let hook_context = HookContext::new("session-1")
-        .with_cwd(std::path::PathBuf::from("/test/dir"))
-        .with_env([("KEY".to_string(), "VALUE".to_string())].into());
+        .cwd(std::path::PathBuf::from("/test/dir"))
+        .env([("KEY".to_string(), "VALUE".to_string())].into());
 
     assert_eq!(hook_context.session_id, "session-1");
     assert_eq!(
@@ -246,7 +246,7 @@ fn test_hook_event_can_block() {
     assert!(HookEvent::PreToolUse.can_block());
     assert!(HookEvent::UserPromptSubmit.can_block());
     assert!(HookEvent::SessionStart.can_block());
-    assert!(HookEvent::PreCompact.can_block());
+    assert!(!HookEvent::PreCompact.can_block());
     assert!(HookEvent::SubagentStart.can_block());
 
     // Non-blockable events (fail-open)
@@ -397,7 +397,7 @@ fn test_tool_registry_with_dummy() {
 async fn test_tool_registry_execute() {
     use helpers::DummyTool;
 
-    let mut registry = ToolRegistry::with_context(ExecutionContext::permissive());
+    let mut registry = ToolRegistry::from_context(ExecutionContext::permissive());
     let tool = Arc::new(DummyTool {
         name: "TestTool".to_string(),
         output: ToolOutput::Success("test output".to_string()),

@@ -45,6 +45,31 @@ pub struct AgentResult {
 }
 
 impl AgentResult {
+    pub(crate) fn new(
+        text: String,
+        usage: Usage,
+        iterations: usize,
+        stop_reason: StopReason,
+        metrics: AgentMetrics,
+        session_id: String,
+        structured_output: Option<serde_json::Value>,
+        messages: Vec<Message>,
+    ) -> Self {
+        Self {
+            tool_calls: metrics.tool_calls,
+            state: AgentState::Completed,
+            uuid: uuid::Uuid::new_v4().to_string(),
+            text,
+            usage,
+            iterations,
+            stop_reason,
+            metrics,
+            session_id,
+            structured_output,
+            messages,
+        }
+    }
+
     #[must_use]
     pub fn text(&self) -> &str {
         &self.text

@@ -83,7 +83,7 @@ impl Hook for InputModifyingHook {
         _input: HookInput,
         _hook_context: &HookContext,
     ) -> crate::Result<HookOutput> {
-        Ok(HookOutput::allow().with_updated_input(serde_json::json!({
+        Ok(HookOutput::allow().updated_input(serde_json::json!({
             "file_path": "/modified/path"
         })))
     }

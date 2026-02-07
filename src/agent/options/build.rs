@@ -37,7 +37,7 @@ impl AgentBuilder {
                 .and_then(|id| m.get(id))
         });
 
-        let mut agent = crate::agent::Agent::with_orchestrator(
+        let mut agent = crate::agent::Agent::from_orchestrator(
             client,
             self.config,
             tools,
@@ -46,19 +46,19 @@ impl AgentBuilder {
         );
 
         if let Some(messages) = self.initial_messages {
-            agent = agent.with_initial_messages(messages);
+            agent = agent.initial_messages(messages);
         }
         if let Some(id) = self.resume_session_id {
-            agent = agent.with_session_id(id);
+            agent = agent.session_id(id);
         }
         if let Some(mcp) = self.mcp_manager {
-            agent = agent.with_mcp_manager(mcp);
+            agent = agent.mcp_manager(mcp);
         }
         if let Some(budget) = tenant_budget {
-            agent = agent.with_tenant_budget(budget);
+            agent = agent.tenant_budget(budget);
         }
         if let Some(tsm) = self.tool_search_manager {
-            agent = agent.with_tool_search_manager(tsm);
+            agent = agent.tool_search_manager(tsm);
         }
 
         Ok(agent)
@@ -81,25 +81,25 @@ impl AgentBuilder {
         };
 
         let builtins = InMemoryOutputStyleProvider::new()
-            .with_items(builtin_styles())
-            .with_priority(0)
-            .with_source_type(SourceType::Builtin);
+            .items(builtin_styles())
+            .priority(0)
+            .source_type(SourceType::Builtin);
 
-        let mut chain = ChainOutputStyleProvider::new().with(builtins);
+        let mut chain = ChainOutputStyleProvider::new().provider(builtins);
 
         if let Some(ref working_dir) = self.config.working_dir {
             let project = file_output_style_provider()
-                .with_project_path(working_dir)
-                .with_priority(20)
-                .with_source_type(SourceType::Project);
-            chain = chain.with(project);
+                .project_path(working_dir)
+                .priority(20)
+                .source_type(SourceType::Project);
+            chain = chain.provider(project);
         }
 
         let user = file_output_style_provider()
-            .with_user_path()
-            .with_priority(10)
-            .with_source_type(SourceType::User);
-        chain = chain.with(user);
+            .user_path()
+            .priority(10)
+            .source_type(SourceType::User);
+        chain = chain.provider(user);
 
         if let Ok(Some(style)) = chain.get(name).await {
             self.config.prompt.output_style = Some(style);
@@ -179,7 +179,7 @@ impl AgentBuilder {
             let config = self.tool_search_config.take().unwrap_or_else(|| {
                 let context_window =
                     crate::types::context_window::for_model(&self.config.model.primary) as usize;
-                ToolSearchConfig::default().with_context_window(context_window)
+                ToolSearchConfig::default().context_window(context_window)
             });
             Arc::new(ToolSearchManager::new(config))
         };
@@ -189,7 +189,6 @@ impl AgentBuilder {
             manager.set_toolset_registry(registry);
         }
 
-        // Build the search index from MCP tools
         manager.build_index(mcp_manager).await;
 
         let prepared = manager.prepare_tools().await;
@@ -292,7 +291,7 @@ impl AgentBuilder {
             *count += 1;
             let mut hook =
                 crate::hooks::CommandHook::from_event_config(hook_name, entry.event, &entry.config);
-            hook = hook.with_env(
+            hook = hook.env(
                 "CLAUDE_PLUGIN_ROOT",
                 entry.plugin_root.display().to_string(),
             );
@@ -304,7 +303,7 @@ impl AgentBuilder {
         let mut static_context = StaticContext::new();
 
         if let Some(ref prompt) = self.config.prompt.system_prompt {
-            static_context = static_context.with_system_prompt(prompt.clone());
+            static_context = static_context.system_prompt(prompt.clone());
         }
 
         let mut claude_md = String::new();
@@ -318,7 +317,7 @@ impl AgentBuilder {
         }
 
         if !claude_md.is_empty() {
-            static_context = static_context.with_claude_md(claude_md);
+            static_context = static_context.claude_md(claude_md);
         }
 
         // Get skill registry for building summary
@@ -329,7 +328,7 @@ impl AgentBuilder {
             for skill in skill_registry.iter() {
                 lines.push(skill.to_summary_line());
             }
-            static_context = static_context.with_skill_summary(lines.join("\n"));
+            static_context = static_context.skill_summary(lines.join("\n"));
         }
 
         let mut rule_registry: IndexRegistry<RuleIndex> = IndexRegistry::new();
@@ -341,13 +340,13 @@ impl AgentBuilder {
                 }
                 lines.join("\n")
             };
-            static_context = static_context.with_rules_summary(summary);
+            static_context = static_context.rules_summary(summary);
             rule_registry.register_all(rule_indices);
         }
 
         PromptOrchestrator::new(static_context, &self.config.model.primary)
-            .with_rule_registry(rule_registry)
-            .with_skill_registry(skill_registry)
+            .rule_registry(rule_registry)
+            .skill_registry(skill_registry)
     }
 
     async fn build_tools(&mut self) -> Arc<ToolRegistry> {
@@ -421,7 +420,7 @@ impl AgentBuilder {
             .take()
             .unwrap_or_else(|| ProviderConfig::new(models));
 
-        config = config.with_max_tokens(self.config.model.max_tokens);
+        config = config.max_tokens(self.config.model.max_tokens);
 
         if self.supports_server_tools() {
             config.beta.add(crate::client::BetaFeature::WebSearch);
@@ -464,7 +463,7 @@ impl AgentBuilder {
             #[cfg(feature = "aws")]
             CloudProvider::Bedrock => {
                 let region = self.aws_region.take().unwrap_or_else(|| "us-east-1".into());
-                builder = builder.with_aws_region(region);
+                builder = builder.aws_region(region);
             }
             #[cfg(feature = "gcp")]
             CloudProvider::Vertex => {
@@ -476,14 +475,14 @@ impl AgentBuilder {
                     .gcp_region
                     .take()
                     .unwrap_or_else(|| "us-central1".into());
-                builder = builder.with_gcp(project, region);
+                builder = builder.gcp(project, region);
             }
             #[cfg(feature = "azure")]
             CloudProvider::Foundry => {
                 let resource = self.azure_resource.take().ok_or_else(|| {
                     crate::Error::Config("Foundry requires azure_resource".into())
                 })?;
-                builder = builder.with_azure_resource(resource);
+                builder = builder.azure_resource(resource);
             }
         }
 

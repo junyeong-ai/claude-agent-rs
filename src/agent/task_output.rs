@@ -11,6 +11,7 @@ use crate::session::SessionState;
 use crate::tools::{ExecutionContext, SchemaTool};
 use crate::types::ToolResult;
 
+#[derive(Clone)]
 pub struct TaskOutputTool {
     registry: TaskRegistry,
 }
@@ -18,14 +19,6 @@ pub struct TaskOutputTool {
 impl TaskOutputTool {
     pub fn new(registry: TaskRegistry) -> Self {
         Self { registry }
-    }
-}
-
-impl Clone for TaskOutputTool {
-    fn clone(&self) -> Self {
-        Self {
-            registry: self.registry.clone(),
-        }
     }
 }
 

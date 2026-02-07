@@ -6,6 +6,7 @@ use std::time::Duration;
 
 use tokio::sync::{RwLock, oneshot};
 use tokio::task::JoinHandle;
+use tracing::warn;
 
 use crate::session::{
     Persistence, Session, SessionConfig, SessionId, SessionMessage, SessionState, SessionType,
@@ -37,12 +38,12 @@ impl TaskRegistry {
         }
     }
 
-    pub fn with_parent_session(mut self, parent_id: SessionId) -> Self {
+    pub fn parent_session(mut self, parent_id: SessionId) -> Self {
         self.parent_session_id = Some(parent_id);
         self
     }
 
-    pub fn with_ttl(mut self, ttl: Duration) -> Self {
+    pub fn ttl(mut self, ttl: Duration) -> Self {
         self.default_ttl = Some(ttl);
         self
     }
@@ -77,7 +78,9 @@ impl TaskRegistry {
         session.id = session_id;
         session.state = SessionState::Active;
 
-        let _ = self.persistence.save(&session).await;
+        if let Err(e) = self.persistence.save(&session).await {
+            warn!(session_id = %session_id, error = %e, "Failed to save task session on register");
+        }
 
         let mut runtime = self.runtime.write().await;
         runtime.insert(
@@ -101,19 +104,29 @@ impl TaskRegistry {
     pub async fn complete(&self, id: &str, result: AgentResult) {
         let session_id = SessionId::from(id);
 
-        if let Ok(Some(mut session)) = self.persistence.load(&session_id).await {
-            session.state = SessionState::Completed;
+        match self.persistence.load(&session_id).await {
+            Ok(Some(mut session)) => {
+                session.state = SessionState::Completed;
 
-            for msg in &result.messages {
-                let content: Vec<ContentBlock> = msg.content.clone();
-                let session_msg = match msg.role {
-                    Role::User => SessionMessage::user(content),
-                    Role::Assistant => SessionMessage::assistant(content),
-                };
-                session.add_message(session_msg);
+                for msg in &result.messages {
+                    let content: Vec<ContentBlock> = msg.content.clone();
+                    let session_msg = match msg.role {
+                        Role::User => SessionMessage::user(content),
+                        Role::Assistant => SessionMessage::assistant(content),
+                    };
+                    session.add_message(session_msg);
+                }
+
+                if let Err(e) = self.persistence.save(&session).await {
+                    warn!(session_id = %session_id, error = %e, "Failed to save completed task session");
+                }
             }
-
-            let _ = self.persistence.save(&session).await;
+            Ok(None) => {
+                warn!(session_id = %session_id, "Task session not found on complete");
+            }
+            Err(e) => {
+                warn!(session_id = %session_id, error = %e, "Failed to load task session on complete");
+            }
         }
 
         let mut runtime = self.runtime.write().await;
@@ -123,10 +136,20 @@ impl TaskRegistry {
     pub async fn fail(&self, id: &str, error: String) {
         let session_id = SessionId::from(id);
 
-        if let Ok(Some(mut session)) = self.persistence.load(&session_id).await {
-            session.state = SessionState::Failed;
-            session.error = Some(error);
-            let _ = self.persistence.save(&session).await;
+        match self.persistence.load(&session_id).await {
+            Ok(Some(mut session)) => {
+                session.state = SessionState::Failed;
+                session.error = Some(error);
+                if let Err(e) = self.persistence.save(&session).await {
+                    warn!(session_id = %session_id, error = %e, "Failed to save failed task session");
+                }
+            }
+            Ok(None) => {
+                warn!(session_id = %session_id, "Task session not found on fail");
+            }
+            Err(e) => {
+                warn!(session_id = %session_id, error = %e, "Failed to load task session on fail");
+            }
         }
 
         let mut runtime = self.runtime.write().await;
@@ -152,9 +175,21 @@ impl TaskRegistry {
             }
         };
 
-        if cancelled && let Ok(Some(mut session)) = self.persistence.load(&session_id).await {
-            session.state = SessionState::Cancelled;
-            let _ = self.persistence.save(&session).await;
+        if cancelled {
+            match self.persistence.load(&session_id).await {
+                Ok(Some(mut session)) => {
+                    session.state = SessionState::Cancelled;
+                    if let Err(e) = self.persistence.save(&session).await {
+                        warn!(session_id = %session_id, error = %e, "Failed to save cancelled task session");
+                    }
+                }
+                Ok(None) => {
+                    warn!(session_id = %session_id, "Task session not found on cancel");
+                }
+                Err(e) => {
+                    warn!(session_id = %session_id, error = %e, "Failed to load task session on cancel");
+                }
+            }
         }
 
         cancelled
@@ -250,16 +285,26 @@ impl TaskRegistry {
     pub async fn save_messages(&self, id: &str, messages: Vec<Message>) {
         let session_id = SessionId::from(id);
 
-        if let Ok(Some(mut session)) = self.persistence.load(&session_id).await {
-            for msg in messages {
-                let content: Vec<ContentBlock> = msg.content;
-                let session_msg = match msg.role {
-                    Role::User => SessionMessage::user(content),
-                    Role::Assistant => SessionMessage::assistant(content),
-                };
-                session.add_message(session_msg);
+        match self.persistence.load(&session_id).await {
+            Ok(Some(mut session)) => {
+                for msg in messages {
+                    let content: Vec<ContentBlock> = msg.content;
+                    let session_msg = match msg.role {
+                        Role::User => SessionMessage::user(content),
+                        Role::Assistant => SessionMessage::assistant(content),
+                    };
+                    session.add_message(session_msg);
+                }
+                if let Err(e) = self.persistence.save(&session).await {
+                    warn!(session_id = %session_id, error = %e, "Failed to save task messages");
+                }
             }
-            let _ = self.persistence.save(&session).await;
+            Ok(None) => {
+                warn!(session_id = %session_id, "Task session not found when saving messages");
+            }
+            Err(e) => {
+                warn!(session_id = %session_id, error = %e, "Failed to load task session when saving messages");
+            }
         }
     }
 

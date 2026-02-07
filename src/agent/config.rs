@@ -6,6 +6,8 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::time::Duration;
 
+use rust_decimal::Decimal;
+
 use crate::client::messages::DEFAULT_MAX_TOKENS;
 use crate::output_style::OutputStyle;
 use crate::permissions::PermissionPolicy;
@@ -43,17 +45,17 @@ impl AgentModelConfig {
         }
     }
 
-    pub fn with_small(mut self, small: impl Into<String>) -> Self {
+    pub fn small(mut self, small: impl Into<String>) -> Self {
         self.small = small.into();
         self
     }
 
-    pub fn with_max_tokens(mut self, tokens: u32) -> Self {
+    pub fn max_tokens(mut self, tokens: u32) -> Self {
         self.max_tokens = tokens;
         self
     }
 
-    pub fn with_extended_context(mut self, enabled: bool) -> Self {
+    pub fn extended_context(mut self, enabled: bool) -> Self {
         self.extended_context = enabled;
         self
     }
@@ -83,19 +85,19 @@ impl Default for ExecutionConfig {
             timeout: Some(Duration::from_secs(300)),
             chunk_timeout: Duration::from_secs(60),
             auto_compact: true,
-            compact_threshold: crate::types::DEFAULT_COMPACT_THRESHOLD,
+            compact_threshold: crate::session::compact::DEFAULT_COMPACT_THRESHOLD,
             compact_keep_messages: 4,
         }
     }
 }
 
 impl ExecutionConfig {
-    pub fn with_max_iterations(mut self, max: usize) -> Self {
+    pub fn max_iterations(mut self, max: usize) -> Self {
         self.max_iterations = max;
         self
     }
 
-    pub fn with_timeout(mut self, timeout: Duration) -> Self {
+    pub fn timeout(mut self, timeout: Duration) -> Self {
         self.timeout = Some(timeout);
         self
     }
@@ -105,22 +107,22 @@ impl ExecutionConfig {
         self
     }
 
-    pub fn with_chunk_timeout(mut self, timeout: Duration) -> Self {
+    pub fn chunk_timeout(mut self, timeout: Duration) -> Self {
         self.chunk_timeout = timeout;
         self
     }
 
-    pub fn with_auto_compact(mut self, enabled: bool) -> Self {
+    pub fn auto_compact(mut self, enabled: bool) -> Self {
         self.auto_compact = enabled;
         self
     }
 
-    pub fn with_compact_threshold(mut self, threshold: f32) -> Self {
+    pub fn compact_threshold(mut self, threshold: f32) -> Self {
         self.compact_threshold = threshold.clamp(0.0, 1.0);
         self
     }
 
-    pub fn with_compact_keep_messages(mut self, count: usize) -> Self {
+    pub fn compact_keep_messages(mut self, count: usize) -> Self {
         self.compact_keep_messages = count;
         self
     }
@@ -154,22 +156,22 @@ impl SecurityConfig {
         }
     }
 
-    pub fn with_permission_policy(mut self, policy: PermissionPolicy) -> Self {
+    pub fn permission_policy(mut self, policy: PermissionPolicy) -> Self {
         self.permission_policy = policy;
         self
     }
 
-    pub fn with_tool_access(mut self, access: ToolAccess) -> Self {
+    pub fn tool_access(mut self, access: ToolAccess) -> Self {
         self.tool_access = access;
         self
     }
 
-    pub fn with_env(mut self, key: impl Into<String>, value: impl Into<String>) -> Self {
+    pub fn env(mut self, key: impl Into<String>, value: impl Into<String>) -> Self {
         self.env.insert(key.into(), value.into());
         self
     }
 
-    pub fn with_envs(
+    pub fn envs(
         mut self,
         vars: impl IntoIterator<Item = (impl Into<String>, impl Into<String>)>,
     ) -> Self {
@@ -184,7 +186,7 @@ impl SecurityConfig {
 #[derive(Debug, Clone, Default)]
 pub struct BudgetConfig {
     /// Maximum cost in USD
-    pub max_cost_usd: Option<f64>,
+    pub max_cost_usd: Option<Decimal>,
     /// Tenant identifier for multi-tenant tracking
     pub tenant_id: Option<String>,
     /// Model to fall back to when budget exceeded
@@ -196,17 +198,17 @@ impl BudgetConfig {
         Self::default()
     }
 
-    pub fn with_max_cost(mut self, usd: f64) -> Self {
+    pub fn max_cost(mut self, usd: Decimal) -> Self {
         self.max_cost_usd = Some(usd);
         self
     }
 
-    pub fn with_tenant(mut self, tenant_id: impl Into<String>) -> Self {
+    pub fn tenant(mut self, tenant_id: impl Into<String>) -> Self {
         self.tenant_id = Some(tenant_id.into());
         self
     }
 
-    pub fn with_fallback(mut self, model: impl Into<String>) -> Self {
+    pub fn fallback(mut self, model: impl Into<String>) -> Self {
         self.fallback_model = Some(model.into());
         self
     }
@@ -235,27 +237,27 @@ pub enum SystemPromptMode {
 }
 
 impl PromptConfig {
-    pub fn with_system_prompt(mut self, prompt: impl Into<String>) -> Self {
+    pub fn system_prompt(mut self, prompt: impl Into<String>) -> Self {
         self.system_prompt = Some(prompt.into());
         self
     }
 
-    pub fn with_append_mode(mut self) -> Self {
+    pub fn append_mode(mut self) -> Self {
         self.system_prompt_mode = SystemPromptMode::Append;
         self
     }
 
-    pub fn with_output_style(mut self, style: OutputStyle) -> Self {
+    pub fn output_style(mut self, style: OutputStyle) -> Self {
         self.output_style = Some(style);
         self
     }
 
-    pub fn with_output_schema(mut self, schema: serde_json::Value) -> Self {
+    pub fn output_schema(mut self, schema: serde_json::Value) -> Self {
         self.output_schema = Some(schema);
         self
     }
 
-    pub fn with_structured_output<T: schemars::JsonSchema>(mut self) -> Self {
+    pub fn structured_output<T: schemars::JsonSchema>(mut self) -> Self {
         let schema = schemars::schema_for!(T);
         self.output_schema = serde_json::to_value(schema).ok();
         self
@@ -348,19 +350,19 @@ impl CacheConfig {
     }
 
     /// Set the cache strategy
-    pub fn with_strategy(mut self, strategy: CacheStrategy) -> Self {
+    pub fn strategy(mut self, strategy: CacheStrategy) -> Self {
         self.strategy = strategy;
         self
     }
 
     /// Set the TTL for static content
-    pub fn with_static_ttl(mut self, ttl: crate::types::CacheTtl) -> Self {
+    pub fn static_ttl(mut self, ttl: crate::types::CacheTtl) -> Self {
         self.static_ttl = ttl;
         self
     }
 
     /// Set the TTL for message content
-    pub fn with_message_ttl(mut self, ttl: crate::types::CacheTtl) -> Self {
+    pub fn message_ttl(mut self, ttl: crate::types::CacheTtl) -> Self {
         self.message_ttl = ttl;
         self
     }
@@ -389,20 +391,6 @@ pub struct ServerToolsConfig {
 }
 
 impl ServerToolsConfig {
-    pub fn web_search() -> Self {
-        Self {
-            web_search: Some(crate::types::WebSearchTool::default()),
-            web_fetch: None,
-        }
-    }
-
-    pub fn web_fetch() -> Self {
-        Self {
-            web_search: None,
-            web_fetch: Some(crate::types::WebFetchTool::default()),
-        }
-    }
-
     pub fn all() -> Self {
         Self {
             web_search: Some(crate::types::WebSearchTool::default()),
@@ -410,12 +398,12 @@ impl ServerToolsConfig {
         }
     }
 
-    pub fn with_web_search(mut self, config: crate::types::WebSearchTool) -> Self {
+    pub fn web_search(mut self, config: crate::types::WebSearchTool) -> Self {
         self.web_search = Some(config);
         self
     }
 
-    pub fn with_web_fetch(mut self, config: crate::types::WebFetchTool) -> Self {
+    pub fn web_fetch(mut self, config: crate::types::WebFetchTool) -> Self {
         self.web_fetch = Some(config);
         self
     }
@@ -440,47 +428,47 @@ impl AgentConfig {
         Self::default()
     }
 
-    pub fn with_model(mut self, config: AgentModelConfig) -> Self {
+    pub fn model(mut self, config: AgentModelConfig) -> Self {
         self.model = config;
         self
     }
 
-    pub fn with_execution(mut self, config: ExecutionConfig) -> Self {
+    pub fn execution(mut self, config: ExecutionConfig) -> Self {
         self.execution = config;
         self
     }
 
-    pub fn with_security(mut self, config: SecurityConfig) -> Self {
+    pub fn security(mut self, config: SecurityConfig) -> Self {
         self.security = config;
         self
     }
 
-    pub fn with_budget(mut self, config: BudgetConfig) -> Self {
+    pub fn budget(mut self, config: BudgetConfig) -> Self {
         self.budget = config;
         self
     }
 
-    pub fn with_prompt(mut self, config: PromptConfig) -> Self {
+    pub fn prompt(mut self, config: PromptConfig) -> Self {
         self.prompt = config;
         self
     }
 
-    pub fn with_cache(mut self, config: CacheConfig) -> Self {
+    pub fn cache(mut self, config: CacheConfig) -> Self {
         self.cache = config;
         self
     }
 
-    pub fn with_working_dir(mut self, dir: impl Into<PathBuf>) -> Self {
+    pub fn working_dir(mut self, dir: impl Into<PathBuf>) -> Self {
         self.working_dir = Some(dir.into());
         self
     }
 
-    pub fn with_server_tools(mut self, config: ServerToolsConfig) -> Self {
+    pub fn server_tools(mut self, config: ServerToolsConfig) -> Self {
         self.server_tools = config;
         self
     }
 
-    pub fn with_coding_mode(mut self, enabled: bool) -> Self {
+    pub fn coding_mode(mut self, enabled: bool) -> Self {
         self.coding_mode = enabled;
         self
     }
@@ -488,15 +476,17 @@ impl AgentConfig {
 
 #[cfg(test)]
 mod tests {
+    use rust_decimal_macros::dec;
+
     use super::*;
 
     #[test]
     fn test_model_config() {
-        let config = AgentModelConfig::new("claude-opus-4")
-            .with_small("claude-haiku")
-            .with_max_tokens(4096);
+        let config = AgentModelConfig::new("claude-opus-4-6")
+            .small("claude-haiku")
+            .max_tokens(4096);
 
-        assert_eq!(config.primary, "claude-opus-4");
+        assert_eq!(config.primary, "claude-opus-4-6");
         assert_eq!(config.small, "claude-haiku");
         assert_eq!(config.max_tokens, 4096);
     }
@@ -504,9 +494,9 @@ mod tests {
     #[test]
     fn test_execution_config() {
         let config = ExecutionConfig::default()
-            .with_max_iterations(50)
-            .with_timeout(Duration::from_secs(600))
-            .with_auto_compact(false);
+            .max_iterations(50)
+            .timeout(Duration::from_secs(600))
+            .auto_compact(false);
 
         assert_eq!(config.max_iterations, 50);
         assert_eq!(config.timeout, Some(Duration::from_secs(600)));
@@ -515,7 +505,7 @@ mod tests {
 
     #[test]
     fn test_security_config() {
-        let config = SecurityConfig::permissive().with_env("API_KEY", "secret");
+        let config = SecurityConfig::permissive().env("API_KEY", "secret");
 
         assert_eq!(config.env.get("API_KEY"), Some(&"secret".to_string()));
     }
@@ -523,11 +513,11 @@ mod tests {
     #[test]
     fn test_budget_config() {
         let config = BudgetConfig::unlimited()
-            .with_max_cost(10.0)
-            .with_tenant("org-123")
-            .with_fallback("claude-haiku");
+            .max_cost(dec!(10))
+            .tenant("org-123")
+            .fallback("claude-haiku");
 
-        assert_eq!(config.max_cost_usd, Some(10.0));
+        assert_eq!(config.max_cost_usd, Some(dec!(10)));
         assert_eq!(config.tenant_id, Some("org-123".to_string()));
         assert_eq!(config.fallback_model, Some("claude-haiku".to_string()));
     }
@@ -535,12 +525,12 @@ mod tests {
     #[test]
     fn test_agent_config() {
         let config = AgentConfig::new()
-            .with_model(AgentModelConfig::new("claude-opus-4"))
-            .with_budget(BudgetConfig::unlimited().with_max_cost(5.0))
-            .with_working_dir("/project");
+            .model(AgentModelConfig::new("claude-opus-4-6"))
+            .budget(BudgetConfig::unlimited().max_cost(dec!(5)))
+            .working_dir("/project");
 
-        assert_eq!(config.model.primary, "claude-opus-4");
-        assert_eq!(config.budget.max_cost_usd, Some(5.0));
+        assert_eq!(config.model.primary, "claude-opus-4-6");
+        assert_eq!(config.budget.max_cost_usd, Some(dec!(5)));
         assert_eq!(config.working_dir, Some(PathBuf::from("/project")));
     }
 
@@ -590,8 +580,8 @@ mod tests {
     #[test]
     fn test_cache_config_with_ttl() {
         let config = CacheConfig::default()
-            .with_static_ttl(crate::types::CacheTtl::FiveMinutes)
-            .with_message_ttl(crate::types::CacheTtl::OneHour);
+            .static_ttl(crate::types::CacheTtl::FiveMinutes)
+            .message_ttl(crate::types::CacheTtl::OneHour);
 
         assert_eq!(config.static_ttl, crate::types::CacheTtl::FiveMinutes);
         assert_eq!(config.message_ttl, crate::types::CacheTtl::OneHour);

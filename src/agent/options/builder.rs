@@ -27,6 +27,8 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
+use rust_decimal::Decimal;
+
 use crate::auth::{Credential, OAuthConfig};
 use crate::budget::TenantBudgetManager;
 use crate::client::{CloudProvider, FallbackConfig, ModelConfig, ProviderConfig};
@@ -39,7 +41,7 @@ use crate::skills::SkillIndex;
 use crate::subagents::{SubagentIndex, builtin_subagents};
 use crate::tools::{Tool, ToolAccess};
 
-use crate::agent::config::{AgentConfig, SystemPromptMode};
+use crate::agent::config::{AgentConfig, CacheConfig, SystemPromptMode};
 
 /// Default number of messages to preserve during context compaction.
 pub const DEFAULT_COMPACT_KEEP_MESSAGES: usize = 4;
@@ -172,7 +174,7 @@ impl AgentBuilder {
         }
 
         let credential = auth.resolve().await?;
-        if !credential.is_default() {
+        if !credential.is_placeholder() {
             self.credential = Some(credential);
         }
 
@@ -191,12 +193,20 @@ impl AgentBuilder {
         self
     }
 
-    /// Returns whether the current auth method supports server-side tools.
+    /// Returns whether server-side tools should be enabled.
+    ///
+    /// Requires both auth support and ToolAccess allowing "WebSearch" or "WebFetch".
     pub fn supports_server_tools(&self) -> bool {
-        self.auth_type
+        let auth_supports = self
+            .auth_type
             .as_ref()
             .map(|a| a.supports_server_tools())
-            .unwrap_or(true)
+            .unwrap_or(true);
+
+        let access_allows = self.config.security.tool_access.is_allowed("WebSearch")
+            || self.config.security.tool_access.is_allowed("WebFetch");
+
+        auth_supports && access_allows
     }
 
     // =========================================================================
@@ -339,6 +349,22 @@ impl AgentBuilder {
     }
 
     // =========================================================================
+    // Caching
+    // =========================================================================
+
+    /// Configures prompt caching strategy.
+    ///
+    /// # Options
+    /// - `CacheConfig::default()` - Full caching (system + messages)
+    /// - `CacheConfig::system_only()` - System prompt only (1h TTL)
+    /// - `CacheConfig::messages_only()` - Messages only (5m TTL)
+    /// - `CacheConfig::disabled()` - No caching
+    pub fn cache(mut self, config: CacheConfig) -> Self {
+        self.config.cache = config;
+        self
+    }
+
+    // =========================================================================
     // Prompts
     // =========================================================================
 
@@ -402,27 +428,23 @@ impl AgentBuilder {
         self
     }
 
-    /// Adds a rule to allow a tool or pattern.
+    /// Adds a rule to allow a tool or pattern (e.g., `"Read"` or `"Bash(git:*)"`)
     pub fn allow_tool(mut self, pattern: impl Into<String>) -> Self {
-        let pattern = pattern.into();
-        let rule = if pattern.contains('(') && pattern.contains(')') {
-            PermissionRule::allow_scoped(&pattern)
-        } else {
-            PermissionRule::allow(&pattern)
-        };
-        self.config.security.permission_policy.rules.push(rule);
+        self.config
+            .security
+            .permission_policy
+            .rules
+            .push(PermissionRule::allow_pattern(pattern));
         self
     }
 
-    /// Adds a rule to deny a tool or pattern.
+    /// Adds a rule to deny a tool or pattern (e.g., `"Write"` or `"Bash(rm:*)"`)
     pub fn deny_tool(mut self, pattern: impl Into<String>) -> Self {
-        let pattern = pattern.into();
-        let rule = if pattern.contains('(') && pattern.contains(')') {
-            PermissionRule::deny_scoped(&pattern)
-        } else {
-            PermissionRule::deny(&pattern)
-        };
-        self.config.security.permission_policy.rules.push(rule);
+        self.config
+            .security
+            .permission_policy
+            .rules
+            .push(PermissionRule::deny_pattern(pattern));
         self
     }
 
@@ -493,7 +515,7 @@ impl AgentBuilder {
     // =========================================================================
 
     /// Sets the maximum budget in USD.
-    pub fn max_budget_usd(mut self, amount: f64) -> Self {
+    pub fn max_budget_usd(mut self, amount: Decimal) -> Self {
         self.config.budget.max_cost_usd = Some(amount);
         self
     }
@@ -635,7 +657,7 @@ impl AgentBuilder {
     // =========================================================================
 
     /// Enables tool search with default configuration.
-    pub fn with_tool_search(mut self) -> Self {
+    pub fn tool_search(mut self) -> Self {
         self.tool_search_config = Some(crate::tools::ToolSearchConfig::default());
         self
     }

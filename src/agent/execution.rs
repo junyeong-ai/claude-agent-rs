@@ -1,74 +1,24 @@
 //! Agent execution logic with session-based context management.
 
-use std::path::Path;
 use std::sync::Arc;
 use std::time::Instant;
 
-use tokio::sync::RwLock;
 use tracing::{debug, info, instrument, warn};
 
-use super::common::BudgetContext;
+use super::AgentMetrics;
+use super::common::{
+    self, BudgetContext, accumulate_inner_usage, accumulate_response_usage, handle_compaction,
+    run_post_tool_hooks, run_stop_hooks, try_activate_dynamic_rules,
+};
 use super::events::AgentResult;
 use super::executor::Agent;
 use super::request::RequestBuilder;
-use super::state_formatter::collect_compaction_state;
-use super::{AgentMetrics, AgentState};
-use crate::context::PromptOrchestrator;
 use crate::hooks::{HookContext, HookEvent, HookInput};
-use crate::session::ExecutionGuard;
 use crate::types::{
-    CompactResult, ContentBlock, Message, PermissionDenial, StopReason, ToolResultBlock, Usage,
-    context_window,
+    ContentBlock, Message, PermissionDenial, StopReason, ToolResultBlock, Usage, context_window,
 };
 
 impl Agent {
-    async fn handle_compaction<'a>(
-        &self,
-        _guard: &ExecutionGuard<'a>,
-        hook_ctx: &HookContext,
-        metrics: &mut AgentMetrics,
-    ) {
-        let pre_compact_input = HookInput::pre_compact(&*self.session_id);
-        if let Err(e) = self
-            .hooks
-            .execute(HookEvent::PreCompact, pre_compact_input, hook_ctx)
-            .await
-        {
-            warn!(error = %e, "PreCompact hook failed");
-        }
-
-        debug!("Compacting session context");
-        let compact_result = self
-            .state
-            .compact(&self.client, self.config.execution.compact_keep_messages)
-            .await;
-
-        match compact_result {
-            Ok(CompactResult::Compacted { saved_tokens, .. }) => {
-                info!(saved_tokens, "Session context compacted");
-                metrics.record_compaction();
-
-                let state_sections = collect_compaction_state(&self.tools).await;
-                if !state_sections.is_empty() {
-                    self.state
-                        .with_session_mut(|session| {
-                            session.add_user_message(format!(
-                                "<system-reminder>\n# State preserved after compaction\n\n{}\n</system-reminder>",
-                                state_sections.join("\n\n")
-                            ));
-                        })
-                        .await;
-                }
-            }
-            Ok(CompactResult::NotNeeded | CompactResult::Skipped { .. }) => {
-                debug!("Compaction skipped or not needed");
-            }
-            Err(e) => {
-                warn!(error = %e, "Session compaction failed");
-            }
-        }
-    }
-
     fn check_budget(&self) -> crate::Result<()> {
         BudgetContext {
             tracker: &self.budget_tracker,
@@ -99,20 +49,18 @@ impl Agent {
     }
 
     async fn wait_for_execution(&self, timeout: std::time::Duration) -> crate::Result<AgentResult> {
-        let start = Instant::now();
-        loop {
-            if start.elapsed() > timeout {
-                return Err(crate::Error::Timeout(timeout));
+        tokio::time::timeout(timeout, async {
+            loop {
+                self.state.wait_for_queue_signal().await;
+                if !self.state.is_executing()
+                    && let Some(merged) = self.state.dequeue_or_merge().await
+                {
+                    return self.execute_inner(&merged.content).await;
+                }
             }
-
-            if !self.state.is_executing()
-                && let Some(merged) = self.state.dequeue_or_merge().await
-            {
-                return self.execute_inner(&merged.content).await;
-            }
-
-            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
-        }
+        })
+        .await
+        .map_err(|_| crate::Error::Timeout(timeout))?
     }
 
     pub async fn execute_with_messages(
@@ -148,7 +96,7 @@ impl Agent {
 
     #[instrument(skip(self, prompt), fields(session_id = %self.session_id))]
     async fn execute_inner(&self, prompt: &str) -> crate::Result<AgentResult> {
-        let guard = self.state.acquire_execution().await;
+        let _guard = self.state.acquire_execution().await;
         let execution_start = Instant::now();
         let hook_ctx = self.hook_context();
 
@@ -201,11 +149,9 @@ impl Agent {
         let mut dynamic_rules_context = String::new();
         let mut total_usage = Usage::default();
 
-        // Build request builder with optional MCP Progressive Disclosure
-        let request_builder = {
+        let mut request_builder = {
             let builder = RequestBuilder::new(&self.config, Arc::clone(&self.tools));
 
-            // Connect ToolSearchManager for Progressive Disclosure of MCP tools
             if let Some(ref tsm) = self.tool_search_manager {
                 let prepared = tsm.prepare_tools().await;
                 if prepared.use_search {
@@ -216,7 +162,7 @@ impl Agent {
                         "MCP Progressive Disclosure active"
                     );
                 }
-                builder.with_prepared_tools(prepared)
+                builder.prepared_tools(prepared)
             } else {
                 builder
             }
@@ -236,6 +182,15 @@ impl Agent {
             }
 
             self.check_budget()?;
+
+            let budget_ctx = BudgetContext {
+                tracker: &self.budget_tracker,
+                tenant: self.tenant_budget.as_deref(),
+                config: &self.config.budget,
+            };
+            if let Some(fallback) = budget_ctx.fallback_model() {
+                request_builder.set_model(fallback);
+            }
 
             debug!(iteration = metrics.iterations, "Starting iteration");
 
@@ -259,22 +214,14 @@ impl Agent {
                 })
                 .await;
 
-            total_usage.input_tokens += response.usage.input_tokens;
-            total_usage.output_tokens += response.usage.output_tokens;
-            metrics.add_usage_with_cache(&response.usage);
-            metrics.record_model_usage(&self.config.model.primary, &response.usage);
-
-            if let Some(ref server_usage) = response.usage.server_tool_use {
-                metrics.update_server_tool_use_from_api(server_usage);
-            }
-
-            let cost = self
-                .budget_tracker
-                .record(&self.config.model.primary, &response.usage);
-            metrics.add_cost(cost);
-            if let Some(ref tenant_budget) = self.tenant_budget {
-                tenant_budget.record(&self.config.model.primary, &response.usage);
-            }
+            accumulate_response_usage(
+                &mut total_usage,
+                &mut metrics,
+                &self.budget_tracker,
+                self.tenant_budget.as_deref(),
+                &self.config.model.primary,
+                &response.usage,
+            );
 
             final_text = response.text();
             final_stop_reason = response.stop_reason.unwrap_or(StopReason::EndTurn);
@@ -316,7 +263,7 @@ impl Agent {
                     blocked.push(ToolResultBlock::error(&tool_use.id, reason.clone()));
                     metrics.record_permission_denial(
                         PermissionDenial::new(&tool_use.name, &tool_use.id, tool_use.input.clone())
-                            .with_reason(reason),
+                            .reason(reason),
                     );
                 } else {
                     let input = pre_output.updated_input.unwrap_or(tool_use.input.clone());
@@ -347,66 +294,34 @@ impl Agent {
                 debug!(tool = %name, duration_ms, is_error, "Tool execution completed");
                 metrics.record_tool(&id, &name, duration_ms, is_error);
 
-                if let Some(ref inner_usage) = result.inner_usage {
-                    self.state
-                        .with_session_mut(|session| {
-                            session.update_usage(inner_usage);
-                        })
-                        .await;
-                    total_usage.input_tokens += inner_usage.input_tokens;
-                    total_usage.output_tokens += inner_usage.output_tokens;
-                    metrics.add_usage(inner_usage.input_tokens, inner_usage.output_tokens);
-                    let inner_model = result.inner_model.as_deref().unwrap_or("claude-haiku-4-5");
-                    metrics.record_model_usage(inner_model, inner_usage);
+                accumulate_inner_usage(
+                    &self.state,
+                    &mut total_usage,
+                    &mut metrics,
+                    &self.budget_tracker,
+                    &result,
+                    &name,
+                )
+                .await;
 
-                    let inner_cost = self.budget_tracker.record(inner_model, inner_usage);
-                    metrics.add_cost(inner_cost);
+                try_activate_dynamic_rules(
+                    &name,
+                    &input,
+                    &self.orchestrator,
+                    &mut dynamic_rules_context,
+                )
+                .await;
 
-                    debug!(
-                        tool = %name,
-                        model = %inner_model,
-                        input_tokens = inner_usage.input_tokens,
-                        output_tokens = inner_usage.output_tokens,
-                        cost_usd = inner_cost,
-                        "Accumulated inner usage from tool"
-                    );
-                }
+                run_post_tool_hooks(
+                    &self.hooks,
+                    &hook_ctx,
+                    &self.session_id,
+                    &name,
+                    is_error,
+                    &result,
+                )
+                .await;
 
-                if let Some(file_path) = extract_file_path(&name, &input)
-                    && let Some(ref orchestrator) = self.orchestrator
-                {
-                    let new_rules = activate_rules_for_file(orchestrator, &file_path).await;
-                    if !new_rules.is_empty() {
-                        dynamic_rules_context =
-                            build_dynamic_rules_context(orchestrator, &file_path).await;
-                        debug!(rules = ?new_rules, "Activated rules for file");
-                    }
-                }
-
-                if is_error {
-                    let failure_input = HookInput::post_tool_use_failure(
-                        &*self.session_id,
-                        &name,
-                        result.error_message(),
-                    );
-                    if let Err(e) = self
-                        .hooks
-                        .execute(HookEvent::PostToolUseFailure, failure_input, &hook_ctx)
-                        .await
-                    {
-                        warn!(tool = %name, error = %e, "PostToolUseFailure hook failed");
-                    }
-                } else {
-                    let post_input =
-                        HookInput::post_tool_use(&*self.session_id, &name, result.output.clone());
-                    if let Err(e) = self
-                        .hooks
-                        .execute(HookEvent::PostToolUse, post_input, &hook_ctx)
-                        .await
-                    {
-                        warn!(tool = %name, error = %e, "PostToolUse hook failed");
-                    }
-                }
                 results.push(ToolResultBlock::from_tool_result(&id, &result));
             }
 
@@ -421,43 +336,23 @@ impl Agent {
                 break;
             }
 
-            let should_compact = self
-                .state
-                .with_session(|session| {
-                    self.config.execution.auto_compact
-                        && session.should_compact(
-                            max_tokens,
-                            self.config.execution.compact_threshold,
-                            self.config.execution.compact_keep_messages,
-                        )
-                })
-                .await;
-
-            if should_compact {
-                self.handle_compaction(&guard, &hook_ctx, &mut metrics)
-                    .await;
-            }
+            handle_compaction(
+                &self.state,
+                &self.client,
+                &self.tools,
+                &self.hooks,
+                &hook_ctx,
+                &self.session_id,
+                &self.config.execution,
+                max_tokens,
+                &mut metrics,
+            )
+            .await;
         }
 
         metrics.execution_time_ms = execution_start.elapsed().as_millis() as u64;
 
-        let stop_input = HookInput::stop(&*self.session_id);
-        if let Err(e) = self
-            .hooks
-            .execute(HookEvent::Stop, stop_input, &hook_ctx)
-            .await
-        {
-            warn!(error = %e, "Stop hook failed");
-        }
-
-        let session_end_input = HookInput::session_end(&*self.session_id);
-        if let Err(e) = self
-            .hooks
-            .execute(HookEvent::SessionEnd, session_end_input, &hook_ctx)
-            .await
-        {
-            warn!(error = %e, "SessionEnd hook failed");
-        }
+        run_stop_hooks(&self.hooks, &hook_ctx, &self.session_id).await;
 
         info!(
             iterations = metrics.iterations,
@@ -473,80 +368,33 @@ impl Agent {
             .with_session(|session| session.to_api_messages())
             .await;
 
-        drop(guard);
-
         let structured_output = self.extract_structured_output(&final_text);
-        Ok(AgentResult {
-            text: final_text,
-            usage: total_usage,
-            tool_calls: metrics.tool_calls,
-            iterations: metrics.iterations,
-            stop_reason: final_stop_reason,
-            state: AgentState::Completed,
+        Ok(AgentResult::new(
+            final_text,
+            total_usage,
+            metrics.iterations,
+            final_stop_reason,
             metrics,
-            session_id: self.session_id.to_string(),
+            self.session_id.to_string(),
             structured_output,
             messages,
-            uuid: uuid::Uuid::new_v4().to_string(),
-        })
+        ))
     }
 
     pub(crate) fn hook_context(&self) -> HookContext {
         HookContext::new(&*self.session_id)
-            .with_cwd(self.config.working_dir.clone().unwrap_or_default())
-            .with_env(self.config.security.env.clone())
+            .cwd(self.config.working_dir.clone().unwrap_or_default())
+            .env(self.config.security.env.clone())
     }
 
-    /// Extract structured output from text if output_schema is configured.
-    ///
-    /// When structured outputs are enabled via `output_format`, the API returns
-    /// pure JSON in `response.content[0].text`. This method parses that JSON.
-    ///
-    /// Returns `None` if:
-    /// - `output_schema` is not configured
-    /// - The response is not valid JSON (e.g., `stop_reason: "refusal"` or `"max_tokens"`)
     fn extract_structured_output(&self, text: &str) -> Option<serde_json::Value> {
-        // Only extract if output_schema is configured
-        self.config.prompt.output_schema.as_ref()?;
-
-        // With structured outputs enabled, API returns pure JSON directly
-        serde_json::from_str(text).ok()
+        common::extract_structured_output(self.config.prompt.output_schema.as_ref(), text)
     }
-}
-
-pub(crate) fn extract_file_path(tool_name: &str, input: &serde_json::Value) -> Option<String> {
-    match tool_name {
-        "Read" | "Write" | "Edit" => input
-            .get("file_path")
-            .and_then(|v| v.as_str())
-            .map(String::from),
-        "Glob" | "Grep" => input.get("path").and_then(|v| v.as_str()).map(String::from),
-        _ => None,
-    }
-}
-
-pub(crate) async fn activate_rules_for_file(
-    orchestrator: &Arc<RwLock<PromptOrchestrator>>,
-    file_path: &str,
-) -> Vec<String> {
-    let orch = orchestrator.read().await;
-    let path = Path::new(file_path);
-    let rules = orch.find_matching_rules(path).await;
-    rules.iter().map(|r| r.name.clone()).collect()
-}
-
-pub(crate) async fn build_dynamic_rules_context(
-    orchestrator: &Arc<RwLock<PromptOrchestrator>>,
-    file_path: &str,
-) -> String {
-    let orch = orchestrator.read().await;
-    let path = Path::new(file_path);
-    orch.build_dynamic_context(Some(path)).await
 }
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use super::common::extract_file_path;
 
     #[test]
     fn test_extract_file_path() {
@@ -561,56 +409,5 @@ mod tests {
 
         let input = serde_json::json!({"command": "ls"});
         assert_eq!(extract_file_path("Bash", &input), None);
-    }
-
-    #[test]
-    fn test_extract_file_path_all_tools() {
-        let file_input = serde_json::json!({"file_path": "/test/file.rs"});
-        let path_input = serde_json::json!({"path": "/test/dir"});
-
-        assert_eq!(
-            extract_file_path("Read", &file_input),
-            Some("/test/file.rs".to_string())
-        );
-        assert_eq!(
-            extract_file_path("Write", &file_input),
-            Some("/test/file.rs".to_string())
-        );
-        assert_eq!(
-            extract_file_path("Edit", &file_input),
-            Some("/test/file.rs".to_string())
-        );
-
-        assert_eq!(
-            extract_file_path("Glob", &path_input),
-            Some("/test/dir".to_string())
-        );
-        assert_eq!(
-            extract_file_path("Grep", &path_input),
-            Some("/test/dir".to_string())
-        );
-
-        assert_eq!(extract_file_path("WebFetch", &file_input), None);
-        assert_eq!(extract_file_path("Task", &file_input), None);
-    }
-
-    #[test]
-    fn test_extract_file_path_missing_field() {
-        let empty = serde_json::json!({});
-        assert_eq!(extract_file_path("Read", &empty), None);
-        assert_eq!(extract_file_path("Glob", &empty), None);
-
-        let wrong_field = serde_json::json!({"other": "value"});
-        assert_eq!(extract_file_path("Read", &wrong_field), None);
-        assert_eq!(extract_file_path("Glob", &wrong_field), None);
-    }
-
-    #[test]
-    fn test_extract_file_path_non_string() {
-        let input = serde_json::json!({"file_path": 123});
-        assert_eq!(extract_file_path("Read", &input), None);
-
-        let input = serde_json::json!({"path": null});
-        assert_eq!(extract_file_path("Glob", &input), None);
     }
 }

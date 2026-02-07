@@ -33,15 +33,12 @@ impl TaskTool {
         }
     }
 
-    pub fn with_subagent_registry(
-        mut self,
-        subagent_registry: IndexRegistry<SubagentIndex>,
-    ) -> Self {
+    pub fn subagent_registry(mut self, subagent_registry: IndexRegistry<SubagentIndex>) -> Self {
         self.subagent_registry = subagent_registry;
         self
     }
 
-    pub fn with_max_background_tasks(mut self, max: usize) -> Self {
+    pub fn max_background_tasks(mut self, max: usize) -> Self {
         self.max_background_tasks = max;
         self
     }
@@ -133,6 +130,38 @@ Usage notes:
     }
 }
 
+impl TaskTool {
+    async fn fire_start_hook(
+        context: &ExecutionContext,
+        session_id: &str,
+        agent_id: &str,
+        subagent_type: &str,
+        description: &str,
+    ) {
+        context
+            .fire_hook(
+                HookEvent::SubagentStart,
+                HookInput::subagent_start(session_id, agent_id, subagent_type, description),
+            )
+            .await;
+    }
+
+    async fn fire_stop_hook(
+        context: &ExecutionContext,
+        session_id: &str,
+        agent_id: &str,
+        success: bool,
+        error: Option<String>,
+    ) {
+        context
+            .fire_hook(
+                HookEvent::SubagentStop,
+                HookInput::subagent_stop(session_id, agent_id, success, error),
+            )
+            .await;
+    }
+}
+
 impl Clone for TaskTool {
     fn clone(&self) -> Self {
         Self {
@@ -177,34 +206,11 @@ impl SchemaTool for TaskTool {
     type Input = TaskInput;
 
     const NAME: &'static str = "Task";
-    const DESCRIPTION: &'static str = r#"Launch a new agent to handle complex, multi-step tasks autonomously.
+    const DESCRIPTION: &'static str = "Launch a new agent to handle complex, multi-step tasks autonomously. Use description_with_subagents() for the full dynamic description including available agent types.";
 
-The Task tool launches specialized agents (subprocesses) that autonomously handle complex tasks. Each agent type has specific capabilities and tools available to it.
-
-Available agent types and the tools they have access to:
-- general: General-purpose agent for researching complex questions, searching for code, and executing multi-step tasks. When you are searching for a keyword or file and are not confident that you will find the right match in the first few tries use this agent to perform the search for you. (Tools: *)
-- explore: Fast agent specialized for exploring codebases. Use this when you need to quickly find files by patterns (e.g., "src/**/*.ts"), search code for keywords (e.g., "API endpoints"), or answer questions about the codebase (e.g., "how do API endpoints work?"). When calling this agent, specify the desired thoroughness level: "quick" for basic searches, "medium" for moderate exploration, or "very thorough" for comprehensive analysis across multiple locations and naming conventions. (Tools: Read, Grep, Glob, Bash)
-- plan: Software architect agent for designing implementation plans. Use this when you need to plan the implementation strategy for a task. Returns step-by-step plans, identifies critical files, and considers architectural trade-offs. (Tools: *)
-
-When using the Task tool, you must specify a subagent_type parameter to select which agent type to use.
-
-When NOT to use the Task tool:
-- If you want to read a specific file path, use the Read or Glob tool instead of the Task tool, to find the match more quickly
-- If you are searching for a specific class definition like "class Foo", use the Grep tool instead, to find the match more quickly
-- If you are searching for code within a specific file or set of 2-3 files, use the Read tool instead of the Task tool, to find the match more quickly
-- Other tasks that are not related to the agent descriptions above
-
-Usage notes:
-- Always include a short description (3-5 words) summarizing what the agent will do
-- Launch multiple agents concurrently whenever possible, to maximize performance; to do that, use a single message with multiple tool uses
-- When the agent is done, it will return a single message back to you along with its agent_id. You can use this ID to resume the agent later if needed for follow-up work.
-- You can optionally run agents in the background using the run_in_background parameter. When an agent runs in the background, you will need to use TaskOutput to retrieve its results once it's done. You can continue to work while background agents run - when you need their results to continue you can use TaskOutput in blocking mode to pause and wait for their results.
-- Agents can be resumed using the `resume` parameter by passing the agent ID from a previous invocation. When resumed, the agent continues with its full previous context preserved. When NOT resuming, each invocation starts fresh and you should provide a detailed task description with all necessary context.
-- Provide clear, detailed prompts so the agent can work autonomously and return exactly the information you need.
-- The agent's outputs should generally be trusted
-- Clearly tell the agent whether you expect it to write code or just to do research (search, file reads, web fetches, etc.), since it is not aware of the user's intent
-- If you need to launch multiple agents in parallel, send a single message with multiple Task tool calls.
-- Use model="haiku" for quick, straightforward tasks to minimize cost and latency"#;
+    fn custom_description(&self) -> Option<String> {
+        Some(self.description_with_subagents())
+    }
 
     async fn handle(&self, input: TaskInput, context: &ExecutionContext) -> ToolResult {
         let previous_messages = if let Some(ref resume_id) = input.resume {
@@ -239,18 +245,14 @@ Usage notes:
                 )
                 .await;
 
-            // Fire SubagentStart hook
-            context
-                .fire_hook(
-                    HookEvent::SubagentStart,
-                    HookInput::subagent_start(
-                        &session_id,
-                        &agent_id,
-                        &input.subagent_type,
-                        &input.description,
-                    ),
-                )
-                .await;
+            Self::fire_start_hook(
+                context,
+                &session_id,
+                &agent_id,
+                &input.subagent_type,
+                &input.description,
+            )
+            .await;
 
             let registry = self.registry.clone();
             let task_id = agent_id.clone();
@@ -267,29 +269,17 @@ Usage notes:
                             Ok(agent_result) => {
                                 registry.save_messages(&task_id, agent_result.messages.clone()).await;
                                 registry.complete(&task_id, agent_result).await;
-                                // Fire SubagentStop hook (success)
-                                context_clone.fire_hook(
-                                    HookEvent::SubagentStop,
-                                    HookInput::subagent_stop(&session_id_clone, &task_id, true, None),
-                                ).await;
+                                Self::fire_stop_hook(&context_clone, &session_id_clone, &task_id, true, None).await;
                             }
                             Err(e) => {
                                 let error_msg = e.to_string();
                                 registry.fail(&task_id, error_msg.clone()).await;
-                                // Fire SubagentStop hook (failure)
-                                context_clone.fire_hook(
-                                    HookEvent::SubagentStop,
-                                    HookInput::subagent_stop(&session_id_clone, &task_id, false, Some(error_msg)),
-                                ).await;
+                                Self::fire_stop_hook(&context_clone, &session_id_clone, &task_id, false, Some(error_msg)).await;
                             }
                         }
                     }
                     _ = cancel_rx => {
-                        // Fire SubagentStop hook (cancelled)
-                        context_clone.fire_hook(
-                            HookEvent::SubagentStop,
-                            HookInput::subagent_stop(&session_id_clone, &task_id, false, Some("Cancelled".to_string())),
-                        ).await;
+                        Self::fire_stop_hook(&context_clone, &session_id_clone, &task_id, false, Some("Cancelled".to_string())).await;
                     }
                 }
             });
@@ -310,32 +300,21 @@ Usage notes:
                 )
             }))
         } else {
-            // Fire SubagentStart hook
-            context
-                .fire_hook(
-                    HookEvent::SubagentStart,
-                    HookInput::subagent_start(
-                        &session_id,
-                        &agent_id,
-                        &input.subagent_type,
-                        &input.description,
-                    ),
-                )
-                .await;
+            Self::fire_start_hook(
+                context,
+                &session_id,
+                &agent_id,
+                &input.subagent_type,
+                &input.description,
+            )
+            .await;
 
             match self.spawn_agent(&input, previous_messages).await {
                 Ok(agent_result) => {
                     self.registry
                         .save_messages(&agent_id, agent_result.messages.clone())
                         .await;
-
-                    // Fire SubagentStop hook (success)
-                    context
-                        .fire_hook(
-                            HookEvent::SubagentStop,
-                            HookInput::subagent_stop(&session_id, &agent_id, true, None),
-                        )
-                        .await;
+                    Self::fire_stop_hook(context, &session_id, &agent_id, true, None).await;
 
                     let output = TaskOutput {
                         agent_id,
@@ -349,19 +328,14 @@ Usage notes:
                 }
                 Err(e) => {
                     let error_msg = e.to_string();
-
-                    // Fire SubagentStop hook (failure)
-                    context
-                        .fire_hook(
-                            HookEvent::SubagentStop,
-                            HookInput::subagent_stop(
-                                &session_id,
-                                &agent_id,
-                                false,
-                                Some(error_msg.clone()),
-                            ),
-                        )
-                        .await;
+                    Self::fire_stop_hook(
+                        context,
+                        &session_id,
+                        &agent_id,
+                        false,
+                        Some(error_msg.clone()),
+                    )
+                    .await;
 
                     let output = TaskOutput {
                         agent_id,
@@ -402,7 +376,7 @@ mod tests {
     async fn test_max_background_limit() {
         use crate::session::MemoryPersistence;
         let registry = TaskRegistry::new(std::sync::Arc::new(MemoryPersistence::new()));
-        let tool = TaskTool::new(registry.clone()).with_max_background_tasks(1);
+        let tool = TaskTool::new(registry.clone()).max_background_tasks(1);
         let context = test_context();
 
         registry
@@ -436,6 +410,6 @@ mod tests {
         assert!(subagent_registry.contains("Plan"));
         assert!(subagent_registry.contains("general-purpose"));
 
-        let _tool = TaskTool::new(registry).with_subagent_registry(subagent_registry);
+        let _tool = TaskTool::new(registry).subagent_registry(subagent_registry);
     }
 }

@@ -10,7 +10,7 @@ use crate::budget::{BudgetTracker, TenantBudget};
 use crate::context::PromptOrchestrator;
 use crate::hooks::HookManager;
 use crate::session::ToolState;
-use crate::tools::{ToolRegistry, ToolRegistryBuilder, ToolSearchManager};
+use crate::tools::{ToolRegistry, ToolSearchManager};
 use crate::types::Message;
 
 pub struct Agent {
@@ -29,7 +29,17 @@ pub struct Agent {
 }
 
 impl Agent {
-    pub fn new(client: Client, config: AgentConfig) -> Self {
+    pub fn new(client: Client, mut config: AgentConfig) -> Self {
+        let model_config = &client.config().models;
+        let resolved_primary = model_config.resolve_alias(&config.model.primary);
+        if resolved_primary != config.model.primary {
+            config.model.primary = resolved_primary.to_string();
+        }
+        let resolved_small = model_config.resolve_alias(&config.model.small);
+        if resolved_small != config.model.small {
+            config.model.small = resolved_small.to_string();
+        }
+
         let tools = ToolRegistry::default_tools(
             config.security.tool_access.clone(),
             config.working_dir.clone(),
@@ -44,46 +54,7 @@ impl Agent {
         )
     }
 
-    pub fn with_skills(
-        client: Client,
-        config: AgentConfig,
-        skill_executor: crate::skills::SkillExecutor,
-    ) -> Self {
-        let mut builder = ToolRegistryBuilder::new()
-            .access(config.security.tool_access.clone())
-            .skill_executor(skill_executor)
-            .policy(config.security.permission_policy.clone());
-
-        if let Some(dir) = config.working_dir.clone() {
-            builder = builder.working_dir(dir);
-        }
-
-        let tools = builder.build();
-        Self::from_parts(
-            Arc::new(client),
-            Arc::new(config),
-            Arc::new(tools),
-            Arc::new(HookManager::new()),
-            None,
-        )
-    }
-
-    pub fn with_components(
-        client: Client,
-        config: AgentConfig,
-        tools: ToolRegistry,
-        hooks: HookManager,
-    ) -> Self {
-        Self::from_parts(
-            Arc::new(client),
-            Arc::new(config),
-            Arc::new(tools),
-            Arc::new(hooks),
-            None,
-        )
-    }
-
-    pub fn with_orchestrator(
+    pub(crate) fn from_orchestrator(
         client: Client,
         config: AgentConfig,
         tools: Arc<ToolRegistry>,
@@ -99,22 +70,7 @@ impl Agent {
         )
     }
 
-    pub fn with_shared_tools(
-        client: Client,
-        config: AgentConfig,
-        tools: Arc<ToolRegistry>,
-        hooks: HookManager,
-    ) -> Self {
-        Self::from_parts(
-            Arc::new(client),
-            Arc::new(config),
-            tools,
-            Arc::new(hooks),
-            None,
-        )
-    }
-
-    fn from_parts(
+    pub(crate) fn from_parts(
         client: Arc<Client>,
         config: Arc<AgentConfig>,
         tools: Arc<ToolRegistry>,
@@ -125,8 +81,6 @@ impl Agent {
             Some(max) => BudgetTracker::new(max),
             None => BudgetTracker::unlimited(),
         };
-
-        let config = Self::resolve_model_aliases(config, &client);
 
         let state = tools
             .tool_state()
@@ -150,69 +104,27 @@ impl Agent {
         }
     }
 
-    fn resolve_model_aliases(config: Arc<AgentConfig>, client: &Client) -> Arc<AgentConfig> {
-        let model_config = &client.config().models;
-
-        let primary = &config.model.primary;
-        let resolved_primary = model_config.resolve_alias(primary);
-
-        let small = &config.model.small;
-        let resolved_small = model_config.resolve_alias(small);
-
-        // Only create new Arc if aliases changed
-        if resolved_primary != primary || resolved_small != small {
-            let mut new_config = (*config).clone();
-            if resolved_primary != primary {
-                tracing::debug!(
-                    alias = %primary,
-                    resolved = %resolved_primary,
-                    "Resolved primary model alias"
-                );
-                new_config.model.primary = resolved_primary.to_string();
-            }
-            if resolved_small != small {
-                tracing::debug!(
-                    alias = %small,
-                    resolved = %resolved_small,
-                    "Resolved small model alias"
-                );
-                new_config.model.small = resolved_small.to_string();
-            }
-            Arc::new(new_config)
-        } else {
-            config
-        }
-    }
-
-    pub fn with_tenant_budget(mut self, budget: Arc<TenantBudget>) -> Self {
+    pub(crate) fn tenant_budget(mut self, budget: Arc<TenantBudget>) -> Self {
         self.tenant_budget = Some(budget);
         self
     }
 
-    pub fn with_mcp_manager(mut self, manager: Arc<crate::mcp::McpManager>) -> Self {
+    pub(crate) fn mcp_manager(mut self, manager: Arc<crate::mcp::McpManager>) -> Self {
         self.mcp_manager = Some(manager);
         self
     }
 
-    pub fn mcp_manager(&self) -> Option<&Arc<crate::mcp::McpManager>> {
-        self.mcp_manager.as_ref()
-    }
-
-    pub fn with_tool_search_manager(mut self, manager: Arc<ToolSearchManager>) -> Self {
+    pub(crate) fn tool_search_manager(mut self, manager: Arc<ToolSearchManager>) -> Self {
         self.tool_search_manager = Some(manager);
         self
     }
 
-    pub fn tool_search_manager(&self) -> Option<&Arc<ToolSearchManager>> {
-        self.tool_search_manager.as_ref()
-    }
-
-    pub fn with_initial_messages(mut self, messages: Vec<Message>) -> Self {
+    pub(crate) fn initial_messages(mut self, messages: Vec<Message>) -> Self {
         self.initial_messages = Some(messages);
         self
     }
 
-    pub fn with_session_id(mut self, id: impl Into<String>) -> Self {
+    pub(crate) fn session_id(mut self, id: impl Into<String>) -> Self {
         self.session_id = id.into().into();
         self
     }
@@ -222,7 +134,8 @@ impl Agent {
         super::AgentBuilder::new()
     }
 
-    pub fn with_model(model: impl Into<String>) -> super::AgentBuilder {
+    /// Shortcut for `Agent::builder().model(model)`.
+    pub fn model(model: impl Into<String>) -> super::AgentBuilder {
         super::AgentBuilder::new().model(model)
     }
 
@@ -236,7 +149,7 @@ impl Agent {
     }
 
     #[must_use]
-    pub fn session_id(&self) -> &str {
+    pub fn get_session_id(&self) -> &str {
         &self.session_id
     }
 

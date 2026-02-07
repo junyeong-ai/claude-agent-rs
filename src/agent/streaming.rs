@@ -1,6 +1,5 @@
 //! Agent streaming execution with session-based context management.
 
-use std::path::Path;
 use std::pin::Pin;
 use std::sync::Arc;
 use std::time::Instant;
@@ -9,21 +8,22 @@ use futures::{Stream, StreamExt, stream};
 use tokio::sync::RwLock;
 use tracing::{debug, warn};
 
-use super::common::BudgetContext;
+use super::common::{
+    BudgetContext, accumulate_inner_usage, accumulate_response_usage, handle_compaction,
+    run_post_tool_hooks, run_stop_hooks, try_activate_dynamic_rules,
+};
 use super::events::{AgentEvent, AgentResult};
-use super::execution::extract_file_path;
 use super::executor::Agent;
 use super::request::RequestBuilder;
-use super::state_formatter::collect_compaction_state;
-use super::{AgentConfig, AgentMetrics, AgentState};
+use super::{AgentConfig, AgentMetrics};
 use crate::budget::{BudgetTracker, TenantBudget};
 use crate::client::{RecoverableStream, StreamItem};
 use crate::context::PromptOrchestrator;
 use crate::hooks::{HookContext, HookEvent, HookInput, HookManager};
 use crate::session::ToolState;
 use crate::types::{
-    CompactResult, ContentBlock, PermissionDenial, StopReason, StreamEvent, ToolResultBlock,
-    ToolUseBlock, Usage, context_window,
+    ContentBlock, PermissionDenial, StopReason, StreamEvent, ToolResultBlock, ToolUseBlock, Usage,
+    context_window,
 };
 use crate::{Client, ToolRegistry};
 
@@ -46,14 +46,7 @@ impl Agent {
                 .enqueue(prompt)
                 .await
                 .map_err(|e| crate::Error::Session(format!("Queue full: {}", e)))?;
-        } else {
-            self.state
-                .with_session_mut(|session| {
-                    session.add_user_message(prompt);
-                })
-                .await;
         }
-
         let state = StreamState::new(
             StreamStateConfig {
                 tool_state: self.state.clone(),
@@ -69,6 +62,7 @@ impl Agent {
                 tenant_budget: self.tenant_budget.clone(),
             },
             timeout,
+            prompt.to_string(),
         );
 
         Ok(stream::unfold(state, |mut state| async move {
@@ -123,10 +117,13 @@ struct StreamState {
     final_text: String,
     total_usage: Usage,
     phase: Phase,
+    session_started: bool,
+    prompt_submitted: bool,
+    initial_prompt: Option<String>,
 }
 
 impl StreamState {
-    fn new(cfg: StreamStateConfig, timeout: std::time::Duration) -> Self {
+    fn new(cfg: StreamStateConfig, timeout: std::time::Duration, prompt: String) -> Self {
         let chunk_timeout = cfg.config.execution.chunk_timeout;
         let now = Instant::now();
         Self {
@@ -142,23 +139,36 @@ impl StreamState {
             final_text: String::new(),
             total_usage: Usage::default(),
             phase: Phase::StartRequest,
+            session_started: false,
+            prompt_submitted: false,
+            initial_prompt: Some(prompt),
         }
     }
 
-    /// Extract structured output from text if output_schema is configured.
-    ///
-    /// When structured outputs are enabled via `output_format`, the API returns
-    /// pure JSON in `response.content[0].text`. This method parses that JSON.
-    ///
-    /// Returns `None` if:
-    /// - `output_schema` is not configured
-    /// - The response is not valid JSON (e.g., `stop_reason: "refusal"` or `"max_tokens"`)
     fn extract_structured_output(&self, text: &str) -> Option<serde_json::Value> {
-        // Only extract if output_schema is configured
-        self.cfg.config.prompt.output_schema.as_ref()?;
+        super::common::extract_structured_output(
+            self.cfg.config.prompt.output_schema.as_ref(),
+            text,
+        )
+    }
 
-        // With structured outputs enabled, API returns pure JSON directly
-        serde_json::from_str(text).ok()
+    fn build_result(
+        &self,
+        iterations: usize,
+        stop_reason: StopReason,
+        messages: Vec<crate::types::Message>,
+    ) -> AgentResult {
+        let structured_output = self.extract_structured_output(&self.final_text);
+        AgentResult::new(
+            self.final_text.clone(),
+            self.total_usage,
+            iterations,
+            stop_reason,
+            self.metrics.clone(),
+            self.cfg.session_id.to_string(),
+            structured_output,
+            messages,
+        )
     }
 
     async fn next_event(&mut self) -> Option<crate::Result<AgentEvent>> {
@@ -233,31 +243,91 @@ impl StreamState {
     }
 
     async fn do_start_request(&mut self) -> Option<crate::Result<AgentEvent>> {
+        if !self.session_started {
+            self.session_started = true;
+            let session_start_input = HookInput::session_start(&*self.cfg.session_id);
+            if let Err(e) = self
+                .cfg
+                .hooks
+                .execute(
+                    HookEvent::SessionStart,
+                    session_start_input,
+                    &self.cfg.hook_context,
+                )
+                .await
+            {
+                warn!(error = %e, "SessionStart hook failed");
+            }
+        }
+
+        if !self.prompt_submitted {
+            if let Some(prompt) = self.initial_prompt.take() {
+                let prompt_input = HookInput::user_prompt_submit(&*self.cfg.session_id, &prompt);
+                let prompt_output = match self
+                    .cfg
+                    .hooks
+                    .execute(
+                        HookEvent::UserPromptSubmit,
+                        prompt_input,
+                        &self.cfg.hook_context,
+                    )
+                    .await
+                {
+                    Ok(output) => output,
+                    Err(e) => {
+                        self.phase = Phase::Done;
+                        return Some(Err(e));
+                    }
+                };
+
+                if !prompt_output.continue_execution {
+                    self.phase = Phase::Done;
+                    return Some(Err(crate::Error::Permission(
+                        prompt_output
+                            .stop_reason
+                            .unwrap_or_else(|| "Blocked by hook".into()),
+                    )));
+                }
+
+                self.cfg
+                    .tool_state
+                    .with_session_mut(|session| {
+                        session.add_user_message(&prompt);
+                    })
+                    .await;
+            }
+            self.prompt_submitted = true;
+        }
+
         self.metrics.iterations += 1;
         if self.metrics.iterations > self.cfg.config.execution.max_iterations {
             self.phase = Phase::Done;
             self.metrics.execution_time_ms = self.start_time.elapsed().as_millis() as u64;
+
+            run_stop_hooks(
+                &self.cfg.hooks,
+                &self.cfg.hook_context,
+                &self.cfg.session_id,
+            )
+            .await;
 
             let messages = self
                 .cfg
                 .tool_state
                 .with_session(|session| session.to_api_messages())
                 .await;
+            let result =
+                self.build_result(self.metrics.iterations - 1, StopReason::MaxTokens, messages);
+            return Some(Ok(AgentEvent::Complete(Box::new(result))));
+        }
 
-            let structured_output = self.extract_structured_output(&self.final_text);
-            return Some(Ok(AgentEvent::Complete(Box::new(AgentResult {
-                text: self.final_text.clone(),
-                usage: self.total_usage,
-                tool_calls: self.metrics.tool_calls,
-                iterations: self.metrics.iterations - 1,
-                stop_reason: StopReason::MaxTokens,
-                state: AgentState::Completed,
-                metrics: self.metrics.clone(),
-                session_id: self.cfg.session_id.to_string(),
-                structured_output,
-                messages,
-                uuid: uuid::Uuid::new_v4().to_string(),
-            }))));
+        let budget_ctx = BudgetContext {
+            tracker: &self.cfg.budget_tracker,
+            tenant: self.cfg.tenant_budget.as_deref(),
+            config: &self.cfg.config.budget,
+        };
+        if let Some(fallback) = budget_ctx.fallback_model() {
+            self.cfg.request_builder.set_model(fallback);
         }
 
         let messages = self
@@ -272,7 +342,7 @@ impl StreamState {
             .cfg
             .request_builder
             .build(messages, &self.dynamic_rules)
-            .with_stream();
+            .stream();
 
         let response = match self
             .cfg
@@ -381,31 +451,27 @@ impl StreamState {
         &mut self,
         accumulated_usage: Usage,
     ) -> Option<crate::Result<AgentEvent>> {
-        self.total_usage.input_tokens += accumulated_usage.input_tokens;
-        self.total_usage.output_tokens += accumulated_usage.output_tokens;
-        self.metrics.add_usage(
-            accumulated_usage.input_tokens,
-            accumulated_usage.output_tokens,
-        );
-        self.metrics
-            .record_model_usage(&self.cfg.config.model.primary, &accumulated_usage);
-
-        let cost = self
-            .cfg
-            .budget_tracker
-            .record(&self.cfg.config.model.primary, &accumulated_usage);
-        self.metrics.add_cost(cost);
-
-        if let Some(ref tenant_budget) = self.cfg.tenant_budget {
-            tenant_budget.record(&self.cfg.config.model.primary, &accumulated_usage);
-        }
-
         self.cfg
             .tool_state
             .with_session_mut(|session| {
                 session.update_usage(&accumulated_usage);
+            })
+            .await;
 
-                let mut content = Vec::new();
+        accumulate_response_usage(
+            &mut self.total_usage,
+            &mut self.metrics,
+            &self.cfg.budget_tracker,
+            self.cfg.tenant_budget.as_deref(),
+            &self.cfg.config.model.primary,
+            &accumulated_usage,
+        );
+
+        self.cfg
+            .tool_state
+            .with_session_mut(|session| {
+                let text_count = if self.final_text.is_empty() { 0 } else { 1 };
+                let mut content = Vec::with_capacity(text_count + self.pending_tool_uses.len());
                 if !self.final_text.is_empty() {
                     content.push(ContentBlock::Text {
                         text: self.final_text.clone(),
@@ -426,26 +492,20 @@ impl StreamState {
             self.phase = Phase::Done;
             self.metrics.execution_time_ms = self.start_time.elapsed().as_millis() as u64;
 
+            run_stop_hooks(
+                &self.cfg.hooks,
+                &self.cfg.hook_context,
+                &self.cfg.session_id,
+            )
+            .await;
+
             let messages = self
                 .cfg
                 .tool_state
                 .with_session(|session| session.to_api_messages())
                 .await;
-
-            let structured_output = self.extract_structured_output(&self.final_text);
-            return Some(Ok(AgentEvent::Complete(Box::new(AgentResult {
-                text: self.final_text.clone(),
-                usage: self.total_usage,
-                tool_calls: self.metrics.tool_calls,
-                iterations: self.metrics.iterations,
-                stop_reason: StopReason::EndTurn,
-                state: AgentState::Completed,
-                metrics: self.metrics.clone(),
-                session_id: self.cfg.session_id.to_string(),
-                structured_output,
-                messages,
-                uuid: uuid::Uuid::new_v4().to_string(),
-            }))));
+            let result = self.build_result(self.metrics.iterations, StopReason::EndTurn, messages);
+            return Some(Ok(AgentEvent::Complete(Box::new(result))));
         }
 
         self.phase = Phase::ProcessingTools { tool_index: 0 };
@@ -485,8 +545,8 @@ impl StreamState {
         {
             Ok(output) => output,
             Err(e) => {
-                warn!(tool = %tool_use.name, error = %e, "PreToolUse hook failed");
-                crate::hooks::HookOutput::allow()
+                self.phase = Phase::Done;
+                return Some(Err(e));
             }
         };
 
@@ -501,7 +561,7 @@ impl StreamState {
                 .push(ToolResultBlock::error(&tool_use.id, reason.clone()));
             self.metrics.record_permission_denial(
                 PermissionDenial::new(&tool_use.name, &tool_use.id, tool_use.input.clone())
-                    .with_reason(reason.clone()),
+                    .reason(reason.clone()),
             );
             self.phase = Phase::ProcessingTools {
                 tool_index: tool_index + 1,
@@ -544,69 +604,33 @@ impl StreamState {
         self.metrics
             .record_tool(&tool_use.id, &tool_use.name, duration_ms, is_error);
 
-        if let Some(ref inner_usage) = result.inner_usage {
-            self.cfg
-                .tool_state
-                .with_session_mut(|session| {
-                    session.update_usage(inner_usage);
-                })
-                .await;
-            self.total_usage.input_tokens += inner_usage.input_tokens;
-            self.total_usage.output_tokens += inner_usage.output_tokens;
-            self.metrics
-                .add_usage(inner_usage.input_tokens, inner_usage.output_tokens);
-            let inner_model = result.inner_model.as_deref().unwrap_or("claude-haiku-4-5");
-            self.metrics.record_model_usage(inner_model, inner_usage);
-            let inner_cost = self.cfg.budget_tracker.record(inner_model, inner_usage);
-            self.metrics.add_cost(inner_cost);
-        }
+        accumulate_inner_usage(
+            &self.cfg.tool_state,
+            &mut self.total_usage,
+            &mut self.metrics,
+            &self.cfg.budget_tracker,
+            &result,
+            &tool_use.name,
+        )
+        .await;
 
-        if is_error {
-            let failure_input = HookInput::post_tool_use_failure(
-                &*self.cfg.session_id,
-                &tool_use.name,
-                result.error_message(),
-            );
-            if let Err(e) = self
-                .cfg
-                .hooks
-                .execute(
-                    HookEvent::PostToolUseFailure,
-                    failure_input,
-                    &self.cfg.hook_context,
-                )
-                .await
-            {
-                warn!(tool = %tool_use.name, error = %e, "PostToolUseFailure hook failed");
-            }
-        } else {
-            let post_input = HookInput::post_tool_use(
-                &*self.cfg.session_id,
-                &tool_use.name,
-                result.output.clone(),
-            );
-            if let Err(e) = self
-                .cfg
-                .hooks
-                .execute(HookEvent::PostToolUse, post_input, &self.cfg.hook_context)
-                .await
-            {
-                warn!(tool = %tool_use.name, error = %e, "PostToolUse hook failed");
-            }
-        }
+        run_post_tool_hooks(
+            &self.cfg.hooks,
+            &self.cfg.hook_context,
+            &self.cfg.session_id,
+            &tool_use.name,
+            is_error,
+            &result,
+        )
+        .await;
 
-        if let Some(file_path) = extract_file_path(&tool_use.name, &actual_input)
-            && let Some(ref orchestrator) = self.cfg.orchestrator
-        {
-            let orch = orchestrator.read().await;
-            let path = Path::new(&file_path);
-            if orch.has_matching_rules(path).await {
-                let dynamic_ctx = orch.build_dynamic_context(Some(path)).await;
-                if !dynamic_ctx.is_empty() {
-                    self.dynamic_rules = dynamic_ctx;
-                }
-            }
-        }
+        try_activate_dynamic_rules(
+            &tool_use.name,
+            &actual_input,
+            &self.cfg.orchestrator,
+            &mut self.dynamic_rules,
+        )
+        .await;
 
         self.pending_tool_results
             .push(ToolResultBlock::from_tool_result(&tool_use.id, &result));
@@ -634,45 +658,18 @@ impl StreamState {
             })
             .await;
 
-        let should_compact = self
-            .cfg
-            .tool_state
-            .with_session(|session| {
-                self.cfg.config.execution.auto_compact
-                    && session.should_compact(
-                        max_tokens,
-                        self.cfg.config.execution.compact_threshold,
-                        self.cfg.config.execution.compact_keep_messages,
-                    )
-            })
-            .await;
-
-        if should_compact {
-            let compact_result = self
-                .cfg
-                .tool_state
-                .compact(
-                    &self.cfg.client,
-                    self.cfg.config.execution.compact_keep_messages,
-                )
-                .await;
-
-            if let Ok(CompactResult::Compacted { .. }) = compact_result {
-                self.metrics.record_compaction();
-                let state_sections = collect_compaction_state(&self.cfg.tools).await;
-                if !state_sections.is_empty() {
-                    self.cfg
-                        .tool_state
-                        .with_session_mut(|session| {
-                            session.add_user_message(format!(
-                                "<system-reminder>\n# State preserved after compaction\n\n{}\n</system-reminder>",
-                                state_sections.join("\n\n")
-                            ));
-                        })
-                        .await;
-                }
-            }
-        }
+        handle_compaction(
+            &self.cfg.tool_state,
+            &self.cfg.client,
+            &self.cfg.tools,
+            &self.cfg.hooks,
+            &self.cfg.hook_context,
+            &self.cfg.session_id,
+            &self.cfg.config.execution,
+            max_tokens,
+            &mut self.metrics,
+        )
+        .await;
     }
 }
 

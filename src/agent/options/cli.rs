@@ -31,8 +31,8 @@ impl AgentBuilder {
     /// # async fn example() -> claude_agent::Result<()> {
     /// let agent = Agent::builder()
     ///     .from_claude_code("./project").await?
-    ///     .with_user_resources()
-    ///     .with_project_resources()
+    ///     .user_resources()
+    ///     .project_resources()
     ///     .build()
     ///     .await?;
     /// # Ok(())
@@ -53,7 +53,7 @@ impl AgentBuilder {
     ///
     /// This method only sets a flag; actual loading happens during `build()`
     /// in the fixed order: Enterprise → User → Project → Local.
-    pub fn with_enterprise_resources(mut self) -> Self {
+    pub fn enterprise_resources(mut self) -> Self {
         self.load_enterprise = true;
         self
     }
@@ -64,7 +64,7 @@ impl AgentBuilder {
     ///
     /// This method only sets a flag; actual loading happens during `build()`
     /// in the fixed order: Enterprise → User → Project → Local.
-    pub fn with_user_resources(mut self) -> Self {
+    pub fn user_resources(mut self) -> Self {
         self.load_user = true;
         self
     }
@@ -76,7 +76,7 @@ impl AgentBuilder {
     ///
     /// This method only sets a flag; actual loading happens during `build()`
     /// in the fixed order: Enterprise → User → Project → Local.
-    pub fn with_project_resources(mut self) -> Self {
+    pub fn project_resources(mut self) -> Self {
         self.load_project = true;
         self
     }
@@ -89,7 +89,7 @@ impl AgentBuilder {
     ///
     /// This method only sets a flag; actual loading happens during `build()`
     /// in the fixed order: Enterprise → User → Project → Local.
-    pub fn with_local_resources(mut self) -> Self {
+    pub fn local_resources(mut self) -> Self {
         self.load_local = true;
         self
     }
@@ -202,7 +202,7 @@ impl AgentBuilder {
     }
 
     async fn load_output_styles_from(&mut self, base: &Path) {
-        let provider = file_output_style_provider().with_project_path(base);
+        let provider = file_output_style_provider().project_path(base);
         if let Ok(styles) = provider.load_all().await
             && let Some(first) = styles.first()
             && self.output_style_name.is_none()
@@ -377,10 +377,10 @@ mod tests {
     fn test_resource_flags_are_independent() {
         // Verify that flag methods don't actually load anything, just set flags
         let builder = AgentBuilder::new()
-            .with_enterprise_resources()
-            .with_user_resources()
-            .with_project_resources()
-            .with_local_resources();
+            .enterprise_resources()
+            .user_resources()
+            .project_resources()
+            .local_resources();
 
         assert!(builder.load_enterprise);
         assert!(builder.load_user);
@@ -395,14 +395,14 @@ mod tests {
     fn test_chaining_order_does_not_affect_flags() {
         // Different chaining orders should produce same flag state
         let builder1 = AgentBuilder::new()
-            .with_enterprise_resources()
-            .with_user_resources()
-            .with_project_resources();
+            .enterprise_resources()
+            .user_resources()
+            .project_resources();
 
         let builder2 = AgentBuilder::new()
-            .with_project_resources()
-            .with_user_resources()
-            .with_enterprise_resources();
+            .project_resources()
+            .user_resources()
+            .enterprise_resources();
 
         assert_eq!(builder1.load_enterprise, builder2.load_enterprise);
         assert_eq!(builder1.load_user, builder2.load_user);

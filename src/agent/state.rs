@@ -1,5 +1,6 @@
 //! Agent state management.
 
+use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -47,7 +48,7 @@ pub struct AgentMetrics {
     pub errors: usize,
     pub compactions: usize,
     pub api_calls: usize,
-    pub total_cost_usd: f64,
+    pub total_cost_usd: Decimal,
     pub tool_stats: std::collections::HashMap<String, ToolStats>,
     pub tool_call_records: Vec<ToolCallRecord>,
     pub model_usage: std::collections::HashMap<String, ModelUsage>,
@@ -73,19 +74,18 @@ pub struct ToolCallRecord {
 
 impl AgentMetrics {
     pub fn total_tokens(&self) -> u32 {
-        self.input_tokens + self.output_tokens
-    }
-
-    pub fn add_usage(&mut self, input: u32, output: u32) {
-        self.input_tokens += input;
-        self.output_tokens += output;
+        self.input_tokens.saturating_add(self.output_tokens)
     }
 
     pub fn add_usage_with_cache(&mut self, usage: &Usage) {
-        self.input_tokens += usage.input_tokens;
-        self.output_tokens += usage.output_tokens;
-        self.cache_read_tokens += usage.cache_read_input_tokens.unwrap_or(0);
-        self.cache_creation_tokens += usage.cache_creation_input_tokens.unwrap_or(0);
+        self.input_tokens = self.input_tokens.saturating_add(usage.input_tokens);
+        self.output_tokens = self.output_tokens.saturating_add(usage.output_tokens);
+        self.cache_read_tokens = self
+            .cache_read_tokens
+            .saturating_add(usage.cache_read_input_tokens.unwrap_or(0));
+        self.cache_creation_tokens = self
+            .cache_creation_tokens
+            .saturating_add(usage.cache_creation_input_tokens.unwrap_or(0));
     }
 
     /// Calculate cache hit rate as a proportion of input tokens.
@@ -132,19 +132,20 @@ impl AgentMetrics {
     /// - Cache write: 125% of normal price (25% overhead)
     ///
     /// Net savings = (cache_read * 0.9 * price) - (cache_write * 0.25 * price)
-    pub fn cache_cost_savings(&self, input_price_per_mtok: f64) -> f64 {
-        let read_tokens = self.cache_read_tokens as f64 / 1_000_000.0;
-        let write_tokens = self.cache_creation_tokens as f64 / 1_000_000.0;
+    pub fn cache_cost_savings(&self, input_price_per_mtok: Decimal) -> Decimal {
+        let mtok_divisor = Decimal::from(1_000_000);
+        let read_tokens = Decimal::from(self.cache_read_tokens) / mtok_divisor;
+        let write_tokens = Decimal::from(self.cache_creation_tokens) / mtok_divisor;
 
         // Savings from reading cached content (90% discount)
-        let read_savings = read_tokens * input_price_per_mtok * 0.9;
+        let read_savings = read_tokens * input_price_per_mtok * Decimal::new(9, 1); // 0.9
         // Overhead from writing to cache (25% extra cost)
-        let write_overhead = write_tokens * input_price_per_mtok * 0.25;
+        let write_overhead = write_tokens * input_price_per_mtok * Decimal::new(25, 2); // 0.25
 
         read_savings - write_overhead
     }
 
-    pub fn add_cost(&mut self, cost: f64) {
+    pub fn add_cost(&mut self, cost: Decimal) {
         self.total_cost_usd += cost;
     }
 
@@ -217,7 +218,7 @@ impl AgentMetrics {
     }
 
     /// Get the total cost across all models.
-    pub fn total_model_cost(&self) -> f64 {
+    pub fn total_model_cost(&self) -> Decimal {
         self.model_usage.values().map(|m| m.cost_usd).sum()
     }
 }
@@ -243,12 +244,22 @@ mod tests {
     #[test]
     fn test_agent_metrics() {
         let mut metrics = AgentMetrics::default();
-        metrics.add_usage(100, 50);
-        metrics.add_usage(200, 100);
+        metrics.add_usage_with_cache(&Usage {
+            input_tokens: 100,
+            output_tokens: 50,
+            ..Default::default()
+        });
+        metrics.add_usage_with_cache(&Usage {
+            input_tokens: 200,
+            output_tokens: 100,
+            cache_read_input_tokens: Some(30),
+            ..Default::default()
+        });
 
         assert_eq!(metrics.input_tokens, 300);
         assert_eq!(metrics.output_tokens, 150);
         assert_eq!(metrics.total_tokens(), 450);
+        assert_eq!(metrics.cache_read_tokens, 30);
     }
 
     #[test]
@@ -309,19 +320,21 @@ mod tests {
 
     #[test]
     fn test_cache_cost_savings() {
+        use rust_decimal_macros::dec;
+
         let metrics = AgentMetrics {
             cache_read_tokens: 1_000_000,   // 1M tokens
             cache_creation_tokens: 100_000, // 100K tokens
             ..Default::default()
         };
 
-        let price_per_mtok = 3.0; // $3 per MTok
+        let price_per_mtok = dec!(3); // $3 per MTok
 
         // Read savings: 1.0 * 3.0 * 0.9 = $2.70
         // Write overhead: 0.1 * 3.0 * 0.25 = $0.075
         // Net savings: $2.70 - $0.075 = $2.625
         let savings = metrics.cache_cost_savings(price_per_mtok);
-        assert!((savings - 2.625).abs() < 0.001);
+        assert_eq!(savings, dec!(2.625));
     }
 
     #[test]

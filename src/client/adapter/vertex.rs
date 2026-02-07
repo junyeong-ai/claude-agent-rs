@@ -8,8 +8,8 @@ use async_trait::async_trait;
 use gcp_auth::TokenProvider;
 
 use super::base::RequestExecutor;
-use super::config::{BetaFeature, ProviderConfig};
-use super::request::{add_beta_features, build_messages_body};
+use super::config::ProviderConfig;
+use super::request::build_cloud_request_body;
 use super::token_cache::{CachedToken, TokenCache, new_token_cache};
 use super::traits::ProviderAdapter;
 use crate::client::messages::CreateMessageRequest;
@@ -69,26 +69,22 @@ impl VertexAdapter {
         })
     }
 
-    pub fn with_project(mut self, project_id: impl Into<String>) -> Self {
+    pub fn project(mut self, project_id: impl Into<String>) -> Self {
         self.project_id = project_id.into();
         self
     }
 
-    pub fn with_region(mut self, region: impl Into<String>) -> Self {
+    pub fn region(mut self, region: impl Into<String>) -> Self {
         self.default_region = region.into();
         self
     }
 
-    pub fn with_model_region(
-        mut self,
-        model_key: impl Into<String>,
-        region: impl Into<String>,
-    ) -> Self {
+    pub fn model_region(mut self, model_key: impl Into<String>, region: impl Into<String>) -> Self {
         self.model_regions.insert(model_key.into(), region.into());
         self
     }
 
-    pub fn with_1m_context(mut self, enable: bool) -> Self {
+    pub fn use_1m_context(mut self, enable: bool) -> Self {
         self.enable_1m_context = enable;
         self
     }
@@ -128,21 +124,12 @@ impl VertexAdapter {
     }
 
     fn build_request_body(&self, request: &CreateMessageRequest) -> serde_json::Value {
-        let mut body = build_messages_body(
+        build_cloud_request_body(
             request,
-            Some(ANTHROPIC_VERSION),
+            ANTHROPIC_VERSION,
             self.config.thinking_budget,
-        );
-
-        if let Some(obj) = body.as_object_mut() {
-            obj.remove("model");
-        }
-
-        if self.enable_1m_context {
-            add_beta_features(&mut body, &[BetaFeature::Context1M.header_value()]);
-        }
-
-        body
+            self.enable_1m_context,
+        )
     }
 
     async fn get_token(&self) -> Result<String> {

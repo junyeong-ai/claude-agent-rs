@@ -15,6 +15,11 @@ pub trait ProviderAdapter: Send + Sync + Debug {
 
     fn name(&self) -> &'static str;
 
+    /// Returns the base URL for API requests (e.g. "https://api.anthropic.com").
+    fn base_url(&self) -> &str {
+        "https://api.anthropic.com"
+    }
+
     fn model(&self, model_type: ModelType) -> &str {
         self.config().models.get(model_type)
     }

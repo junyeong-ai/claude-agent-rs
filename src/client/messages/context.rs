@@ -83,7 +83,7 @@ impl ContextManagement {
         }
     }
 
-    pub fn with_edit(mut self, edit: ContextEdit) -> Self {
+    pub fn edit(mut self, edit: ContextEdit) -> Self {
         self.edits.push(edit);
         self
     }
@@ -102,8 +102,8 @@ mod tests {
     #[test]
     fn test_context_management() {
         let mgmt = ContextManagement::new()
-            .with_edit(ContextManagement::clear_tool_uses())
-            .with_edit(ContextManagement::clear_thinking(3));
+            .edit(ContextManagement::clear_tool_uses())
+            .edit(ContextManagement::clear_thinking(3));
         assert_eq!(mgmt.edits.len(), 2);
     }
 

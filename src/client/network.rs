@@ -37,7 +37,7 @@ impl PoolConfig {
 
 /// Network configuration for HTTP client.
 #[derive(Clone, Debug, Default)]
-pub struct NetworkConfig {
+pub struct HttpNetworkConfig {
     /// Proxy configuration
     pub proxy: Option<ProxyConfig>,
     /// Custom CA certificate file path
@@ -70,7 +70,7 @@ pub struct ClientCertConfig {
     pub key_passphrase: Option<String>,
 }
 
-impl NetworkConfig {
+impl HttpNetworkConfig {
     /// Create from environment variables.
     pub fn from_env() -> Self {
         Self {
@@ -85,25 +85,25 @@ impl NetworkConfig {
     }
 
     /// Set proxy configuration.
-    pub fn with_proxy(mut self, proxy: ProxyConfig) -> Self {
+    pub fn proxy(mut self, proxy: ProxyConfig) -> Self {
         self.proxy = Some(proxy);
         self
     }
 
     /// Set CA certificate path.
-    pub fn with_ca_cert(mut self, path: impl Into<PathBuf>) -> Self {
+    pub fn ca_cert(mut self, path: impl Into<PathBuf>) -> Self {
         self.ca_cert = Some(path.into());
         self
     }
 
     /// Set client certificate for mTLS.
-    pub fn with_client_cert(mut self, cert: ClientCertConfig) -> Self {
+    pub fn client_cert(mut self, cert: ClientCertConfig) -> Self {
         self.client_cert = Some(cert);
         self
     }
 
     /// Set connection pool configuration.
-    pub fn with_pool(mut self, pool: PoolConfig) -> Self {
+    pub fn pool(mut self, pool: PoolConfig) -> Self {
         self.pool = Some(pool);
         self
     }
@@ -117,7 +117,7 @@ impl NetworkConfig {
     }
 
     /// Apply configuration to reqwest ClientBuilder.
-    pub fn apply_to_builder(
+    pub async fn apply_to_builder(
         &self,
         mut builder: reqwest::ClientBuilder,
     ) -> Result<reqwest::ClientBuilder, std::io::Error> {
@@ -126,14 +126,14 @@ impl NetworkConfig {
         }
 
         if let Some(ref ca_path) = self.ca_cert {
-            let cert_data = std::fs::read(ca_path)?;
+            let cert_data = tokio::fs::read(ca_path).await?;
             if let Ok(cert) = reqwest::Certificate::from_pem(&cert_data) {
                 builder = builder.add_root_certificate(cert);
             }
         }
 
         if let Some(ref client_cert) = self.client_cert {
-            builder = client_cert.apply_to_builder(builder)?;
+            builder = client_cert.apply_to_builder(builder).await?;
         }
 
         if let Some(ref pool) = self.pool {
@@ -198,13 +198,13 @@ impl ProxyConfig {
     }
 
     /// Add HTTP proxy.
-    pub fn with_http(mut self, url: impl Into<String>) -> Self {
+    pub fn http(mut self, url: impl Into<String>) -> Self {
         self.http = Some(url.into());
         self
     }
 
     /// Add no-proxy patterns.
-    pub fn with_no_proxy(mut self, patterns: impl IntoIterator<Item = String>) -> Self {
+    pub fn no_proxy(mut self, patterns: impl IntoIterator<Item = String>) -> Self {
         self.no_proxy.extend(patterns);
         self
     }
@@ -253,18 +253,18 @@ impl ClientCertConfig {
     }
 
     /// Set key passphrase.
-    pub fn with_passphrase(mut self, passphrase: impl Into<String>) -> Self {
+    pub fn passphrase(mut self, passphrase: impl Into<String>) -> Self {
         self.key_passphrase = Some(passphrase.into());
         self
     }
 
     /// Apply to reqwest ClientBuilder.
-    pub fn apply_to_builder(
+    pub async fn apply_to_builder(
         &self,
         builder: reqwest::ClientBuilder,
     ) -> Result<reqwest::ClientBuilder, std::io::Error> {
-        let cert_data = std::fs::read(&self.cert_path)?;
-        let key_data = std::fs::read(&self.key_path)?;
+        let cert_data = tokio::fs::read(&self.cert_path).await?;
+        let key_data = tokio::fs::read(&self.key_path).await?;
 
         let mut pem_data = cert_data;
         pem_data.extend_from_slice(b"\n");
@@ -284,8 +284,8 @@ mod tests {
     #[test]
     fn test_proxy_config_builder() {
         let proxy = ProxyConfig::https("https://proxy.example.com:8080")
-            .with_http("http://proxy.example.com:8080")
-            .with_no_proxy(vec!["localhost".to_string(), "*.internal".to_string()]);
+            .http("http://proxy.example.com:8080")
+            .no_proxy(vec!["localhost".to_string(), "*.internal".to_string()]);
 
         assert!(proxy.https.is_some());
         assert!(proxy.http.is_some());
@@ -294,9 +294,9 @@ mod tests {
 
     #[test]
     fn test_network_config_builder() {
-        let config = NetworkConfig::default()
-            .with_proxy(ProxyConfig::https("https://proxy.com"))
-            .with_ca_cert("/path/to/ca.pem");
+        let config = HttpNetworkConfig::default()
+            .proxy(ProxyConfig::https("https://proxy.com"))
+            .ca_cert("/path/to/ca.pem");
 
         assert!(config.proxy.is_some());
         assert!(config.ca_cert.is_some());

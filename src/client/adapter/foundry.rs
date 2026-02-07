@@ -56,20 +56,17 @@ impl FoundryAdapter {
         })
     }
 
-    /// Set the Azure resource name.
-    pub fn with_resource(mut self, resource: impl Into<String>) -> Self {
+    pub fn resource(mut self, resource: impl Into<String>) -> Self {
         self.resource_name = Some(resource.into());
         self
     }
 
-    /// Set the base URL (alternative to resource name).
-    pub fn with_base_url(mut self, base_url: impl Into<String>) -> Self {
+    pub fn base_url(mut self, base_url: impl Into<String>) -> Self {
         self.base_url = Some(base_url.into());
         self
     }
 
-    /// Set the API key for authentication.
-    pub fn with_api_key(mut self, key: impl Into<String>) -> Self {
+    pub fn api_key(mut self, key: impl Into<String>) -> Self {
         self.api_key = Some(key.into());
         self
     }
@@ -84,7 +81,9 @@ impl FoundryAdapter {
                 resource
             )
         } else {
-            unreachable!("validated in from_config")
+            unreachable!(
+                "FoundryAdapter requires base_url or resource_name, enforced by from_config"
+            )
         }
     }
 
@@ -110,7 +109,7 @@ impl FoundryAdapter {
             }
         }
 
-        let token_response = self
+        let token_response: azure_core::credentials::AccessToken = self
             .credential
             .get_token(&[COGNITIVE_SERVICES_SCOPE], None)
             .await

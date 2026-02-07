@@ -59,7 +59,7 @@ impl CircuitBreaker {
         match *state {
             CircuitState::Closed => true,
             CircuitState::Open => {
-                let last_failure_ms = self.last_failure_time.load(Ordering::SeqCst);
+                let last_failure_ms = self.last_failure_time.load(Ordering::Relaxed);
                 let now_ms = std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
                     .unwrap_or_default()
@@ -74,10 +74,24 @@ impl CircuitBreaker {
                     false
                 }
             }
-            CircuitState::HalfOpen => {
-                let requests = self.half_open_requests.fetch_add(1, Ordering::SeqCst);
-                requests < self.config.success_threshold
-            }
+            CircuitState::HalfOpen => loop {
+                let current = self.half_open_requests.load(Ordering::Acquire);
+                if current >= self.config.success_threshold {
+                    return false;
+                }
+                if self
+                    .half_open_requests
+                    .compare_exchange_weak(
+                        current,
+                        current + 1,
+                        Ordering::AcqRel,
+                        Ordering::Acquire,
+                    )
+                    .is_ok()
+                {
+                    return true;
+                }
+            },
         }
     }
 
@@ -86,10 +100,10 @@ impl CircuitBreaker {
 
         match state {
             CircuitState::Closed => {
-                self.failure_count.store(0, Ordering::SeqCst);
+                self.failure_count.store(0, Ordering::Relaxed);
             }
             CircuitState::HalfOpen => {
-                let successes = self.success_count.fetch_add(1, Ordering::SeqCst) + 1;
+                let successes = self.success_count.fetch_add(1, Ordering::Relaxed) + 1;
                 if successes >= self.config.success_threshold {
                     self.transition_to_closed();
                 }
@@ -103,7 +117,7 @@ impl CircuitBreaker {
 
         match state {
             CircuitState::Closed => {
-                let failures = self.failure_count.fetch_add(1, Ordering::SeqCst) + 1;
+                let failures = self.failure_count.fetch_add(1, Ordering::Relaxed) + 1;
                 if failures >= self.config.failure_threshold {
                     self.transition_to_open();
                 }
@@ -123,10 +137,10 @@ impl CircuitBreaker {
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap_or_default()
                 .as_millis() as u64,
-            Ordering::SeqCst,
+            Ordering::Relaxed,
         );
-        self.success_count.store(0, Ordering::SeqCst);
-        self.half_open_requests.store(0, Ordering::SeqCst);
+        self.success_count.store(0, Ordering::Relaxed);
+        self.half_open_requests.store(0, Ordering::Relaxed);
         tracing::warn!("Circuit breaker opened");
     }
 
@@ -134,8 +148,8 @@ impl CircuitBreaker {
         let mut state = self.state.write().unwrap_or_else(|e| e.into_inner());
         if *state == CircuitState::Open {
             *state = CircuitState::HalfOpen;
-            self.half_open_requests.store(0, Ordering::SeqCst);
-            self.success_count.store(0, Ordering::SeqCst);
+            self.half_open_requests.store(0, Ordering::Relaxed);
+            self.success_count.store(0, Ordering::Relaxed);
             tracing::info!("Circuit breaker half-open");
         }
     }
@@ -143,9 +157,9 @@ impl CircuitBreaker {
     fn transition_to_closed(&self) {
         let mut state = self.state.write().unwrap_or_else(|e| e.into_inner());
         *state = CircuitState::Closed;
-        self.failure_count.store(0, Ordering::SeqCst);
-        self.success_count.store(0, Ordering::SeqCst);
-        self.half_open_requests.store(0, Ordering::SeqCst);
+        self.failure_count.store(0, Ordering::Relaxed);
+        self.success_count.store(0, Ordering::Relaxed);
+        self.half_open_requests.store(0, Ordering::Relaxed);
         tracing::info!("Circuit breaker closed");
     }
 
@@ -154,7 +168,7 @@ impl CircuitBreaker {
     }
 
     pub fn failure_count(&self) -> u32 {
-        self.failure_count.load(Ordering::SeqCst)
+        self.failure_count.load(Ordering::Acquire)
     }
 }
 

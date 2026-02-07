@@ -2,12 +2,13 @@
 
 use std::time::{Duration, Instant, SystemTime};
 
+use secrecy::{ExposeSecret, SecretString};
 use tokio::sync::RwLock;
 
 const TOKEN_REFRESH_MARGIN: Duration = Duration::from_secs(300);
 
 pub struct CachedToken {
-    token: String,
+    token: SecretString,
     expires_at: Instant,
 }
 
@@ -22,7 +23,7 @@ impl std::fmt::Debug for CachedToken {
 impl CachedToken {
     pub fn new(token: String, ttl: Duration) -> Self {
         Self {
-            token,
+            token: SecretString::from(token),
             expires_at: Instant::now() + ttl - TOKEN_REFRESH_MARGIN,
         }
     }
@@ -32,15 +33,15 @@ impl CachedToken {
     }
 
     pub fn token(&self) -> &str {
-        &self.token
+        self.token.expose_secret()
     }
 }
 
 #[derive(Clone)]
 pub struct CachedAwsCredentials {
     pub access_key_id: String,
-    pub secret_access_key: String,
-    pub session_token: Option<String>,
+    pub secret_access_key: SecretString,
+    pub session_token: Option<SecretString>,
     expiry: Option<SystemTime>,
 }
 
@@ -61,15 +62,15 @@ impl CachedAwsCredentials {
     ) -> Self {
         Self {
             access_key_id,
-            secret_access_key,
-            session_token,
+            secret_access_key: SecretString::from(secret_access_key),
+            session_token: session_token.map(SecretString::from),
             expiry,
         }
     }
 
     pub fn is_expired(&self) -> bool {
         self.expiry
-            .map(|exp| SystemTime::now() > exp)
+            .map(|exp| SystemTime::now() + TOKEN_REFRESH_MARGIN > exp)
             .unwrap_or(false)
     }
 

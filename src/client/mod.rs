@@ -29,7 +29,7 @@ pub use messages::{
     KeepConfig, KeepThinkingConfig, MAX_TOKENS_128K, MIN_MAX_TOKENS, MIN_THINKING_BUDGET,
     OutputConfig, OutputFormat, ThinkingConfig, ThinkingType, TokenValidationError, ToolChoice,
 };
-pub use network::{ClientCertConfig, NetworkConfig, PoolConfig, ProxyConfig};
+pub use network::{ClientCertConfig, HttpNetworkConfig, PoolConfig, ProxyConfig};
 pub use recovery::StreamRecoveryState;
 pub use resilience::{
     CircuitBreaker, CircuitConfig, CircuitState, ExponentialBackoff, Resilience, ResilienceConfig,
@@ -77,7 +77,7 @@ impl Client {
         })
     }
 
-    pub fn with_http(adapter: impl ProviderAdapter + 'static, http: reqwest::Client) -> Self {
+    pub fn from_http(adapter: impl ProviderAdapter + 'static, http: reqwest::Client) -> Self {
         Self {
             adapter: Arc::new(adapter),
             http,
@@ -86,17 +86,17 @@ impl Client {
         }
     }
 
-    pub fn with_fallback(mut self, config: FallbackConfig) -> Self {
+    pub fn fallback(mut self, config: FallbackConfig) -> Self {
         self.fallback_config = Some(config);
         self
     }
 
-    pub fn with_resilience(mut self, config: ResilienceConfig) -> Self {
+    pub fn resilience(mut self, config: ResilienceConfig) -> Self {
         self.resilience = Some(Arc::new(Resilience::new(config)));
         self
     }
 
-    pub fn resilience(&self) -> Option<&Arc<Resilience>> {
+    pub fn resilience_ref(&self) -> Option<&Arc<Resilience>> {
         self.resilience.as_ref()
     }
 
@@ -111,14 +111,40 @@ impl Client {
     pub async fn query_with_model(&self, prompt: &str, model_type: ModelType) -> Result<String> {
         let model = self.adapter.model(model_type).to_string();
         let request = CreateMessageRequest::new(&model, vec![crate::types::Message::user(prompt)])
-            .with_max_tokens(self.adapter.config().max_tokens);
+            .max_tokens(self.adapter.config().max_tokens);
         request.validate()?;
 
         let response = self.adapter.send(&self.http, request).await?;
         Ok(response.text())
     }
 
+    fn check_circuit_breaker(&self) -> Result<Option<Arc<CircuitBreaker>>> {
+        let cb = self.resilience.as_ref().and_then(|r| r.circuit().cloned());
+        if let Some(ref cb) = cb
+            && !cb.allow_request()
+        {
+            return Err(Error::CircuitOpen);
+        }
+        Ok(cb)
+    }
+
+    fn record_circuit_result<T>(cb: &Option<Arc<CircuitBreaker>>, result: &Result<T>) {
+        if let Some(cb) = cb {
+            match result {
+                Ok(_) => cb.record_success(),
+                Err(_) => cb.record_failure(),
+            }
+        }
+    }
+
     pub async fn send(&self, request: CreateMessageRequest) -> Result<crate::types::ApiResponse> {
+        let cb = self.check_circuit_breaker()?;
+        let result = self.send_inner(request).await;
+        Self::record_circuit_result(&cb, &result);
+        result
+    }
+
+    async fn send_inner(&self, request: CreateMessageRequest) -> Result<crate::types::ApiResponse> {
         request.validate()?;
 
         let fallback = match &self.fallback_config {
@@ -151,7 +177,7 @@ impl Client {
                             max_retries = fallback.max_retries,
                             "Primary model failed, falling back"
                         );
-                        current_request = current_request.with_model(&fallback.fallback_model);
+                        current_request = current_request.model(&fallback.fallback_model);
                         using_fallback = true;
                     } else {
                         tracing::warn!(
@@ -184,7 +210,7 @@ impl Client {
     ) -> Result<impl futures::Stream<Item = Result<String>> + Send + 'static + use<>> {
         let model = self.adapter.model(ModelType::Primary).to_string();
         let request = CreateMessageRequest::new(&model, vec![crate::types::Message::user(prompt)])
-            .with_max_tokens(self.adapter.config().max_tokens);
+            .max_tokens(self.adapter.config().max_tokens);
         request.validate()?;
 
         let response = self.adapter.send_stream(&self.http, request).await?;
@@ -203,6 +229,16 @@ impl Client {
     }
 
     pub async fn stream_request(
+        &self,
+        request: CreateMessageRequest,
+    ) -> Result<impl futures::Stream<Item = Result<StreamItem>> + Send + 'static + use<>> {
+        let cb = self.check_circuit_breaker()?;
+        let result = self.stream_request_inner(request).await;
+        Self::record_circuit_result(&cb, &result);
+        result
+    }
+
+    async fn stream_request_inner(
         &self,
         request: CreateMessageRequest,
     ) -> Result<impl futures::Stream<Item = Result<StreamItem>> + Send + 'static + use<>> {
@@ -274,21 +310,29 @@ impl Client {
         self.adapter.refresh_credentials().await
     }
 
-    pub async fn send_with_auth_retry(
-        &self,
-        request: CreateMessageRequest,
-    ) -> Result<crate::types::ApiResponse> {
+    async fn with_auth_retry<T, F, Fut>(&self, op: F) -> Result<T>
+    where
+        F: Fn() -> Fut,
+        Fut: std::future::Future<Output = Result<T>>,
+    {
         self.adapter.ensure_fresh_credentials().await?;
 
-        match self.send(request.clone()).await {
+        match op().await {
             Ok(resp) => Ok(resp),
             Err(e) if e.is_unauthorized() && self.adapter.supports_credential_refresh() => {
                 tracing::debug!("Received 401, refreshing credentials");
                 self.refresh_credentials().await?;
-                self.send(request).await
+                op().await
             }
             Err(e) => Err(e),
         }
+    }
+
+    pub async fn send_with_auth_retry(
+        &self,
+        request: CreateMessageRequest,
+    ) -> Result<crate::types::ApiResponse> {
+        self.with_auth_retry(|| self.send(request.clone())).await
     }
 
     pub async fn send_stream_with_auth_retry(
@@ -296,33 +340,16 @@ impl Client {
         request: CreateMessageRequest,
     ) -> Result<reqwest::Response> {
         request.validate()?;
-        self.adapter.ensure_fresh_credentials().await?;
-
-        match self.adapter.send_stream(&self.http, request.clone()).await {
-            Ok(resp) => Ok(resp),
-            Err(e) if e.is_unauthorized() && self.adapter.supports_credential_refresh() => {
-                tracing::debug!("Received 401, refreshing credentials");
-                self.refresh_credentials().await?;
-                self.adapter.send_stream(&self.http, request).await
-            }
-            Err(e) => Err(e),
-        }
+        self.with_auth_retry(|| self.adapter.send_stream(&self.http, request.clone()))
+            .await
     }
 
     pub async fn count_tokens(
         &self,
         request: messages::CountTokensRequest,
     ) -> Result<messages::CountTokensResponse> {
-        self.adapter.ensure_fresh_credentials().await?;
-
-        match self.adapter.count_tokens(&self.http, request.clone()).await {
-            Ok(resp) => Ok(resp),
-            Err(e) if e.is_unauthorized() && self.adapter.supports_credential_refresh() => {
-                self.refresh_credentials().await?;
-                self.adapter.count_tokens(&self.http, request).await
-            }
-            Err(e) => Err(e),
-        }
+        self.with_auth_retry(|| self.adapter.count_tokens(&self.http, request.clone()))
+            .await
     }
 
     pub async fn count_tokens_for_request(
@@ -350,7 +377,7 @@ pub struct ClientBuilder {
     oauth_config: Option<OAuthConfig>,
     config: Option<ProviderConfig>,
     models: Option<ModelConfig>,
-    network: Option<NetworkConfig>,
+    network: Option<HttpNetworkConfig>,
     gateway: Option<GatewayConfig>,
     timeout: Option<Duration>,
     fallback_config: Option<FallbackConfig>,
@@ -398,7 +425,7 @@ impl ClientBuilder {
         }
 
         let (credential, provider) = auth.resolve_with_provider().await?;
-        if !credential.is_default() {
+        if !credential.is_placeholder() {
             self.credential = Some(credential);
         }
         self.credential_provider = provider;
@@ -412,14 +439,14 @@ impl ClientBuilder {
     }
 
     #[cfg(feature = "aws")]
-    pub(crate) fn with_aws_region(mut self, region: String) -> Self {
+    pub(crate) fn aws_region(mut self, region: String) -> Self {
         self.provider = Some(CloudProvider::Bedrock);
         self.aws_region = Some(region);
         self
     }
 
     #[cfg(feature = "gcp")]
-    pub(crate) fn with_gcp(mut self, project: String, region: String) -> Self {
+    pub(crate) fn gcp(mut self, project: String, region: String) -> Self {
         self.provider = Some(CloudProvider::Vertex);
         self.gcp_project = Some(project);
         self.gcp_region = Some(region);
@@ -427,7 +454,7 @@ impl ClientBuilder {
     }
 
     #[cfg(feature = "azure")]
-    pub(crate) fn with_azure_resource(mut self, resource: String) -> Self {
+    pub(crate) fn azure_resource(mut self, resource: String) -> Self {
         self.provider = Some(CloudProvider::Foundry);
         self.azure_resource = Some(resource);
         self
@@ -448,7 +475,7 @@ impl ClientBuilder {
         self
     }
 
-    pub fn network(mut self, network: NetworkConfig) -> Self {
+    pub fn network(mut self, network: HttpNetworkConfig) -> Self {
         self.network = Some(network);
         self
     }
@@ -478,7 +505,7 @@ impl ClientBuilder {
         self
     }
 
-    pub fn with_default_resilience(mut self) -> Self {
+    pub fn default_resilience(mut self) -> Self {
         self.resilience_config = Some(ResilienceConfig::default());
         self
     }
@@ -506,17 +533,17 @@ impl ClientBuilder {
                     if let Some(ref gw) = self.gateway
                         && let Some(ref url) = gw.base_url
                     {
-                        a = a.with_base_url(url);
+                        a = a.base_url(url);
                     }
                     a
                 } else {
                     let mut a = AnthropicAdapter::new(config);
                     if let Some(ref gw) = self.gateway {
                         if let Some(ref url) = gw.base_url {
-                            a = a.with_base_url(url);
+                            a = a.base_url(url);
                         }
                         if let Some(ref token) = gw.auth_token {
-                            a = a.with_api_key(token);
+                            a = a.api_key(token);
                         }
                     }
                     a
@@ -527,7 +554,7 @@ impl ClientBuilder {
             CloudProvider::Bedrock => {
                 let mut adapter = adapter::BedrockAdapter::from_env(config).await?;
                 if let Some(region) = self.aws_region {
-                    adapter = adapter.with_region(region);
+                    adapter = adapter.region(region);
                 }
                 Box::new(adapter)
             }
@@ -535,10 +562,10 @@ impl ClientBuilder {
             CloudProvider::Vertex => {
                 let mut adapter = adapter::VertexAdapter::from_env(config).await?;
                 if let Some(project) = self.gcp_project {
-                    adapter = adapter.with_project(project);
+                    adapter = adapter.project(project);
                 }
                 if let Some(region) = self.gcp_region {
-                    adapter = adapter.with_region(region);
+                    adapter = adapter.region(region);
                 }
                 Box::new(adapter)
             }
@@ -546,7 +573,7 @@ impl ClientBuilder {
             CloudProvider::Foundry => {
                 let mut adapter = adapter::FoundryAdapter::from_env(config).await?;
                 if let Some(resource) = self.azure_resource {
-                    adapter = adapter.with_resource(resource);
+                    adapter = adapter.resource(resource);
                 }
                 Box::new(adapter)
             }
@@ -558,6 +585,7 @@ impl ClientBuilder {
         if let Some(ref network) = self.network {
             http_builder = network
                 .apply_to_builder(http_builder)
+                .await
                 .map_err(|e| Error::Config(e.to_string()))?;
         }
 

@@ -8,7 +8,7 @@ use crate::client::messages::{DEFAULT_MAX_TOKENS, MIN_THINKING_BUDGET};
 // Anthropic API models
 pub const DEFAULT_MODEL: &str = "claude-sonnet-4-5-20250929";
 pub const DEFAULT_SMALL_MODEL: &str = "claude-haiku-4-5-20251001";
-pub const DEFAULT_REASONING_MODEL: &str = "claude-opus-4-5-20251101";
+pub const DEFAULT_REASONING_MODEL: &str = "claude-opus-4-6";
 pub const FRONTIER_MODEL: &str = DEFAULT_REASONING_MODEL;
 
 // AWS Bedrock models (using global endpoint prefix for maximum availability)
@@ -17,7 +17,7 @@ pub const BEDROCK_MODEL: &str = "global.anthropic.claude-sonnet-4-5-20250929-v1:
 #[cfg(feature = "aws")]
 pub const BEDROCK_SMALL_MODEL: &str = "global.anthropic.claude-haiku-4-5-20251001-v1:0";
 #[cfg(feature = "aws")]
-pub const BEDROCK_REASONING_MODEL: &str = "global.anthropic.claude-opus-4-5-20251101-v1:0";
+pub const BEDROCK_REASONING_MODEL: &str = "global.anthropic.claude-opus-4-6-v1:0";
 
 // GCP Vertex AI models
 #[cfg(feature = "gcp")]
@@ -25,7 +25,7 @@ pub const VERTEX_MODEL: &str = "claude-sonnet-4-5@20250929";
 #[cfg(feature = "gcp")]
 pub const VERTEX_SMALL_MODEL: &str = "claude-haiku-4-5@20251001";
 #[cfg(feature = "gcp")]
-pub const VERTEX_REASONING_MODEL: &str = "claude-opus-4-5@20251101";
+pub const VERTEX_REASONING_MODEL: &str = "claude-opus-4-6";
 
 // Azure Foundry models
 #[cfg(feature = "azure")]
@@ -33,7 +33,7 @@ pub const FOUNDRY_MODEL: &str = "claude-sonnet-4-5";
 #[cfg(feature = "azure")]
 pub const FOUNDRY_SMALL_MODEL: &str = "claude-haiku-4-5";
 #[cfg(feature = "azure")]
-pub const FOUNDRY_REASONING_MODEL: &str = "claude-opus-4-5";
+pub const FOUNDRY_REASONING_MODEL: &str = "claude-opus-4-6";
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -93,17 +93,17 @@ impl ModelConfig {
         Self::from_env_with_defaults(FOUNDRY_MODEL, FOUNDRY_SMALL_MODEL, FOUNDRY_REASONING_MODEL)
     }
 
-    pub fn with_primary(mut self, model: impl Into<String>) -> Self {
+    pub fn primary(mut self, model: impl Into<String>) -> Self {
         self.primary = model.into();
         self
     }
 
-    pub fn with_small(mut self, model: impl Into<String>) -> Self {
+    pub fn small(mut self, model: impl Into<String>) -> Self {
         self.small = model.into();
         self
     }
 
-    pub fn with_reasoning(mut self, model: impl Into<String>) -> Self {
+    pub fn reasoning(mut self, model: impl Into<String>) -> Self {
         self.reasoning = Some(model.into());
         self
     }
@@ -122,15 +122,6 @@ impl ModelConfig {
             "haiku" => &self.small,
             "opus" => self.reasoning.as_deref().unwrap_or(&self.primary),
             other => other,
-        }
-    }
-
-    pub fn model_type_from_alias(alias: &str) -> Option<ModelType> {
-        match alias {
-            "sonnet" => Some(ModelType::Primary),
-            "haiku" => Some(ModelType::Small),
-            "opus" => Some(ModelType::Reasoning),
-            _ => None,
         }
     }
 }
@@ -155,69 +146,47 @@ pub enum BetaFeature {
     OAuth,
     FilesApi,
     Effort,
-    /// 1M token context window (for Sonnet 4 and 4.5 on Bedrock/Vertex).
+    /// 1M token context window (for Sonnet 4.5 on Bedrock/Vertex).
     Context1M,
     /// Tool search for progressive disclosure of MCP tools.
     AdvancedToolUse,
 }
 
 impl BetaFeature {
+    const FEATURES: &'static [(BetaFeature, &'static str)] = &[
+        (Self::InterleavedThinking, "interleaved-thinking-2025-05-14"),
+        (Self::ContextManagement, "context-management-2025-06-27"),
+        (Self::StructuredOutputs, "structured-outputs-2025-11-13"),
+        (Self::PromptCaching, "prompt-caching-2024-07-31"),
+        (Self::MaxTokens128k, "max-tokens-3-5-sonnet-2024-07-15"),
+        (Self::CodeExecution, "code-execution-2025-01-24"),
+        (Self::Mcp, "mcp-2025-04-08"),
+        (Self::WebSearch, "web-search-2025-03-05"),
+        (Self::WebFetch, "web-fetch-2025-09-10"),
+        (Self::OAuth, "oauth-2025-04-20"),
+        (Self::FilesApi, "files-api-2025-04-14"),
+        (Self::Effort, "effort-2025-11-24"),
+        (Self::Context1M, "context-1m-2025-08-07"),
+        (Self::AdvancedToolUse, "advanced-tool-use-2025-11-20"),
+    ];
+
     pub fn header_value(&self) -> &'static str {
-        match self {
-            Self::InterleavedThinking => "interleaved-thinking-2025-05-14",
-            Self::ContextManagement => "context-management-2025-06-27",
-            Self::StructuredOutputs => "structured-outputs-2025-11-13",
-            Self::PromptCaching => "prompt-caching-2024-07-31",
-            Self::MaxTokens128k => "max-tokens-3-5-sonnet-2024-07-15",
-            Self::CodeExecution => "code-execution-2025-01-24",
-            Self::Mcp => "mcp-2025-04-08",
-            Self::WebSearch => "web-search-2025-03-05",
-            Self::WebFetch => "web-fetch-2025-09-10",
-            Self::OAuth => "oauth-2025-04-20",
-            Self::FilesApi => "files-api-2025-04-14",
-            Self::Effort => "effort-2025-11-24",
-            Self::Context1M => "context-1m-2025-08-07",
-            Self::AdvancedToolUse => "advanced-tool-use-2025-11-20",
-        }
+        Self::FEATURES
+            .iter()
+            .find(|(f, _)| f == self)
+            .map(|(_, v)| *v)
+            .expect("all variants covered in FEATURES")
     }
 
     fn from_header(value: &str) -> Option<Self> {
-        match value {
-            "interleaved-thinking-2025-05-14" => Some(Self::InterleavedThinking),
-            "context-management-2025-06-27" => Some(Self::ContextManagement),
-            "structured-outputs-2025-11-13" => Some(Self::StructuredOutputs),
-            "prompt-caching-2024-07-31" => Some(Self::PromptCaching),
-            "max-tokens-3-5-sonnet-2024-07-15" => Some(Self::MaxTokens128k),
-            "code-execution-2025-01-24" => Some(Self::CodeExecution),
-            "mcp-2025-04-08" => Some(Self::Mcp),
-            "web-search-2025-03-05" => Some(Self::WebSearch),
-            "web-fetch-2025-09-10" => Some(Self::WebFetch),
-            "oauth-2025-04-20" => Some(Self::OAuth),
-            "files-api-2025-04-14" => Some(Self::FilesApi),
-            "effort-2025-11-24" => Some(Self::Effort),
-            "context-1m-2025-08-07" => Some(Self::Context1M),
-            "advanced-tool-use-2025-11-20" => Some(Self::AdvancedToolUse),
-            _ => None,
-        }
+        Self::FEATURES
+            .iter()
+            .find(|(_, v)| *v == value)
+            .map(|(f, _)| *f)
     }
 
-    pub fn all() -> &'static [BetaFeature] {
-        &[
-            Self::InterleavedThinking,
-            Self::ContextManagement,
-            Self::StructuredOutputs,
-            Self::PromptCaching,
-            Self::MaxTokens128k,
-            Self::CodeExecution,
-            Self::Mcp,
-            Self::WebSearch,
-            Self::WebFetch,
-            Self::OAuth,
-            Self::FilesApi,
-            Self::Effort,
-            Self::Context1M,
-            Self::AdvancedToolUse,
-        ]
+    pub fn all() -> impl Iterator<Item = BetaFeature> {
+        Self::FEATURES.iter().map(|(f, _)| *f)
     }
 }
 
@@ -234,17 +203,17 @@ impl BetaConfig {
 
     pub fn all() -> Self {
         Self {
-            features: BetaFeature::all().iter().copied().collect(),
+            features: BetaFeature::all().collect(),
             custom: Vec::new(),
         }
     }
 
-    pub fn with(mut self, feature: BetaFeature) -> Self {
+    pub fn feature(mut self, feature: BetaFeature) -> Self {
         self.features.insert(feature);
         self
     }
 
-    pub fn with_custom(mut self, flag: impl Into<String>) -> Self {
+    pub fn custom(mut self, flag: impl Into<String>) -> Self {
         self.custom.push(flag.into());
         self
     }
@@ -325,7 +294,7 @@ impl ProviderConfig {
         }
     }
 
-    pub fn with_max_tokens(mut self, tokens: u32) -> Self {
+    pub fn max_tokens(mut self, tokens: u32) -> Self {
         self.max_tokens = tokens;
         if tokens > DEFAULT_MAX_TOKENS {
             self.beta.add(BetaFeature::MaxTokens128k);
@@ -333,7 +302,7 @@ impl ProviderConfig {
         self
     }
 
-    pub fn with_thinking(mut self, budget: u32) -> Self {
+    pub fn thinking(mut self, budget: u32) -> Self {
         self.thinking_budget = Some(budget.max(MIN_THINKING_BUDGET));
         self.beta.add(BetaFeature::InterleavedThinking);
         self
@@ -344,22 +313,22 @@ impl ProviderConfig {
         self
     }
 
-    pub fn with_api_version(mut self, version: impl Into<String>) -> Self {
+    pub fn api_version(mut self, version: impl Into<String>) -> Self {
         self.api_version = version.into();
         self
     }
 
-    pub fn with_beta(mut self, feature: BetaFeature) -> Self {
+    pub fn beta(mut self, feature: BetaFeature) -> Self {
         self.beta.add(feature);
         self
     }
 
-    pub fn with_beta_config(mut self, config: BetaConfig) -> Self {
+    pub fn beta_config(mut self, config: BetaConfig) -> Self {
         self.beta = config;
         self
     }
 
-    pub fn with_header(mut self, key: impl Into<String>, value: impl Into<String>) -> Self {
+    pub fn header(mut self, key: impl Into<String>, value: impl Into<String>) -> Self {
         self.extra_headers.insert(key.into(), value.into());
         self
     }
@@ -397,8 +366,8 @@ mod tests {
     #[test]
     fn test_provider_config_builder() {
         let config = ProviderConfig::new(ModelConfig::anthropic())
-            .with_max_tokens(16384)
-            .with_thinking(10000)
+            .max_tokens(16384)
+            .thinking(10000)
             .disable_caching();
 
         assert_eq!(config.max_tokens, 16384);
@@ -411,23 +380,23 @@ mod tests {
 
     #[test]
     fn test_provider_config_auto_128k_beta() {
-        let config = ProviderConfig::default().with_max_tokens(DEFAULT_MAX_TOKENS);
+        let config = ProviderConfig::default().max_tokens(DEFAULT_MAX_TOKENS);
         assert!(!config.beta.has(BetaFeature::MaxTokens128k));
 
-        let config = ProviderConfig::default().with_max_tokens(DEFAULT_MAX_TOKENS + 1);
+        let config = ProviderConfig::default().max_tokens(DEFAULT_MAX_TOKENS + 1);
         assert!(config.beta.has(BetaFeature::MaxTokens128k));
     }
 
     #[test]
     fn test_provider_config_thinking_auto_beta() {
-        let config = ProviderConfig::default().with_thinking(5000);
+        let config = ProviderConfig::default().thinking(5000);
         assert!(config.beta.has(BetaFeature::InterleavedThinking));
         assert_eq!(config.thinking_budget, Some(5000));
     }
 
     #[test]
     fn test_provider_config_thinking_min_budget() {
-        let config = ProviderConfig::default().with_thinking(500);
+        let config = ProviderConfig::default().thinking(500);
         assert_eq!(config.thinking_budget, Some(MIN_THINKING_BUDGET));
     }
 
@@ -446,8 +415,8 @@ mod tests {
     #[test]
     fn test_beta_config_with_features() {
         let config = BetaConfig::new()
-            .with(BetaFeature::InterleavedThinking)
-            .with(BetaFeature::ContextManagement);
+            .feature(BetaFeature::InterleavedThinking)
+            .feature(BetaFeature::ContextManagement);
 
         assert!(config.has(BetaFeature::InterleavedThinking));
         assert!(config.has(BetaFeature::ContextManagement));
@@ -461,8 +430,8 @@ mod tests {
     #[test]
     fn test_beta_config_custom() {
         let config = BetaConfig::new()
-            .with(BetaFeature::InterleavedThinking)
-            .with_custom("new-feature-2026-01-01");
+            .feature(BetaFeature::InterleavedThinking)
+            .custom("new-feature-2026-01-01");
 
         let header = config.header_value().unwrap();
         assert!(header.contains("interleaved-thinking"));
@@ -480,11 +449,11 @@ mod tests {
     #[test]
     fn test_provider_config_beta() {
         let config = ProviderConfig::default()
-            .with_beta(BetaFeature::InterleavedThinking)
-            .with_beta_config(
+            .beta(BetaFeature::InterleavedThinking)
+            .beta_config(
                 BetaConfig::new()
-                    .with(BetaFeature::InterleavedThinking)
-                    .with_custom("experimental-feature"),
+                    .feature(BetaFeature::InterleavedThinking)
+                    .custom("experimental-feature"),
             );
 
         assert!(config.beta.has(BetaFeature::InterleavedThinking));
@@ -502,8 +471,8 @@ mod tests {
     #[test]
     fn test_provider_config_extra_headers() {
         let config = ProviderConfig::default()
-            .with_header("x-custom", "value")
-            .with_header("x-another", "test");
+            .header("x-custom", "value")
+            .header("x-another", "test");
 
         assert_eq!(config.extra_headers.get("x-custom"), Some(&"value".into()));
         assert_eq!(config.extra_headers.get("x-another"), Some(&"test".into()));

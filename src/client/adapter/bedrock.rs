@@ -13,10 +13,11 @@ use aws_credential_types::provider::ProvideCredentials;
 use aws_sigv4::http_request::{SignableBody, SignableRequest, SigningSettings, sign};
 use aws_sigv4::sign::v4::SigningParams;
 use aws_smithy_runtime_api::client::identity::Identity;
+use secrecy::ExposeSecret;
 
 use super::base::RequestExecutor;
-use super::config::{BetaFeature, ProviderConfig};
-use super::request::{add_beta_features, build_messages_body};
+use super::config::ProviderConfig;
+use super::request::build_cloud_request_body;
 use super::token_cache::{AwsCredentialsCache, CachedAwsCredentials, new_aws_credentials_cache};
 use super::traits::ProviderAdapter;
 use crate::client::messages::CreateMessageRequest;
@@ -25,7 +26,6 @@ use crate::{Error, Result};
 
 const ANTHROPIC_VERSION: &str = "bedrock-2023-05-31";
 
-/// Bedrock adapter using InvokeModel API with Messages API format.
 #[derive(Debug)]
 pub struct BedrockAdapter {
     config: ProviderConfig,
@@ -44,13 +44,11 @@ enum BedrockAuth {
 }
 
 impl BedrockAdapter {
-    /// Create adapter from environment variables.
     pub async fn from_env(config: ProviderConfig) -> Result<Self> {
         let bedrock_config = crate::config::BedrockConfig::from_env();
         Self::from_config(config, bedrock_config).await
     }
 
-    /// Create adapter from explicit configuration.
     pub async fn from_config(
         config: ProviderConfig,
         bedrock: crate::config::BedrockConfig,
@@ -78,37 +76,31 @@ impl BedrockAdapter {
         })
     }
 
-    /// Set the AWS region.
-    pub fn with_region(mut self, region: impl Into<String>) -> Self {
+    pub fn region(mut self, region: impl Into<String>) -> Self {
         self.region = region.into();
         self
     }
 
-    /// Set a separate region for small/fast models (e.g., Haiku).
-    pub fn with_small_model_region(mut self, region: impl Into<String>) -> Self {
+    pub fn small_model_region(mut self, region: impl Into<String>) -> Self {
         self.small_model_region = Some(region.into());
         self
     }
 
-    /// Enable or disable global endpoint (default: true).
-    pub fn with_global_endpoint(mut self, enable: bool) -> Self {
+    pub fn global_endpoint(mut self, enable: bool) -> Self {
         self.use_global_endpoint = enable;
         self
     }
 
-    /// Enable 1M context window beta feature.
-    pub fn with_1m_context(mut self, enable: bool) -> Self {
+    pub fn use_1m_context(mut self, enable: bool) -> Self {
         self.enable_1m_context = enable;
         self
     }
 
-    /// Set bearer token authentication.
-    pub fn with_bearer_token(mut self, token: impl Into<String>) -> Self {
+    pub fn bearer_token(mut self, token: impl Into<String>) -> Self {
         self.auth = BedrockAuth::BearerToken(token.into());
         self
     }
 
-    /// Get the effective region for a given model.
     fn region_for_model(&self, model: &str) -> &str {
         if let Some(ref small_region) = self.small_model_region
             && model.contains("haiku")
@@ -133,27 +125,15 @@ impl BedrockAdapter {
         )
     }
 
-    /// Build Messages API compatible request body.
     fn build_request_body(&self, request: &CreateMessageRequest) -> serde_json::Value {
-        let mut body = build_messages_body(
+        build_cloud_request_body(
             request,
-            Some(ANTHROPIC_VERSION),
+            ANTHROPIC_VERSION,
             self.config.thinking_budget,
-        );
-
-        // Bedrock doesn't include model in body (it's in the URL)
-        if let Some(obj) = body.as_object_mut() {
-            obj.remove("model");
-        }
-
-        if self.enable_1m_context {
-            add_beta_features(&mut body, &[BetaFeature::Context1M.header_value()]);
-        }
-
-        body
+            self.enable_1m_context,
+        )
     }
 
-    /// Get cached or fresh AWS credentials.
     async fn get_credentials(&self) -> Result<CachedAwsCredentials> {
         let provider = match &self.auth {
             BedrockAuth::SigV4(p) => p,
@@ -187,7 +167,6 @@ impl BedrockAdapter {
         Ok(cached)
     }
 
-    /// Get authorization headers for a request.
     async fn get_auth_headers(
         &self,
         method: &str,
@@ -203,7 +182,6 @@ impl BedrockAdapter {
         }
     }
 
-    /// Sign request with SigV4.
     async fn sign_request(
         &self,
         method: &str,
@@ -215,8 +193,11 @@ impl BedrockAdapter {
 
         let aws_creds = aws_credential_types::Credentials::new(
             &creds.access_key_id,
-            &creds.secret_access_key,
-            creds.session_token.clone(),
+            creds.secret_access_key.expose_secret(),
+            creds
+                .session_token
+                .as_ref()
+                .map(|s| s.expose_secret().to_string()),
             creds.expiry(),
             "bedrock-adapter",
         );
@@ -325,7 +306,7 @@ impl ProviderAdapter for BedrockAdapter {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::client::adapter::ModelConfig;
+    use crate::client::adapter::{BetaFeature, ModelConfig};
     use serde_json::json;
 
     #[test]

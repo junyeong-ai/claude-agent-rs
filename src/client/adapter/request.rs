@@ -61,6 +61,28 @@ pub fn build_messages_body(
     body
 }
 
+/// Build a request body for cloud providers (Bedrock, Vertex, Foundry).
+/// Removes the `model` field (cloud providers pass it in the URL) and
+/// optionally adds beta features.
+pub fn build_cloud_request_body(
+    request: &CreateMessageRequest,
+    anthropic_version: &str,
+    thinking_budget: Option<u32>,
+    enable_1m_context: bool,
+) -> Value {
+    let mut body = build_messages_body(request, Some(anthropic_version), thinking_budget);
+
+    if let Some(obj) = body.as_object_mut() {
+        obj.remove("model");
+    }
+
+    if enable_1m_context {
+        add_beta_features(&mut body, &[super::BetaFeature::Context1M.header_value()]);
+    }
+
+    body
+}
+
 pub fn add_beta_features(body: &mut Value, features: &[&str]) {
     if features.is_empty() {
         return;
@@ -76,7 +98,7 @@ mod tests {
     use crate::types::Message;
 
     fn sample_request() -> CreateMessageRequest {
-        CreateMessageRequest::new("claude-sonnet-4-20250514", vec![Message::user("Hello")])
+        CreateMessageRequest::new("claude-sonnet-4-5-20250929", vec![Message::user("Hello")])
     }
 
     #[test]

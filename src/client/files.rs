@@ -7,7 +7,6 @@ use url::form_urlencoded;
 use super::messages::ErrorResponse;
 use crate::{Error, Result};
 
-const FILES_BASE_URL: &str = "https://api.anthropic.com";
 const FILES_API_BETA: &str = "files-api-2025-04-14";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -47,7 +46,7 @@ impl UploadFileRequest {
         }
     }
 
-    pub fn with_filename(mut self, filename: impl Into<String>) -> Self {
+    pub fn filename(mut self, filename: impl Into<String>) -> Self {
         self.filename = Some(filename.into());
         self
     }
@@ -98,8 +97,8 @@ impl<'a> FilesClient<'a> {
         Self { client }
     }
 
-    fn base_url(&self) -> String {
-        std::env::var("ANTHROPIC_BASE_URL").unwrap_or_else(|_| FILES_BASE_URL.into())
+    fn base_url(&self) -> &str {
+        self.client.adapter().base_url()
     }
 
     fn api_version(&self) -> &str {
@@ -226,13 +225,7 @@ impl<'a> FilesClient<'a> {
             .send()
             .await
             .map_err(Error::Network)?;
-
-        if !response.status().is_success() {
-            let status = response.status().as_u16();
-            let error: ErrorResponse = response.json().await.map_err(Error::Network)?;
-            return Err(error.into_error(status));
-        }
-
+        self.handle_response::<serde_json::Value>(response).await?;
         Ok(())
     }
 
@@ -310,7 +303,7 @@ mod tests {
     #[test]
     fn test_upload_request_with_filename() {
         let request =
-            UploadFileRequest::from_bytes(vec![1, 2, 3], "image/png").with_filename("test.png");
+            UploadFileRequest::from_bytes(vec![1, 2, 3], "image/png").filename("test.png");
         assert_eq!(request.filename, Some("test.png".to_string()));
     }
 

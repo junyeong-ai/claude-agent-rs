@@ -128,12 +128,7 @@ impl Resilience {
         if let Some(ref cb) = self.circuit
             && !cb.allow_request()
         {
-            let err = crate::Error::Api {
-                message: "Circuit breaker is open".to_string(),
-                status: Some(503),
-                error_type: Some("circuit_open".to_string()),
-            };
-            return Err(E::from(err));
+            return Err(E::from(crate::Error::CircuitOpen));
         }
 
         let mut attempts = 0;

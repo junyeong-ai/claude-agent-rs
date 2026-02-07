@@ -20,7 +20,7 @@ impl ExponentialBackoff {
         }
     }
 
-    pub fn with_jitter(mut self, jitter: f64) -> Self {
+    pub fn jitter(mut self, jitter: f64) -> Self {
         self.jitter = jitter.clamp(0.0, 1.0);
         self
     }
@@ -61,7 +61,7 @@ mod tests {
     fn test_exponential_backoff() {
         let backoff =
             ExponentialBackoff::new(Duration::from_millis(100), Duration::from_secs(10), 2.0)
-                .with_jitter(0.0);
+                .jitter(0.0);
 
         assert_eq!(backoff.delay_for(1), Duration::from_millis(100));
         assert_eq!(backoff.delay_for(2), Duration::from_millis(200));
@@ -73,7 +73,7 @@ mod tests {
     fn test_exponential_backoff_max() {
         let backoff =
             ExponentialBackoff::new(Duration::from_millis(100), Duration::from_millis(500), 2.0)
-                .with_jitter(0.0);
+                .jitter(0.0);
 
         assert_eq!(backoff.delay_for(10), Duration::from_millis(500));
     }

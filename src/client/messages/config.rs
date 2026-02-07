@@ -65,7 +65,7 @@ pub struct OutputConfig {
 }
 
 impl OutputConfig {
-    pub fn with_effort(level: EffortLevel) -> Self {
+    pub fn effort(level: EffortLevel) -> Self {
         Self {
             effort: Some(level),
         }
@@ -260,7 +260,7 @@ mod tests {
 
     #[test]
     fn test_output_config_serialization() {
-        let config = OutputConfig::with_effort(EffortLevel::High);
+        let config = OutputConfig::effort(EffortLevel::High);
         let json = serde_json::to_string(&config).unwrap();
         assert!(json.contains("\"effort\":\"high\""));
     }

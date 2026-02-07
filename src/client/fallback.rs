@@ -18,17 +18,17 @@ impl FallbackConfig {
         }
     }
 
-    pub fn with_max_retries(mut self, max_retries: u32) -> Self {
+    pub fn max_retries(mut self, max_retries: u32) -> Self {
         self.max_retries = max_retries;
         self
     }
 
-    pub fn with_trigger(mut self, trigger: FallbackTrigger) -> Self {
+    pub fn trigger(mut self, trigger: FallbackTrigger) -> Self {
         self.triggers.insert(trigger);
         self
     }
 
-    pub fn with_triggers(mut self, triggers: impl IntoIterator<Item = FallbackTrigger>) -> Self {
+    pub fn triggers(mut self, triggers: impl IntoIterator<Item = FallbackTrigger>) -> Self {
         self.triggers.extend(triggers);
         self
     }
@@ -70,7 +70,7 @@ mod tests {
 
     #[test]
     fn test_fallback_trigger_overloaded() {
-        let config = FallbackConfig::new("claude-haiku-3-5");
+        let config = FallbackConfig::new("claude-haiku-4-5-20251001");
 
         let overloaded_error = crate::Error::Api {
             message: "Model is overloaded".to_string(),
@@ -89,7 +89,7 @@ mod tests {
 
     #[test]
     fn test_fallback_trigger_rate_limit() {
-        let config = FallbackConfig::new("claude-haiku-3-5");
+        let config = FallbackConfig::new("claude-haiku-4-5-20251001");
 
         let rate_limit_error = crate::Error::RateLimit {
             retry_after: Some(std::time::Duration::from_secs(60)),
@@ -99,9 +99,9 @@ mod tests {
 
     #[test]
     fn test_custom_triggers() {
-        let config = FallbackConfig::new("claude-haiku-3-5")
-            .with_trigger(FallbackTrigger::Timeout)
-            .with_trigger(FallbackTrigger::HttpStatus(500));
+        let config = FallbackConfig::new("claude-haiku-4-5-20251001")
+            .trigger(FallbackTrigger::Timeout)
+            .trigger(FallbackTrigger::HttpStatus(500));
 
         let timeout_error = crate::Error::Timeout(std::time::Duration::from_secs(30));
         assert!(config.should_fallback(&timeout_error));

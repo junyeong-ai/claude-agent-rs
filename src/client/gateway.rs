@@ -41,7 +41,7 @@ impl GatewayConfig {
     }
 
     /// Create with custom base URL.
-    pub fn with_base_url(url: impl Into<String>) -> Self {
+    pub fn base_url(url: impl Into<String>) -> Self {
         Self {
             base_url: Some(url.into()),
             ..Default::default()
@@ -115,7 +115,7 @@ mod tests {
 
     #[test]
     fn test_gateway_config_builder() {
-        let config = GatewayConfig::with_base_url("https://my-gateway.com")
+        let config = GatewayConfig::base_url("https://my-gateway.com")
             .auth_token("my-token")
             .header("X-Custom", "value")
             .disable_betas();
@@ -134,7 +134,7 @@ mod tests {
             "https://default.com"
         );
 
-        let config = GatewayConfig::with_base_url("https://custom.com");
+        let config = GatewayConfig::base_url("https://custom.com");
         assert_eq!(
             config.effective_base_url("https://default.com"),
             "https://custom.com"

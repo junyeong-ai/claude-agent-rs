@@ -3,6 +3,7 @@
 use std::sync::Arc;
 
 use async_trait::async_trait;
+use secrecy::{ExposeSecret, SecretString};
 use tokio::sync::RwLock;
 
 use super::config::{BetaFeature, ProviderConfig};
@@ -16,10 +17,26 @@ use crate::{Error, Result};
 
 const BASE_URL: &str = "https://api.anthropic.com";
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 enum AuthMethod {
-    ApiKey(String),
-    OAuth { token: String, config: OAuthConfig },
+    ApiKey(SecretString),
+    OAuth {
+        token: SecretString,
+        config: OAuthConfig,
+    },
+}
+
+impl std::fmt::Debug for AuthMethod {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::ApiKey(_) => f.debug_tuple("ApiKey").field(&"[redacted]").finish(),
+            Self::OAuth { config, .. } => f
+                .debug_struct("OAuth")
+                .field("token", &"[redacted]")
+                .field("config", config)
+                .finish(),
+        }
+    }
 }
 
 impl AuthMethod {
@@ -76,8 +93,8 @@ impl AnthropicAdapter {
         }
     }
 
-    fn api_key_from_env() -> String {
-        std::env::var("ANTHROPIC_API_KEY").unwrap_or_default()
+    fn api_key_from_env() -> SecretString {
+        SecretString::from(std::env::var("ANTHROPIC_API_KEY").unwrap_or_default())
     }
 
     fn base_url_from_env() -> String {
@@ -111,14 +128,14 @@ impl AnthropicAdapter {
         }
     }
 
-    pub fn with_api_key(self, key: impl Into<String>) -> Self {
+    pub fn api_key(self, key: impl Into<String>) -> Self {
         Self {
-            auth: RwLock::new(AuthMethod::ApiKey(key.into())),
+            auth: RwLock::new(AuthMethod::ApiKey(SecretString::from(key.into()))),
             ..self
         }
     }
 
-    pub fn with_base_url(mut self, url: impl Into<String>) -> Self {
+    pub fn base_url(mut self, url: impl Into<String>) -> Self {
         self.base_url = url.into();
         self
     }
@@ -137,12 +154,15 @@ impl AnthropicAdapter {
     ) -> reqwest::RequestBuilder {
         let mut r = match auth {
             AuthMethod::ApiKey(key) => req
-                .header("x-api-key", key)
+                .header("x-api-key", key.expose_secret())
                 .header("anthropic-version", &self.config.api_version)
                 .header("content-type", "application/json"),
-            AuthMethod::OAuth { token, config } => {
-                config.apply_headers(req, token, &self.config.api_version, &self.config.beta)
-            }
+            AuthMethod::OAuth { token, config } => config.apply_headers(
+                req,
+                token.expose_secret(),
+                &self.config.api_version,
+                &self.config.beta,
+            ),
         };
 
         if let AuthMethod::ApiKey(_) = auth
@@ -202,6 +222,38 @@ impl AnthropicAdapter {
     pub fn credential_provider(&self) -> Option<&Arc<dyn CredentialProvider>> {
         self.credential_provider.as_ref()
     }
+
+    fn needs_structured_outputs(request: &CreateMessageRequest) -> bool {
+        let has_strict_tools = request
+            .tools
+            .as_ref()
+            .is_some_and(|tools| tools.iter().any(|t| t.is_strict()));
+        request.output_format.is_some() || has_strict_tools
+    }
+
+    fn apply_structured_outputs_header(
+        &self,
+        req: reqwest::RequestBuilder,
+        needs: bool,
+    ) -> reqwest::RequestBuilder {
+        if needs && !self.config.beta.has(BetaFeature::StructuredOutputs) {
+            req.header(
+                "anthropic-beta",
+                BetaFeature::StructuredOutputs.header_value(),
+            )
+        } else {
+            req
+        }
+    }
+
+    async fn check_error_response(response: reqwest::Response) -> Result<reqwest::Response> {
+        if !response.status().is_success() {
+            let status = response.status().as_u16();
+            let error: ErrorResponse = response.json().await?;
+            return Err(error.into_error(status));
+        }
+        Ok(response)
+    }
 }
 
 #[async_trait]
@@ -212,6 +264,10 @@ impl ProviderAdapter for AnthropicAdapter {
 
     fn name(&self) -> &'static str {
         "anthropic"
+    }
+
+    fn base_url(&self) -> &str {
+        &self.base_url
     }
 
     async fn build_url(&self, _model: &str, _stream: bool) -> String {
@@ -235,12 +291,7 @@ impl ProviderAdapter for AnthropicAdapter {
         http: &reqwest::Client,
         request: CreateMessageRequest,
     ) -> Result<ApiResponse> {
-        let has_strict_tools = request
-            .tools
-            .as_ref()
-            .map(|tools| tools.iter().any(|t| t.is_strict()))
-            .unwrap_or(false);
-        let needs_structured_outputs = request.output_format.is_some() || has_strict_tools;
+        let needs = Self::needs_structured_outputs(&request);
 
         let (url, body) = {
             let auth = self.auth.read().await;
@@ -249,23 +300,10 @@ impl ProviderAdapter for AnthropicAdapter {
             (url, serde_json::to_value(&prepared)?)
         };
 
-        let mut req = self.apply_auth_headers(http.post(&url)).await;
-
-        // Auto-add structured outputs beta header when output_format or strict tools are used
-        if needs_structured_outputs && !self.config.beta.has(BetaFeature::StructuredOutputs) {
-            req = req.header(
-                "anthropic-beta",
-                BetaFeature::StructuredOutputs.header_value(),
-            );
-        }
-
+        let req = self.apply_auth_headers(http.post(&url)).await;
+        let req = self.apply_structured_outputs_header(req, needs);
         let response = req.json(&body).send().await?;
-
-        if !response.status().is_success() {
-            let status = response.status().as_u16();
-            let error: ErrorResponse = response.json().await?;
-            return Err(error.into_error(status));
-        }
+        let response = Self::check_error_response(response).await?;
 
         let json: serde_json::Value = response.json().await?;
         self.transform_response(json)
@@ -276,12 +314,7 @@ impl ProviderAdapter for AnthropicAdapter {
         http: &reqwest::Client,
         mut request: CreateMessageRequest,
     ) -> Result<reqwest::Response> {
-        let has_strict_tools = request
-            .tools
-            .as_ref()
-            .map(|tools| tools.iter().any(|t| t.is_strict()))
-            .unwrap_or(false);
-        let needs_structured_outputs = request.output_format.is_some() || has_strict_tools;
+        let needs = Self::needs_structured_outputs(&request);
         request.stream = Some(true);
 
         let (url, body) = {
@@ -291,25 +324,10 @@ impl ProviderAdapter for AnthropicAdapter {
             (url, serde_json::to_value(&prepared)?)
         };
 
-        let mut req = self.apply_auth_headers(http.post(&url)).await;
-
-        // Auto-add structured outputs beta header when output_format or strict tools are used
-        if needs_structured_outputs && !self.config.beta.has(BetaFeature::StructuredOutputs) {
-            req = req.header(
-                "anthropic-beta",
-                BetaFeature::StructuredOutputs.header_value(),
-            );
-        }
-
+        let req = self.apply_auth_headers(http.post(&url)).await;
+        let req = self.apply_structured_outputs_header(req, needs);
         let response = req.json(&body).send().await?;
-
-        if !response.status().is_success() {
-            let status = response.status().as_u16();
-            let error: ErrorResponse = response.json().await?;
-            return Err(error.into_error(status));
-        }
-
-        Ok(response)
+        Self::check_error_response(response).await
     }
 
     fn supports_credential_refresh(&self) -> bool {
@@ -350,12 +368,7 @@ impl ProviderAdapter for AnthropicAdapter {
             .json(&body)
             .send()
             .await?;
-
-        if !response.status().is_success() {
-            let status = response.status().as_u16();
-            let error: ErrorResponse = response.json().await?;
-            return Err(error.into_error(status));
-        }
+        let response = Self::check_error_response(response).await?;
 
         Ok(response.json().await?)
     }
@@ -419,8 +432,8 @@ mod tests {
     #[test]
     fn test_api_key_with_beta() {
         let config = ProviderConfig::new(ModelConfig::anthropic())
-            .with_beta(BetaFeature::InterleavedThinking)
-            .with_beta(BetaFeature::ContextManagement);
+            .beta(BetaFeature::InterleavedThinking)
+            .beta(BetaFeature::ContextManagement);
 
         let adapter = AnthropicAdapter::new(config);
         assert!(adapter.config.beta.has(BetaFeature::InterleavedThinking));
@@ -429,8 +442,8 @@ mod tests {
 
     #[test]
     fn test_api_key_with_custom_beta() {
-        let beta = BetaConfig::new().with_custom("new-feature-2026-01-01");
-        let config = ProviderConfig::new(ModelConfig::anthropic()).with_beta_config(beta);
+        let beta = BetaConfig::new().custom("new-feature-2026-01-01");
+        let config = ProviderConfig::new(ModelConfig::anthropic()).beta_config(beta);
 
         let adapter = AnthropicAdapter::new(config);
         let header = adapter.config.beta.header_value().unwrap();
@@ -447,7 +460,7 @@ mod tests {
         );
 
         let request = CreateMessageRequest::new("model", vec![Message::user("Hi")])
-            .with_system("Custom user system prompt");
+            .system("Custom user system prompt");
 
         let body = adapter.transform_request(request).await.unwrap();
         let system_blocks = body
@@ -479,12 +492,12 @@ mod tests {
 
     #[tokio::test]
     async fn test_api_key_does_not_modify_system_prompt() {
-        let adapter = AnthropicAdapter::new(ProviderConfig::new(ModelConfig::anthropic()))
-            .with_api_key("sk-test");
+        let adapter =
+            AnthropicAdapter::new(ProviderConfig::new(ModelConfig::anthropic())).api_key("sk-test");
 
         // Create request with existing system prompt
         let request = CreateMessageRequest::new("model", vec![Message::user("Hi")])
-            .with_system("Custom user system prompt");
+            .system("Custom user system prompt");
 
         let body = adapter.transform_request(request).await.unwrap();
         let system = body.get("system").and_then(|v| v.as_str()).unwrap_or("");

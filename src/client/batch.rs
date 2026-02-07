@@ -6,8 +6,6 @@ use url::form_urlencoded;
 use super::messages::{CreateMessageRequest, ErrorResponse};
 use crate::types::ApiResponse;
 
-const BATCH_BASE_URL: &str = "https://api.anthropic.com";
-
 #[derive(Debug, Clone, Serialize)]
 pub struct BatchRequest {
     pub custom_id: String,
@@ -33,7 +31,7 @@ impl CreateBatchRequest {
         Self { requests }
     }
 
-    pub fn with_request(mut self, request: BatchRequest) -> Self {
+    pub fn request(mut self, request: BatchRequest) -> Self {
         self.requests.push(request);
         self
     }
@@ -109,8 +107,8 @@ impl<'a> BatchClient<'a> {
         Self { client }
     }
 
-    fn base_url(&self) -> String {
-        std::env::var("ANTHROPIC_BASE_URL").unwrap_or_else(|_| BATCH_BASE_URL.into())
+    fn base_url(&self) -> &str {
+        self.client.adapter().base_url()
     }
 
     fn api_version(&self) -> &str {
@@ -142,21 +140,26 @@ impl<'a> BatchClient<'a> {
         request
     }
 
-    pub async fn create(&self, request: CreateBatchRequest) -> crate::Result<MessageBatch> {
-        let url = self.build_url("");
-        let request = self
-            .build_request(reqwest::Method::POST, &url)
-            .await
-            .json(&request);
-        let response = request.send().await?;
-
+    async fn handle_response<T: serde::de::DeserializeOwned>(
+        response: reqwest::Response,
+    ) -> crate::Result<T> {
         if !response.status().is_success() {
             let status = response.status().as_u16();
             let error: ErrorResponse = response.json().await?;
             return Err(error.into_error(status));
         }
-
         Ok(response.json().await?)
+    }
+
+    pub async fn create(&self, request: CreateBatchRequest) -> crate::Result<MessageBatch> {
+        let url = self.build_url("");
+        let response = self
+            .build_request(reqwest::Method::POST, &url)
+            .await
+            .json(&request)
+            .send()
+            .await?;
+        Self::handle_response(response).await
     }
 
     pub async fn get(&self, batch_id: &str) -> crate::Result<MessageBatch> {
@@ -166,14 +169,7 @@ impl<'a> BatchClient<'a> {
             .await
             .send()
             .await?;
-
-        if !response.status().is_success() {
-            let status = response.status().as_u16();
-            let error: ErrorResponse = response.json().await?;
-            return Err(error.into_error(status));
-        }
-
-        Ok(response.json().await?)
+        Self::handle_response(response).await
     }
 
     pub async fn cancel(&self, batch_id: &str) -> crate::Result<MessageBatch> {
@@ -183,14 +179,7 @@ impl<'a> BatchClient<'a> {
             .await
             .send()
             .await?;
-
-        if !response.status().is_success() {
-            let status = response.status().as_u16();
-            let error: ErrorResponse = response.json().await?;
-            return Err(error.into_error(status));
-        }
-
-        Ok(response.json().await?)
+        Self::handle_response(response).await
     }
 
     pub async fn list(
@@ -219,14 +208,7 @@ impl<'a> BatchClient<'a> {
             .await
             .send()
             .await?;
-
-        if !response.status().is_success() {
-            let status = response.status().as_u16();
-            let error: ErrorResponse = response.json().await?;
-            return Err(error.into_error(status));
-        }
-
-        Ok(response.json().await?)
+        Self::handle_response(response).await
     }
 
     pub async fn results(&self, batch_id: &str) -> crate::Result<Vec<BatchResult>> {
@@ -329,7 +311,7 @@ mod tests {
             CreateMessageRequest::new("claude-sonnet-4-5", vec![crate::types::Message::user("B")]),
         );
 
-        let batch = CreateBatchRequest::new(vec![req1]).with_request(req2);
+        let batch = CreateBatchRequest::new(vec![req1]).request(req2);
         assert_eq!(batch.requests.len(), 2);
         assert_eq!(batch.requests[0].custom_id, "req-1");
         assert_eq!(batch.requests[1].custom_id, "req-2");
@@ -462,8 +444,8 @@ mod tests {
             "claude-sonnet-4-5",
             vec![crate::types::Message::user("Test")],
         )
-        .with_max_tokens(1000)
-        .with_temperature(0.5);
+        .max_tokens(1000)
+        .temperature(0.5);
 
         let batch_req = BatchRequest::new("custom-id-123", request);
         assert_eq!(batch_req.custom_id, "custom-id-123");

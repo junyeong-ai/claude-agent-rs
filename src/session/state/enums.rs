@@ -4,13 +4,6 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub enum SessionMode {
-    #[default]
-    Stateless,
-}
-
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
 pub enum SessionState {
     #[default]
     Created,
@@ -22,7 +15,7 @@ pub enum SessionState {
 }
 
 impl SessionState {
-    /// Parse from string with legacy alias support.
+    /// Parse from string with lenient matching (case-insensitive, accepts common aliases).
     pub fn from_str_lenient(s: &str) -> Self {
         match s.to_lowercase().as_str() {
             "active" => Self::Active,

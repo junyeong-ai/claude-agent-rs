@@ -15,7 +15,7 @@ pub mod state;
 pub mod types;
 
 pub use crate::types::TokenUsage;
-pub use compact::{CompactExecutor, CompactStrategy};
+pub use compact::{CompactExecutor, CompactStrategy, DEFAULT_COMPACT_THRESHOLD};
 pub use manager::SessionManager;
 pub use persistence::{MemoryPersistence, Persistence, PersistenceFactory};
 #[cfg(feature = "jsonl")]
@@ -31,8 +31,8 @@ pub use persistence_redis::{RedisConfig, RedisPersistence};
 pub use queue::{InputQueue, MergedInput, QueueError, QueuedInput, SharedInputQueue};
 pub use session_state::{ExecutionGuard, ToolState};
 pub use state::{
-    MessageId, MessageMetadata, PermissionPolicy, Session, SessionConfig, SessionId,
-    SessionMessage, SessionMode, SessionState, SessionType,
+    MessageId, MessageMetadata, Session, SessionConfig, SessionId, SessionMessage,
+    SessionPermissions, SessionState, SessionToolLimits, SessionType,
 };
 pub use types::{
     CompactRecord, CompactTrigger, EnvironmentContext, Plan, PlanStatus, QueueItem, QueueOperation,
@@ -49,9 +49,6 @@ pub enum SessionError {
     #[error("Session expired: {id}")]
     Expired { id: String },
 
-    #[error("Permission denied: {reason}")]
-    PermissionDenied { reason: String },
-
     #[error("Storage error: {message}")]
     Storage { message: String },
 
@@ -63,19 +60,52 @@ pub enum SessionError {
 
     #[error("Context error: {0}")]
     Context(#[from] crate::context::ContextError),
-
-    #[error("Plan error: {message}")]
-    Plan { message: String },
 }
 
 pub type SessionResult<T> = std::result::Result<T, SessionError>;
 
-/// Extension trait for converting errors to SessionError::Storage.
-pub trait StorageResultExt<T> {
+#[cfg(any(feature = "postgres", feature = "redis-backend"))]
+pub(crate) trait StorageResultExt<T> {
     fn storage_err(self) -> SessionResult<T>;
     fn storage_err_ctx(self, context: &str) -> SessionResult<T>;
 }
 
+#[cfg(any(feature = "postgres", feature = "redis-backend"))]
+pub(crate) async fn with_retry<F, Fut, T>(
+    max_retries: u32,
+    initial_backoff: std::time::Duration,
+    max_backoff: std::time::Duration,
+    is_retryable: impl Fn(&SessionError) -> bool,
+    operation: F,
+) -> SessionResult<T>
+where
+    F: Fn() -> Fut,
+    Fut: std::future::Future<Output = SessionResult<T>>,
+{
+    let mut attempt = 0;
+    let mut backoff = initial_backoff;
+
+    loop {
+        match operation().await {
+            Ok(result) => return Ok(result),
+            Err(e) if attempt < max_retries && is_retryable(&e) => {
+                attempt += 1;
+                tracing::warn!(
+                    attempt = attempt,
+                    error = %e,
+                    "Retrying operation after transient failure"
+                );
+                // Symmetrical 10% jitter to prevent thundering herd
+                let jitter_factor = 1.0 + (rand::random::<f64>() * 0.2 - 0.1);
+                tokio::time::sleep(backoff.mul_f64(jitter_factor)).await;
+                backoff = (backoff * 2).min(max_backoff);
+            }
+            Err(e) => return Err(e),
+        }
+    }
+}
+
+#[cfg(any(feature = "postgres", feature = "redis-backend"))]
 impl<T, E: std::fmt::Display> StorageResultExt<T> for std::result::Result<T, E> {
     fn storage_err(self) -> SessionResult<T> {
         self.map_err(|e| SessionError::Storage {

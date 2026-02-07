@@ -83,6 +83,7 @@ impl SessionManager {
         let original = self.get(id).await?;
 
         let mut forked = Session::new(original.config.clone());
+        forked.parent_id = Some(original.id);
         forked.tenant_id = original.tenant_id.clone();
         forked.summary = original.summary.clone();
 
@@ -198,6 +199,7 @@ mod tests {
         // Forked session should have the same messages
         assert_eq!(forked.messages.len(), 2);
         assert_ne!(forked.id, session_id);
+        assert_eq!(forked.parent_id, Some(session_id));
 
         // Messages should be marked as sidechain
         assert!(forked.messages.iter().all(|m| m.is_sidechain));

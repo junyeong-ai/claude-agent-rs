@@ -78,12 +78,12 @@ impl SessionMessage {
         }
     }
 
-    pub fn with_parent(mut self, parent_id: MessageId) -> Self {
+    pub fn parent(mut self, parent_id: MessageId) -> Self {
         self.parent_id = Some(parent_id);
         self
     }
 
-    pub fn with_usage(mut self, usage: TokenUsage) -> Self {
+    pub fn usage(mut self, usage: TokenUsage) -> Self {
         self.usage = Some(usage);
         self
     }
@@ -98,17 +98,17 @@ impl SessionMessage {
         self
     }
 
-    pub fn with_environment(mut self, env: EnvironmentContext) -> Self {
+    pub fn environment(mut self, env: EnvironmentContext) -> Self {
         self.environment = Some(env);
         self
     }
 
-    pub fn with_model(mut self, model: impl Into<String>) -> Self {
+    pub fn model(mut self, model: impl Into<String>) -> Self {
         self.metadata.model = Some(model.into());
         self
     }
 
-    pub fn with_request_id(mut self, request_id: impl Into<String>) -> Self {
+    pub fn request_id(mut self, request_id: impl Into<String>) -> Self {
         self.metadata.request_id = Some(request_id.into());
         self
     }

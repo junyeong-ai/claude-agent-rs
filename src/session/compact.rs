@@ -9,7 +9,10 @@ use super::state::{Session, SessionMessage};
 use super::types::CompactRecord;
 use super::{SessionError, SessionResult};
 use crate::client::DEFAULT_SMALL_MODEL;
-use crate::types::{CompactResult, ContentBlock, DEFAULT_COMPACT_THRESHOLD, Role};
+use crate::types::{CompactResult, ContentBlock, Role};
+
+/// Context usage threshold for triggering compaction (80%).
+pub const DEFAULT_COMPACT_THRESHOLD: f32 = 0.8;
 
 /// Strategy for context compaction.
 ///
@@ -71,12 +74,12 @@ impl CompactStrategy {
         }
     }
 
-    pub fn with_threshold(mut self, percent: f32) -> Self {
+    pub fn threshold(mut self, percent: f32) -> Self {
         self.threshold_percent = percent.clamp(0.5, 0.95);
         self
     }
 
-    pub fn with_model(mut self, model: impl Into<String>) -> Self {
+    pub fn model(mut self, model: impl Into<String>) -> Self {
         self.summary_model = model.into();
         self
     }
@@ -84,13 +87,13 @@ impl CompactStrategy {
     /// Set whether to keep detailed coding information in summaries.
     ///
     /// This mirrors the `keep_coding_instructions` flag in `OutputStyle`.
-    pub fn with_keep_coding_instructions(mut self, keep: bool) -> Self {
+    pub fn keep_coding_instructions(mut self, keep: bool) -> Self {
         self.keep_coding_instructions = keep;
         self
     }
 
     /// Set custom instructions for the compact prompt.
-    pub fn with_custom_instructions(mut self, instructions: impl Into<String>) -> Self {
+    pub fn custom_instructions(mut self, instructions: impl Into<String>) -> Self {
         self.custom_instructions = Some(instructions.into());
         self
     }
@@ -158,16 +161,18 @@ impl CompactExecutor {
             .sum();
         let saved_tokens = (removed_chars / 4) as u64;
 
-        session.messages.clear();
-        session.summary = Some(summary.clone());
-
+        // Build replacement message before modifying session (swap pattern)
         let summary_msg = SessionMessage::user(vec![ContentBlock::text(format!(
             "[Previous conversation summary]\n\n{}",
             summary
         ))])
         .as_compact_summary();
 
-        session.add_message(summary_msg);
+        let new_leaf_id = Some(summary_msg.id.clone());
+        session.messages = vec![summary_msg];
+        session.current_leaf_id = new_leaf_id;
+        session.summary = Some(summary.clone());
+        session.updated_at = chrono::Utc::now();
 
         CompactResult::Compacted {
             original_count,
@@ -186,9 +191,9 @@ impl CompactExecutor {
         } = result
         {
             let record = CompactRecord::new(session.id)
-                .with_counts(*original_count, *new_count)
-                .with_summary(summary.clone())
-                .with_saved_tokens(*saved_tokens);
+                .counts(*original_count, *new_count)
+                .summary(summary.clone())
+                .saved_tokens(*saved_tokens);
             session.record_compact(record);
         }
     }
@@ -205,7 +210,6 @@ impl CompactExecutor {
 
         formatted.push_str(prompt);
 
-        // Append custom instructions if provided
         if let Some(ref instructions) = self.strategy.custom_instructions {
             formatted.push_str("\n\n");
             formatted.push_str("# Custom Summary Instructions\n\n");
@@ -227,9 +231,13 @@ impl CompactExecutor {
                 if let Some(text) = block.as_text() {
                     // Truncate very long messages but keep more context than before
                     let display_text = if text.len() > 8000 {
+                        let mut end = 8000;
+                        while !text.is_char_boundary(end) {
+                            end -= 1;
+                        }
                         format!(
                             "{}... [truncated, {} chars total]",
-                            &text[..8000],
+                            &text[..end],
                             text.len()
                         )
                     } else {
@@ -440,17 +448,17 @@ mod tests {
 
     #[test]
     fn test_compact_strategy_with_keep_coding_instructions() {
-        let strategy = CompactStrategy::default().with_keep_coding_instructions(false);
+        let strategy = CompactStrategy::default().keep_coding_instructions(false);
         assert!(!strategy.keep_coding_instructions);
 
-        let strategy = CompactStrategy::default().with_keep_coding_instructions(true);
+        let strategy = CompactStrategy::default().keep_coding_instructions(true);
         assert!(strategy.keep_coding_instructions);
     }
 
     #[test]
     fn test_compact_strategy_with_custom_instructions() {
         let strategy = CompactStrategy::default()
-            .with_custom_instructions("Focus on test output and code changes.");
+            .custom_instructions("Focus on test output and code changes.");
 
         assert_eq!(
             strategy.custom_instructions,
@@ -460,7 +468,7 @@ mod tests {
 
     #[test]
     fn test_needs_compact() {
-        let executor = CompactExecutor::new(CompactStrategy::default().with_threshold(0.8));
+        let executor = CompactExecutor::new(CompactStrategy::default().threshold(0.8));
 
         assert!(!executor.needs_compact(70_000, 100_000));
         assert!(executor.needs_compact(80_000, 100_000));
@@ -480,7 +488,7 @@ mod tests {
     fn test_prepare_compact_ready_full_prompt() {
         let session = create_test_session(10);
         let executor =
-            CompactExecutor::new(CompactStrategy::default().with_keep_coding_instructions(true));
+            CompactExecutor::new(CompactStrategy::default().keep_coding_instructions(true));
 
         let result = executor.prepare_compact(&session).unwrap();
 
@@ -506,7 +514,7 @@ mod tests {
     fn test_prepare_compact_ready_minimal_prompt() {
         let session = create_test_session(10);
         let executor =
-            CompactExecutor::new(CompactStrategy::default().with_keep_coding_instructions(false));
+            CompactExecutor::new(CompactStrategy::default().keep_coding_instructions(false));
 
         let result = executor.prepare_compact(&session).unwrap();
 
@@ -534,7 +542,7 @@ mod tests {
         let session = create_test_session(5);
         let executor = CompactExecutor::new(
             CompactStrategy::default()
-                .with_custom_instructions("Focus on Rust code changes and test results."),
+                .custom_instructions("Focus on Rust code changes and test results."),
         );
 
         let result = executor.prepare_compact(&session).unwrap();

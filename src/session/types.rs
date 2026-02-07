@@ -3,6 +3,7 @@
 use std::path::{Path, PathBuf};
 
 use chrono::{DateTime, Utc};
+use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
@@ -87,7 +88,6 @@ pub struct ToolExecution {
     pub input_tokens: Option<u32>,
     pub output_tokens: Option<u32>,
     pub plan_id: Option<Uuid>,
-    pub spawned_session_id: Option<SessionId>,
     pub created_at: DateTime<Utc>,
 }
 
@@ -110,44 +110,38 @@ impl ToolExecution {
             input_tokens: None,
             output_tokens: None,
             plan_id: None,
-            spawned_session_id: None,
             created_at: Utc::now(),
         }
     }
 
-    pub fn with_output(mut self, output: impl Into<String>, is_error: bool) -> Self {
+    pub fn output(mut self, output: impl Into<String>, is_error: bool) -> Self {
         self.tool_output = output.into();
         self.is_error = is_error;
         self
     }
 
-    pub fn with_error(mut self, message: impl Into<String>) -> Self {
+    pub fn error(mut self, message: impl Into<String>) -> Self {
         self.is_error = true;
         self.error_message = Some(message.into());
         self
     }
 
-    pub fn with_duration(mut self, duration_ms: u64) -> Self {
+    pub fn duration(mut self, duration_ms: u64) -> Self {
         self.duration_ms = duration_ms;
         self
     }
 
-    pub fn with_plan(mut self, plan_id: Uuid) -> Self {
+    pub fn plan(mut self, plan_id: Uuid) -> Self {
         self.plan_id = Some(plan_id);
         self
     }
 
-    pub fn with_spawned_session(mut self, session_id: SessionId) -> Self {
-        self.spawned_session_id = Some(session_id);
-        self
-    }
-
-    pub fn with_message(mut self, message_id: impl Into<String>) -> Self {
+    pub fn message(mut self, message_id: impl Into<String>) -> Self {
         self.message_id = Some(message_id.into());
         self
     }
 
-    pub fn with_tokens(mut self, input: u32, output: u32) -> Self {
+    pub fn tokens(mut self, input: u32, output: u32) -> Self {
         self.input_tokens = Some(input);
         self.output_tokens = Some(output);
         self
@@ -218,12 +212,12 @@ impl Plan {
         }
     }
 
-    pub fn with_name(mut self, name: impl Into<String>) -> Self {
+    pub fn name(mut self, name: impl Into<String>) -> Self {
         self.name = Some(name.into());
         self
     }
 
-    pub fn with_content(mut self, content: impl Into<String>) -> Self {
+    pub fn content(mut self, content: impl Into<String>) -> Self {
         self.content = content.into();
         self
     }
@@ -307,7 +301,7 @@ impl TodoItem {
         }
     }
 
-    pub fn with_plan(mut self, plan_id: Uuid) -> Self {
+    pub fn plan(mut self, plan_id: Uuid) -> Self {
         self.plan_id = Some(plan_id);
         self
     }
@@ -383,35 +377,35 @@ impl CompactRecord {
         }
     }
 
-    pub fn with_trigger(mut self, trigger: CompactTrigger) -> Self {
+    pub fn trigger(mut self, trigger: CompactTrigger) -> Self {
         self.trigger = trigger;
         self
     }
 
-    pub fn with_counts(mut self, original: usize, new: usize) -> Self {
+    pub fn counts(mut self, original: usize, new: usize) -> Self {
         self.original_count = original;
         self.new_count = new;
         self
     }
 
-    pub fn with_summary(mut self, summary: impl Into<String>) -> Self {
+    pub fn summary(mut self, summary: impl Into<String>) -> Self {
         self.summary = summary.into();
         self
     }
 
-    pub fn with_saved_tokens(mut self, saved: usize) -> Self {
+    pub fn saved_tokens(mut self, saved: usize) -> Self {
         self.saved_tokens = saved;
         self
     }
 
-    pub fn with_tokens(mut self, pre: usize, post: usize) -> Self {
+    pub fn tokens(mut self, pre: usize, post: usize) -> Self {
         self.pre_tokens = pre;
         self.post_tokens = post;
         self.saved_tokens = pre.saturating_sub(post);
         self
     }
 
-    pub fn with_logical_parent(mut self, parent_id: MessageId) -> Self {
+    pub fn logical_parent(mut self, parent_id: MessageId) -> Self {
         self.logical_parent_id = Some(parent_id);
         self
     }
@@ -437,7 +431,7 @@ impl SummarySnapshot {
         }
     }
 
-    pub fn with_leaf(mut self, leaf_id: MessageId) -> Self {
+    pub fn leaf(mut self, leaf_id: MessageId) -> Self {
         self.leaf_message_id = Some(leaf_id);
         self
     }
@@ -485,7 +479,7 @@ impl QueueItem {
         }
     }
 
-    pub fn with_priority(mut self, priority: i32) -> Self {
+    pub fn priority(mut self, priority: i32) -> Self {
         self.priority = priority;
         self
     }
@@ -513,7 +507,7 @@ pub struct SessionStats {
     pub tool_error_count: usize,
     pub total_input_tokens: u64,
     pub total_output_tokens: u64,
-    pub total_cost_usd: f64,
+    pub total_cost_usd: Decimal,
     pub avg_tool_duration_ms: f64,
     pub plans_count: usize,
     pub todos_completed: usize,
@@ -560,8 +554,8 @@ mod tests {
     fn test_tool_execution_builder() {
         let session_id = SessionId::new();
         let exec = ToolExecution::new(session_id, "Bash", serde_json::json!({"command": "ls"}))
-            .with_output("file1\nfile2", false)
-            .with_duration(150);
+            .output("file1\nfile2", false)
+            .duration(150);
 
         assert_eq!(exec.tool_name, "Bash");
         assert_eq!(exec.duration_ms, 150);
@@ -572,8 +566,8 @@ mod tests {
     fn test_plan_lifecycle() {
         let session_id = SessionId::new();
         let mut plan = Plan::new(session_id)
-            .with_name("Implement auth")
-            .with_content("1. Create user model\n2. Add endpoints");
+            .name("Implement auth")
+            .content("1. Create user model\n2. Add endpoints");
 
         assert_eq!(plan.status, PlanStatus::Draft);
 
@@ -610,10 +604,10 @@ mod tests {
     fn test_compact_record() {
         let session_id = SessionId::new();
         let record = CompactRecord::new(session_id)
-            .with_trigger(CompactTrigger::Threshold)
-            .with_tokens(100_000, 20_000)
-            .with_counts(50, 5)
-            .with_summary("Summary of conversation");
+            .trigger(CompactTrigger::Threshold)
+            .tokens(100_000, 20_000)
+            .counts(50, 5)
+            .summary("Summary of conversation");
 
         assert_eq!(record.pre_tokens, 100_000);
         assert_eq!(record.post_tokens, 20_000);
@@ -634,7 +628,7 @@ mod tests {
     #[test]
     fn test_queue_item() {
         let session_id = SessionId::new();
-        let mut item = QueueItem::enqueue(session_id, "Process this").with_priority(10);
+        let mut item = QueueItem::enqueue(session_id, "Process this").priority(10);
 
         assert_eq!(item.status, QueueStatus::Pending);
         assert_eq!(item.priority, 10);

@@ -7,14 +7,15 @@ mod message;
 mod policy;
 
 pub use config::SessionConfig;
-pub use enums::{SessionMode, SessionState, SessionType};
+pub use enums::{SessionState, SessionType};
 pub use ids::{MessageId, SessionId};
 pub use message::{MessageMetadata, SessionMessage, ThinkingMetadata, ToolResultMeta};
-pub use policy::{PermissionMode, PermissionPolicy, ToolLimits};
+pub use policy::{PermissionMode, SessionPermissions, SessionToolLimits};
 
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 
 use chrono::{DateTime, Utc};
+use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 
 use crate::session::types::{CompactRecord, Plan, TodoItem, TodoStatus};
@@ -28,17 +29,16 @@ pub struct Session {
     pub parent_id: Option<SessionId>,
     pub session_type: SessionType,
     pub tenant_id: Option<String>,
-    pub mode: SessionMode,
     pub state: SessionState,
     pub config: SessionConfig,
-    pub permission_policy: PermissionPolicy,
+    pub permissions: SessionPermissions,
     pub messages: Vec<SessionMessage>,
     pub current_leaf_id: Option<MessageId>,
     pub summary: Option<String>,
     pub total_usage: TokenUsage,
     #[serde(default)]
     pub current_input_tokens: u64,
-    pub total_cost_usd: f64,
+    pub total_cost_usd: Decimal,
     pub static_context_hash: Option<String>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
@@ -49,15 +49,15 @@ pub struct Session {
     #[serde(default)]
     pub current_plan: Option<Plan>,
     #[serde(default)]
-    pub compact_history: Vec<CompactRecord>,
+    pub compact_history: VecDeque<CompactRecord>,
 }
 
 impl Session {
     pub fn new(config: SessionConfig) -> Self {
-        Self::with_id(SessionId::new(), config)
+        Self::from_id(SessionId::new(), config)
     }
 
-    pub fn with_id(id: SessionId, config: SessionConfig) -> Self {
+    pub fn from_id(id: SessionId, config: SessionConfig) -> Self {
         Self::init(id, None, SessionType::Main, config)
     }
 
@@ -90,16 +90,15 @@ impl Session {
             parent_id,
             session_type,
             tenant_id: None,
-            mode: config.mode,
             state: SessionState::Created,
-            permission_policy: config.permission_policy.clone(),
+            permissions: config.permissions.clone(),
             config,
             messages: Vec::with_capacity(32),
             current_leaf_id: None,
             summary: None,
             total_usage: TokenUsage::default(),
             current_input_tokens: 0,
-            total_cost_usd: 0.0,
+            total_cost_usd: Decimal::ZERO,
             static_context_hash: None,
             created_at: now,
             updated_at: now,
@@ -107,7 +106,7 @@ impl Session {
             error: None,
             todos: Vec::with_capacity(8),
             current_plan: None,
-            compact_history: Vec::new(),
+            compact_history: VecDeque::new(),
         }
     }
 
@@ -203,7 +202,7 @@ impl Session {
             .map(|(i, _)| i);
 
         if let Some(idx) = last_user_idx {
-            messages[idx].set_cache_on_last_block(CacheControl::ephemeral().with_ttl(ttl));
+            messages[idx].set_cache_on_last_block(CacheControl::ephemeral().ttl(ttl));
         }
     }
 
@@ -227,7 +226,7 @@ impl Session {
     pub fn enter_plan_mode(&mut self, name: Option<String>) -> &Plan {
         let mut plan = Plan::new(self.id);
         if let Some(n) = name {
-            plan = plan.with_name(n);
+            plan = plan.name(n);
         }
         self.updated_at = Utc::now();
         self.current_plan.insert(plan)
@@ -264,9 +263,9 @@ impl Session {
 
     pub fn record_compact(&mut self, record: CompactRecord) {
         if self.compact_history.len() >= MAX_COMPACT_HISTORY_SIZE {
-            self.compact_history.remove(0);
+            self.compact_history.pop_front();
         }
-        self.compact_history.push(record);
+        self.compact_history.push_back(record);
         self.updated_at = Utc::now();
     }
 
@@ -283,7 +282,7 @@ impl Session {
     pub fn add_assistant_message(&mut self, content: Vec<ContentBlock>, usage: Option<Usage>) {
         let mut msg = SessionMessage::assistant(content);
         if let Some(u) = usage {
-            msg = msg.with_usage(TokenUsage {
+            msg = msg.usage(TokenUsage {
                 input_tokens: u.input_tokens as u64,
                 output_tokens: u.output_tokens as u64,
                 cache_read_input_tokens: u.cache_read_input_tokens.unwrap_or(0) as u64,
@@ -324,35 +323,37 @@ impl Session {
         }
 
         let tokens_before = self.current_input_tokens;
-        let split_point = self.messages.len() - keep_messages;
+        let original_count = self.messages.len();
+        let split_point = original_count - keep_messages;
         let to_summarize: Vec<_> = self.messages[..split_point].to_vec();
         let to_keep: Vec<_> = self.messages[split_point..].to_vec();
 
         let summary_prompt = Self::format_for_summary(&to_summarize);
         let model = client.adapter().model(ModelType::Small).to_string();
         let request = CreateMessageRequest::new(&model, vec![Message::user(&summary_prompt)])
-            .with_max_tokens(2000);
+            .max_tokens(2000);
         let response = client.send(request).await?;
         let summary = response.text();
 
-        let original_count = self.messages.len();
-
-        self.messages.clear();
-        self.current_leaf_id = None;
-
+        // Build new message list before modifying self (swap pattern for data safety)
+        let mut new_messages = Vec::with_capacity(1 + to_keep.len());
         let summary_msg = SessionMessage::user(vec![ContentBlock::text(format!(
             "[Previous conversation summary]\n{}",
             summary
         ))])
         .as_compact_summary();
-        self.add_message(summary_msg);
+        new_messages.push(summary_msg);
 
+        let mut new_leaf_id = Some(new_messages[0].id.clone());
         for mut msg in to_keep {
-            msg.parent_id = self.current_leaf_id.clone();
-            self.current_leaf_id = Some(msg.id.clone());
-            self.messages.push(msg);
+            msg.parent_id = new_leaf_id.clone();
+            new_leaf_id = Some(msg.id.clone());
+            new_messages.push(msg);
         }
 
+        // Atomic swap: replace old state only after new state is fully constructed
+        self.messages = new_messages;
+        self.current_leaf_id = new_leaf_id;
         // Reset to 0: actual value will be set by next API call's update_usage().
         // This also prevents immediate re-compaction since should_compact() returns false when 0.
         self.current_input_tokens = 0;
@@ -360,9 +361,9 @@ impl Session {
         self.updated_at = Utc::now();
 
         let record = CompactRecord::new(self.id)
-            .with_counts(original_count, self.messages.len())
-            .with_summary(summary.clone())
-            .with_saved_tokens(tokens_before as usize);
+            .counts(original_count, self.messages.len())
+            .summary(summary.clone())
+            .saved_tokens(tokens_before as usize);
         self.record_compact(record);
 
         Ok(CompactResult::Compacted {
@@ -392,7 +393,11 @@ impl Session {
             for block in &msg.content {
                 if let Some(text) = block.as_text() {
                     if text.len() > 800 {
-                        formatted.push_str(&text[..800]);
+                        let mut end = 800;
+                        while !text.is_char_boundary(end) {
+                            end -= 1;
+                        }
+                        formatted.push_str(&text[..end]);
                         formatted.push_str("... [truncated]\n");
                     } else {
                         formatted.push_str(text);
@@ -471,22 +476,20 @@ mod tests {
     fn test_token_usage_accumulation() {
         let mut session = Session::new(SessionConfig::default());
 
-        let msg1 = SessionMessage::assistant(vec![ContentBlock::text("Response 1")]).with_usage(
-            TokenUsage {
+        let msg1 =
+            SessionMessage::assistant(vec![ContentBlock::text("Response 1")]).usage(TokenUsage {
                 input_tokens: 100,
                 output_tokens: 50,
                 ..Default::default()
-            },
-        );
+            });
         session.add_message(msg1);
 
-        let msg2 = SessionMessage::assistant(vec![ContentBlock::text("Response 2")]).with_usage(
-            TokenUsage {
+        let msg2 =
+            SessionMessage::assistant(vec![ContentBlock::text("Response 2")]).usage(TokenUsage {
                 input_tokens: 150,
                 output_tokens: 75,
                 ..Default::default()
-            },
-        );
+            });
         session.add_message(msg2);
 
         assert_eq!(session.total_usage.input_tokens, 250);
@@ -498,7 +501,7 @@ mod tests {
         let mut session = Session::new(SessionConfig::default());
 
         for i in 0..MAX_COMPACT_HISTORY_SIZE + 10 {
-            let record = CompactRecord::new(session.id).with_summary(format!("Summary {}", i));
+            let record = CompactRecord::new(session.id).summary(format!("Summary {}", i));
             session.record_compact(record);
         }
 

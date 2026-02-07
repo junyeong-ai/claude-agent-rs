@@ -4,7 +4,7 @@ use std::collections::VecDeque;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
-use tokio::sync::{RwLock, Semaphore};
+use tokio::sync::{Notify, RwLock, Semaphore};
 use uuid::Uuid;
 
 use super::queue::{MergedInput, QueueError, QueuedInput, SharedInputQueue};
@@ -47,16 +47,6 @@ impl ToolExecutionLog {
         f(&entries)
     }
 
-    async fn for_plan(&self, plan_id: Uuid) -> Vec<ToolExecution> {
-        self.entries
-            .read()
-            .await
-            .iter()
-            .filter(|e| e.plan_id == Some(plan_id))
-            .cloned()
-            .collect()
-    }
-
     async fn len(&self) -> usize {
         self.entries.read().await.len()
     }
@@ -73,6 +63,7 @@ struct ToolStateInner {
     input_queue: SharedInputQueue,
     execution_lock: Semaphore,
     executing: AtomicBool,
+    queue_notify: Notify,
 }
 
 impl std::fmt::Debug for ToolStateInner {
@@ -89,11 +80,12 @@ impl ToolStateInner {
     fn new(session_id: SessionId) -> Self {
         Self {
             id: session_id,
-            session: RwLock::new(Session::with_id(session_id, SessionConfig::default())),
+            session: RwLock::new(Session::from_id(session_id, SessionConfig::default())),
             executions: ToolExecutionLog::new(),
             input_queue: SharedInputQueue::new(),
             execution_lock: Semaphore::new(1),
             executing: AtomicBool::new(false),
+            queue_notify: Notify::new(),
         }
     }
 
@@ -106,6 +98,7 @@ impl ToolStateInner {
             input_queue: SharedInputQueue::new(),
             execution_lock: Semaphore::new(1),
             executing: AtomicBool::new(false),
+            queue_notify: Notify::new(),
         }
     }
 }
@@ -196,10 +189,6 @@ impl ToolState {
         self.0.executions.with_entries(f).await
     }
 
-    pub async fn tool_executions_for_plan(&self, plan_id: Uuid) -> Vec<ToolExecution> {
-        self.0.executions.for_plan(plan_id).await
-    }
-
     pub async fn execution_log_len(&self) -> usize {
         self.0.executions.len().await
     }
@@ -214,7 +203,7 @@ impl ToolState {
 
     pub async fn with_compact_history<F, R>(&self, f: F) -> R
     where
-        F: FnOnce(&[CompactRecord]) -> R,
+        F: FnOnce(&VecDeque<CompactRecord>) -> R,
     {
         let session = self.0.session.read().await;
         f(&session.compact_history)
@@ -265,7 +254,11 @@ impl ToolState {
 
     pub async fn enqueue(&self, content: impl Into<String>) -> Result<Uuid, QueueError> {
         let input = QueuedInput::new(self.session_id(), content);
-        self.0.input_queue.enqueue(input).await
+        let result = self.0.input_queue.enqueue(input).await;
+        if result.is_ok() {
+            self.0.queue_notify.notify_waiters();
+        }
+        result
     }
 
     pub async fn dequeue_or_merge(&self) -> Option<MergedInput> {
@@ -288,6 +281,10 @@ impl ToolState {
         self.0.executing.load(Ordering::Acquire)
     }
 
+    pub async fn wait_for_queue_signal(&self) {
+        self.0.queue_notify.notified().await;
+    }
+
     pub async fn acquire_execution(&self) -> ExecutionGuard<'_> {
         let permit = self
             .0
@@ -299,6 +296,7 @@ impl ToolState {
         ExecutionGuard {
             permit,
             executing: &self.0.executing,
+            queue_notify: &self.0.queue_notify,
         }
     }
 
@@ -308,6 +306,7 @@ impl ToolState {
             ExecutionGuard {
                 permit,
                 executing: &self.0.executing,
+                queue_notify: &self.0.queue_notify,
             }
         })
     }
@@ -342,11 +341,13 @@ pub struct ExecutionGuard<'a> {
     #[allow(dead_code)]
     permit: tokio::sync::SemaphorePermit<'a>,
     executing: &'a AtomicBool,
+    queue_notify: &'a Notify,
 }
 
 impl Drop for ExecutionGuard<'_> {
     fn drop(&mut self) {
         self.executing.store(false, Ordering::Release);
+        self.queue_notify.notify_waiters();
     }
 }
 
@@ -398,8 +399,8 @@ mod tests {
         let state = ToolState::new(session_id);
 
         let exec = ToolExecution::new(session_id, "Bash", serde_json::json!({"command": "ls"}))
-            .with_output("file1\nfile2", false)
-            .with_duration(100);
+            .output("file1\nfile2", false)
+            .duration(100);
 
         state.record_tool_execution(exec).await;
 

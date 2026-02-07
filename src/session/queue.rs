@@ -17,14 +17,12 @@ const MAX_MERGE_CHARS: usize = 100_000;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum QueueError {
     Full,
-    MergeLimitExceeded,
 }
 
 impl std::fmt::Display for QueueError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Full => write!(f, "queue is full"),
-            Self::MergeLimitExceeded => write!(f, "merge size limit exceeded"),
         }
     }
 }
@@ -51,7 +49,7 @@ impl QueuedInput {
         }
     }
 
-    pub fn with_environment(mut self, env: EnvironmentContext) -> Self {
+    pub fn environment(mut self, env: EnvironmentContext) -> Self {
         self.environment = Some(env);
         self
     }
@@ -83,6 +81,9 @@ impl InputQueue {
     }
 
     pub fn enqueue(&mut self, input: QueuedInput) -> Result<Uuid, QueueError> {
+        // A caller may read `pending_count()` (read lock) then call `enqueue()` (write lock).
+        // Between those calls another enqueue could succeed, so the queue could briefly
+        // hold MAX_QUEUE_SIZE + 1 items. This is bounded and harmless.
         if self.items.len() >= MAX_QUEUE_SIZE {
             return Err(QueueError::Full);
         }
@@ -309,10 +310,10 @@ mod tests {
         };
 
         queue
-            .enqueue(QueuedInput::new(session_id, "First").with_environment(env1))
+            .enqueue(QueuedInput::new(session_id, "First").environment(env1))
             .unwrap();
         queue
-            .enqueue(QueuedInput::new(session_id, "Second").with_environment(env2))
+            .enqueue(QueuedInput::new(session_id, "Second").environment(env2))
             .unwrap();
 
         let merged = queue.merge_all().unwrap();

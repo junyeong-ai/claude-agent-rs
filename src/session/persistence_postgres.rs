@@ -29,6 +29,7 @@
 //! # }
 //! ```
 
+use std::collections::VecDeque;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -43,6 +44,16 @@ use super::state::{Session, SessionConfig, SessionId, SessionMessage};
 use super::types::{CompactRecord, Plan, QueueItem, QueueStatus, SummarySnapshot, TodoItem};
 use super::{SessionError, SessionResult, StorageResultExt};
 
+fn enum_to_db<T: serde::Serialize>(value: &T, default: &str) -> String {
+    serde_json::to_string(value)
+        .map(|s| s.trim_matches('"').to_string())
+        .unwrap_or_else(|_| default.to_string())
+}
+
+fn db_to_enum<T: serde::de::DeserializeOwned>(s: &str) -> Option<T> {
+    serde_json::from_str(&format!("\"{}\"", s)).ok()
+}
+
 // ============================================================================
 // Configuration
 // ============================================================================
@@ -56,6 +67,12 @@ pub struct PgPoolConfig {
     pub idle_timeout: Duration,
     pub max_lifetime: Duration,
     pub acquire_timeout: Duration,
+    /// Maximum retry attempts for transient failures.
+    pub max_retries: u32,
+    /// Initial backoff duration for retries.
+    pub initial_backoff: Duration,
+    /// Maximum backoff duration.
+    pub max_backoff: Duration,
 }
 
 impl Default for PgPoolConfig {
@@ -67,6 +84,9 @@ impl Default for PgPoolConfig {
             idle_timeout: Duration::from_secs(600),
             max_lifetime: Duration::from_secs(1800),
             acquire_timeout: Duration::from_secs(30),
+            max_retries: 3,
+            initial_backoff: Duration::from_millis(100),
+            max_backoff: Duration::from_secs(5),
         }
     }
 }
@@ -80,6 +100,9 @@ impl PgPoolConfig {
             idle_timeout: Duration::from_secs(300),
             max_lifetime: Duration::from_secs(900),
             acquire_timeout: Duration::from_secs(10),
+            max_retries: 3,
+            initial_backoff: Duration::from_millis(50),
+            max_backoff: Duration::from_secs(2),
         }
     }
 
@@ -104,17 +127,34 @@ pub struct PostgresConfig {
     pub todos_table: String,
     pub plans_table: String,
     pub pool: PgPoolConfig,
+    /// Session retention period in days (default: 30).
+    ///
+    /// Sessions without explicit TTL that haven't been updated within
+    /// this period are cleaned up by `cleanup_expired()`.
+    pub retention_days: u32,
 }
 
 impl Default for PostgresConfig {
     fn default() -> Self {
-        Self::with_prefix("claude_")
+        // Safety: "claude_" is a valid prefix (alphanumeric + underscore)
+        Self::prefix("claude_").unwrap()
     }
 }
 
 impl PostgresConfig {
-    pub fn with_prefix(prefix: &str) -> Self {
-        Self {
+    pub fn prefix(prefix: &str) -> Result<Self, SessionError> {
+        if !prefix
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '_')
+        {
+            return Err(SessionError::Storage {
+                message: format!(
+                    "Invalid table prefix '{}': only ASCII alphanumeric and underscore allowed",
+                    prefix
+                ),
+            });
+        }
+        Ok(Self {
             sessions_table: format!("{prefix}sessions"),
             messages_table: format!("{prefix}messages"),
             compacts_table: format!("{prefix}compacts"),
@@ -123,11 +163,17 @@ impl PostgresConfig {
             todos_table: format!("{prefix}todos"),
             plans_table: format!("{prefix}plans"),
             pool: PgPoolConfig::default(),
-        }
+            retention_days: 30,
+        })
     }
 
-    pub fn with_pool(mut self, pool: PgPoolConfig) -> Self {
+    pub fn pool(mut self, pool: PgPoolConfig) -> Self {
         self.pool = pool;
+        self
+    }
+
+    pub fn retention_days(mut self, days: u32) -> Self {
+        self.retention_days = days;
         self
     }
 
@@ -212,7 +258,7 @@ impl PostgresSchema {
     state VARCHAR(32) NOT NULL DEFAULT 'created',
     mode VARCHAR(32) NOT NULL DEFAULT 'default',
     config JSONB NOT NULL DEFAULT '{{}}',
-    permission_policy JSONB NOT NULL DEFAULT '{{}}',
+    permissions JSONB NOT NULL DEFAULT '{{}}',
     summary TEXT,
     total_input_tokens BIGINT DEFAULT 0,
     total_output_tokens BIGINT DEFAULT 0,
@@ -538,12 +584,12 @@ impl PostgresPersistence {
     }
 
     /// Use an existing pool without running migrations.
-    pub fn with_pool(pool: Arc<PgPool>) -> Self {
-        Self::with_pool_and_config(pool, PostgresConfig::default())
+    pub fn from_pool(pool: Arc<PgPool>) -> Self {
+        Self::pool_and_config(pool, PostgresConfig::default())
     }
 
     /// Use an existing pool with custom configuration.
-    pub fn with_pool_and_config(pool: Arc<PgPool>, config: PostgresConfig) -> Self {
+    pub fn pool_and_config(pool: Arc<PgPool>, config: PostgresConfig) -> Self {
         Self { pool, config }
     }
 
@@ -571,6 +617,36 @@ impl PostgresPersistence {
     // Internal helpers
     // ========================================================================
 
+    async fn with_retry<F, Fut, T>(&self, operation: F) -> SessionResult<T>
+    where
+        F: Fn() -> Fut,
+        Fut: std::future::Future<Output = SessionResult<T>>,
+    {
+        super::with_retry(
+            self.config.pool.max_retries,
+            self.config.pool.initial_backoff,
+            self.config.pool.max_backoff,
+            Self::is_retryable,
+            operation,
+        )
+        .await
+    }
+
+    fn is_retryable(error: &SessionError) -> bool {
+        match error {
+            SessionError::Storage { message } => {
+                message.contains("connection")
+                    || message.contains("timeout")
+                    || message.contains("reset")
+                    || message.contains("broken pipe")
+                    || message.contains("serialization")
+                    || message.contains("deadlock")
+                    || message.contains("could not serialize")
+            }
+            _ => false,
+        }
+    }
+
     async fn load_session_row(&self, session_id: &SessionId) -> SessionResult<Session> {
         let c = &self.config;
         let id_str = session_id.to_string();
@@ -578,7 +654,7 @@ impl PostgresPersistence {
         let row = sqlx::query(&format!(
             r#"
             SELECT id, parent_id, tenant_id, session_type, state, mode,
-                   config, permission_policy, summary,
+                   config, permissions, summary,
                    total_input_tokens, total_output_tokens, total_cost_usd,
                    current_leaf_id, static_context_hash, error,
                    created_at, updated_at, expires_at
@@ -598,34 +674,41 @@ impl PostgresPersistence {
         let todos = self.load_todos_internal(session_id).await?;
         let plan = self.load_plan_internal(session_id).await?;
 
-        let config: SessionConfig = row
-            .try_get::<serde_json::Value, _>("config")
-            .ok()
-            .and_then(|v| serde_json::from_value(v).ok())
-            .unwrap_or_default();
+        let config: SessionConfig = match row.try_get::<serde_json::Value, _>("config") {
+            Ok(v) => serde_json::from_value(v).unwrap_or_else(|e| {
+                tracing::warn!(session_id = %session_id, error = %e, "Failed to deserialize session config");
+                Default::default()
+            }),
+            Err(e) => {
+                tracing::warn!(session_id = %session_id, error = %e, "Failed to read session config column");
+                Default::default()
+            }
+        };
 
-        let permission_policy = row
-            .try_get::<serde_json::Value, _>("permission_policy")
-            .ok()
-            .and_then(|v| serde_json::from_value(v).ok())
-            .unwrap_or_default();
+        let permissions = match row.try_get::<serde_json::Value, _>("permissions") {
+            Ok(v) => serde_json::from_value(v).unwrap_or_else(|e| {
+                tracing::warn!(session_id = %session_id, error = %e, "Failed to deserialize session permissions");
+                Default::default()
+            }),
+            Err(e) => {
+                tracing::warn!(session_id = %session_id, error = %e, "Failed to read session permissions column");
+                Default::default()
+            }
+        };
 
         let session_type = row
             .try_get::<&str, _>("session_type")
             .ok()
-            .and_then(|s| serde_json::from_str(&format!("\"{}\"", s)).ok())
+            .and_then(db_to_enum)
             .unwrap_or_default();
 
-        let mode = row
-            .try_get::<&str, _>("mode")
-            .ok()
-            .and_then(|s| serde_json::from_str(&format!("\"{}\"", s)).ok())
-            .unwrap_or_default();
+        // mode column is ignored; SessionMode was removed (always stateless)
+        let _ = row.try_get::<&str, _>("mode");
 
         let state = row
             .try_get::<&str, _>("state")
             .ok()
-            .and_then(|s| serde_json::from_str(&format!("\"{}\"", s)).ok())
+            .and_then(db_to_enum)
             .unwrap_or_default();
 
         let current_leaf_id = row
@@ -641,10 +724,9 @@ impl PostgresPersistence {
                 .and_then(|s| s.parse().ok()),
             session_type,
             tenant_id: row.try_get("tenant_id").ok(),
-            mode,
             state,
             config,
-            permission_policy,
+            permissions,
             messages,
             current_leaf_id,
             summary: row.try_get("summary").ok(),
@@ -656,9 +738,7 @@ impl PostgresPersistence {
             current_input_tokens: 0,
             total_cost_usd: row
                 .try_get::<rust_decimal::Decimal, _>("total_cost_usd")
-                .ok()
-                .and_then(|d| d.to_string().parse().ok())
-                .unwrap_or(0.0),
+                .unwrap_or_default(),
             static_context_hash: row.try_get("static_context_hash").ok(),
             created_at: row.try_get("created_at").unwrap_or_else(|_| Utc::now()),
             updated_at: row.try_get("updated_at").unwrap_or_else(|_| Utc::now()),
@@ -666,7 +746,7 @@ impl PostgresPersistence {
             error: row.try_get("error").ok(),
             todos,
             current_plan: plan,
-            compact_history: compacts,
+            compact_history: VecDeque::from(compacts),
         })
     }
 
@@ -688,52 +768,82 @@ impl PostgresPersistence {
         .await
         .storage_err()?;
 
-        Ok(rows
-            .into_iter()
-            .filter_map(|row| {
-                let content: Vec<crate::types::ContentBlock> = row
-                    .try_get::<serde_json::Value, _>("content")
-                    .ok()
-                    .and_then(|v| serde_json::from_value(v).ok())?;
+        let mut messages = Vec::with_capacity(rows.len());
 
-                let role: crate::types::Role = row
-                    .try_get::<&str, _>("role")
-                    .ok()
-                    .and_then(|s| serde_json::from_str(&format!("\"{}\"", s)).ok())?;
+        for row in rows {
+            let id_str = match row.try_get::<&str, _>("id") {
+                Ok(id) => id,
+                Err(e) => {
+                    tracing::warn!(error = %e, "Skipping message row: failed to get id");
+                    continue;
+                }
+            };
 
-                let usage = row
-                    .try_get::<serde_json::Value, _>("usage")
-                    .ok()
-                    .and_then(|v| serde_json::from_value(v).ok());
+            let id = match id_str.parse() {
+                Ok(id) => id,
+                Err(e) => {
+                    tracing::warn!(id = id_str, error = %e, "Skipping message row: failed to parse id");
+                    continue;
+                }
+            };
 
-                let metadata = row
-                    .try_get::<serde_json::Value, _>("metadata")
-                    .ok()
-                    .and_then(|v| serde_json::from_value(v).ok())
-                    .unwrap_or_default();
+            let content: Vec<crate::types::ContentBlock> = match row
+                .try_get::<serde_json::Value, _>("content")
+                .ok()
+                .and_then(|v| serde_json::from_value(v).ok())
+            {
+                Some(c) => c,
+                None => {
+                    tracing::warn!(id = id_str, "Skipping message row: failed to parse content");
+                    continue;
+                }
+            };
 
-                let environment = row
-                    .try_get::<serde_json::Value, _>("environment")
-                    .ok()
-                    .and_then(|v| serde_json::from_value(v).ok());
+            let role: crate::types::Role =
+                match row.try_get::<&str, _>("role").ok().and_then(db_to_enum) {
+                    Some(r) => r,
+                    None => {
+                        tracing::warn!(id = id_str, "Skipping message row: failed to parse role");
+                        continue;
+                    }
+                };
 
-                Some(SessionMessage {
-                    id: row.try_get::<&str, _>("id").ok()?.parse().ok()?,
-                    parent_id: row
-                        .try_get::<&str, _>("parent_id")
-                        .ok()
-                        .and_then(|s| s.parse().ok()),
-                    role,
-                    content,
-                    is_sidechain: row.try_get("is_sidechain").unwrap_or(false),
-                    is_compact_summary: row.try_get("is_compact_summary").unwrap_or(false),
-                    usage,
-                    timestamp: row.try_get("created_at").unwrap_or_else(|_| Utc::now()),
-                    metadata,
-                    environment,
-                })
-            })
-            .collect())
+            let usage = row
+                .try_get::<serde_json::Value, _>("usage")
+                .ok()
+                .and_then(|v| serde_json::from_value(v).ok());
+
+            let metadata = match row.try_get::<serde_json::Value, _>("metadata") {
+                Ok(v) => serde_json::from_value(v).unwrap_or_else(|e| {
+                    tracing::warn!(id = id_str, error = %e, "Failed to deserialize message metadata");
+                    Default::default()
+                }),
+                Err(_) => Default::default(),
+            };
+
+            let environment = row
+                .try_get::<serde_json::Value, _>("environment")
+                .ok()
+                .and_then(|v| serde_json::from_value(v).ok());
+
+            messages.push(SessionMessage {
+                id,
+                parent_id: row
+                    .try_get::<&str, _>("parent_id")
+                    .ok()
+                    .and_then(|s| s.parse().ok()),
+                role,
+                content,
+                is_sidechain: row.try_get("is_sidechain").unwrap_or(false),
+                is_compact_summary: row.try_get("is_compact_summary").unwrap_or(false),
+                usage,
+                timestamp: row.try_get("created_at").unwrap_or_else(|_| Utc::now()),
+                metadata,
+                environment,
+            });
+        }
+
+        Ok(messages)
     }
 
     async fn load_compacts(&self, session_id: &SessionId) -> SessionResult<Vec<CompactRecord>> {
@@ -754,32 +864,52 @@ impl PostgresPersistence {
         .await
         .storage_err()?;
 
-        Ok(rows
-            .into_iter()
-            .filter_map(|row| {
-                let trigger = row
-                    .try_get::<&str, _>("trigger")
-                    .ok()
-                    .and_then(|s| serde_json::from_str(&format!("\"{}\"", s)).ok())?;
+        let mut compacts = Vec::with_capacity(rows.len());
 
-                Some(CompactRecord {
-                    id: row.try_get("id").ok()?,
-                    session_id: row.try_get::<&str, _>("session_id").ok()?.parse().ok()?,
-                    trigger,
-                    pre_tokens: row.try_get::<i32, _>("pre_tokens").unwrap_or(0) as usize,
-                    post_tokens: row.try_get::<i32, _>("post_tokens").unwrap_or(0) as usize,
-                    saved_tokens: row.try_get::<i32, _>("saved_tokens").unwrap_or(0) as usize,
-                    summary: row.try_get("summary").ok()?,
-                    original_count: row.try_get::<i32, _>("original_count").unwrap_or(0) as usize,
-                    new_count: row.try_get::<i32, _>("new_count").unwrap_or(0) as usize,
-                    logical_parent_id: row
-                        .try_get::<&str, _>("logical_parent_id")
-                        .ok()
-                        .and_then(|s| s.parse().ok()),
-                    created_at: row.try_get("created_at").unwrap_or_else(|_| Utc::now()),
-                })
-            })
-            .collect())
+        for row in rows {
+            let id: Uuid = match row.try_get("id") {
+                Ok(id) => id,
+                Err(e) => {
+                    tracing::warn!(session_id = %session_id, error = %e, "Skipping compact row: failed to get id");
+                    continue;
+                }
+            };
+
+            let trigger = match row.try_get::<&str, _>("trigger").ok().and_then(db_to_enum) {
+                Some(t) => t,
+                None => {
+                    tracing::warn!(session_id = %session_id, compact_id = %id, "Skipping compact row: failed to parse trigger");
+                    continue;
+                }
+            };
+
+            let summary = match row.try_get("summary") {
+                Ok(s) => s,
+                Err(e) => {
+                    tracing::warn!(session_id = %session_id, compact_id = %id, error = %e, "Skipping compact row: failed to get summary");
+                    continue;
+                }
+            };
+
+            compacts.push(CompactRecord {
+                id,
+                session_id: *session_id,
+                trigger,
+                pre_tokens: row.try_get::<i32, _>("pre_tokens").unwrap_or(0) as usize,
+                post_tokens: row.try_get::<i32, _>("post_tokens").unwrap_or(0) as usize,
+                saved_tokens: row.try_get::<i32, _>("saved_tokens").unwrap_or(0) as usize,
+                summary,
+                original_count: row.try_get::<i32, _>("original_count").unwrap_or(0) as usize,
+                new_count: row.try_get::<i32, _>("new_count").unwrap_or(0) as usize,
+                logical_parent_id: row
+                    .try_get::<&str, _>("logical_parent_id")
+                    .ok()
+                    .and_then(|s| s.parse().ok()),
+                created_at: row.try_get("created_at").unwrap_or_else(|_| Utc::now()),
+            });
+        }
+
+        Ok(compacts)
     }
 
     async fn load_todos_internal(&self, session_id: &SessionId) -> SessionResult<Vec<TodoItem>> {
@@ -800,27 +930,55 @@ impl PostgresPersistence {
         .await
         .storage_err()?;
 
-        Ok(rows
-            .into_iter()
-            .filter_map(|row| {
-                let status = row
-                    .try_get::<&str, _>("status")
-                    .ok()
-                    .and_then(|s| serde_json::from_str(&format!("\"{}\"", s)).ok())?;
+        let mut todos = Vec::with_capacity(rows.len());
 
-                Some(TodoItem {
-                    id: row.try_get("id").ok()?,
-                    session_id: row.try_get::<&str, _>("session_id").ok()?.parse().ok()?,
-                    content: row.try_get("content").ok()?,
-                    active_form: row.try_get("active_form").ok()?,
-                    status,
-                    plan_id: row.try_get("plan_id").ok(),
-                    created_at: row.try_get("created_at").unwrap_or_else(|_| Utc::now()),
-                    started_at: row.try_get("started_at").ok(),
-                    completed_at: row.try_get("completed_at").ok(),
-                })
-            })
-            .collect())
+        for row in rows {
+            let id: Uuid = match row.try_get("id") {
+                Ok(id) => id,
+                Err(e) => {
+                    tracing::warn!(session_id = %session_id, error = %e, "Skipping todo row: failed to get id");
+                    continue;
+                }
+            };
+
+            let status = match row.try_get::<&str, _>("status").ok().and_then(db_to_enum) {
+                Some(s) => s,
+                None => {
+                    tracing::warn!(session_id = %session_id, todo_id = %id, "Skipping todo row: failed to parse status");
+                    continue;
+                }
+            };
+
+            let content = match row.try_get("content") {
+                Ok(c) => c,
+                Err(e) => {
+                    tracing::warn!(session_id = %session_id, todo_id = %id, error = %e, "Skipping todo row: failed to get content");
+                    continue;
+                }
+            };
+
+            let active_form = match row.try_get("active_form") {
+                Ok(f) => f,
+                Err(e) => {
+                    tracing::warn!(session_id = %session_id, todo_id = %id, error = %e, "Skipping todo row: failed to get active_form");
+                    continue;
+                }
+            };
+
+            todos.push(TodoItem {
+                id,
+                session_id: *session_id,
+                content,
+                active_form,
+                status,
+                plan_id: row.try_get("plan_id").ok(),
+                created_at: row.try_get("created_at").unwrap_or_else(|_| Utc::now()),
+                started_at: row.try_get("started_at").ok(),
+                completed_at: row.try_get("completed_at").ok(),
+            });
+        }
+
+        Ok(todos)
     }
 
     async fn load_plan_internal(&self, session_id: &SessionId) -> SessionResult<Option<Plan>> {
@@ -842,24 +1000,45 @@ impl PostgresPersistence {
         .await
         .storage_err()?;
 
-        Ok(row.and_then(|row| {
-            let status = row
-                .try_get::<&str, _>("status")
-                .ok()
-                .and_then(|s| serde_json::from_str(&format!("\"{}\"", s)).ok())?;
+        let Some(row) = row else {
+            return Ok(None);
+        };
 
-            Some(Plan {
-                id: row.try_get("id").ok()?,
-                session_id: row.try_get::<&str, _>("session_id").ok()?.parse().ok()?,
-                name: row.try_get("name").ok(),
-                content: row.try_get("content").ok()?,
-                status,
-                error: row.try_get("error").ok(),
-                created_at: row.try_get("created_at").unwrap_or_else(|_| Utc::now()),
-                approved_at: row.try_get("approved_at").ok(),
-                started_at: row.try_get("started_at").ok(),
-                completed_at: row.try_get("completed_at").ok(),
-            })
+        let id: Uuid = match row.try_get("id") {
+            Ok(id) => id,
+            Err(e) => {
+                tracing::warn!(session_id = %session_id, error = %e, "Skipping plan row: failed to get id");
+                return Ok(None);
+            }
+        };
+
+        let status = match row.try_get::<&str, _>("status").ok().and_then(db_to_enum) {
+            Some(s) => s,
+            None => {
+                tracing::warn!(session_id = %session_id, plan_id = %id, "Skipping plan row: failed to parse status");
+                return Ok(None);
+            }
+        };
+
+        let content = match row.try_get("content") {
+            Ok(c) => c,
+            Err(e) => {
+                tracing::warn!(session_id = %session_id, plan_id = %id, error = %e, "Skipping plan row: failed to get content");
+                return Ok(None);
+            }
+        };
+
+        Ok(Some(Plan {
+            id,
+            session_id: *session_id,
+            name: row.try_get("name").ok(),
+            content,
+            status,
+            error: row.try_get("error").ok(),
+            created_at: row.try_get("created_at").unwrap_or_else(|_| Utc::now()),
+            approved_at: row.try_get("approved_at").ok(),
+            started_at: row.try_get("started_at").ok(),
+            completed_at: row.try_get("completed_at").ok(),
         }))
     }
 
@@ -881,10 +1060,7 @@ impl PostgresPersistence {
         .storage_err()?;
 
         for todo in todos {
-            let status = serde_json::to_string(&todo.status)
-                .unwrap_or_else(|_| "\"pending\"".to_string())
-                .trim_matches('"')
-                .to_string();
+            let status = enum_to_db(&todo.status, "pending");
 
             sqlx::query(&format!(
                 r#"
@@ -919,10 +1095,7 @@ impl PostgresPersistence {
     ) -> SessionResult<()> {
         let c = &self.config;
 
-        let status = serde_json::to_string(&plan.status)
-            .unwrap_or_else(|_| "\"draft\"".to_string())
-            .trim_matches('"')
-            .to_string();
+        let status = enum_to_db(&plan.status, "draft");
 
         sqlx::query(&format!(
             r#"
@@ -962,7 +1135,7 @@ impl PostgresPersistence {
         &self,
         tx: &mut Transaction<'_, Postgres>,
         session_id: &SessionId,
-        compacts: &[CompactRecord],
+        compacts: &VecDeque<CompactRecord>,
     ) -> SessionResult<()> {
         let c = &self.config;
 
@@ -976,10 +1149,7 @@ impl PostgresPersistence {
         .storage_err()?;
 
         for compact in compacts {
-            let trigger = serde_json::to_string(&compact.trigger)
-                .unwrap_or_else(|_| "\"manual\"".to_string())
-                .trim_matches('"')
-                .to_string();
+            let trigger = enum_to_db(&compact.trigger, "manual");
 
             sqlx::query(&format!(
                 r#"
@@ -1017,20 +1187,12 @@ impl PostgresPersistence {
     ) -> SessionResult<()> {
         let c = &self.config;
 
-        sqlx::query(&format!(
-            "DELETE FROM {messages} WHERE session_id = $1",
-            messages = c.messages_table
-        ))
-        .bind(session_id.to_string())
-        .execute(&mut **tx)
-        .await
-        .storage_err()?;
+        // Collect current message IDs for orphan cleanup
+        let current_ids: Vec<String> = messages.iter().map(|m| m.id.to_string()).collect();
 
+        // Upsert each message (INSERT ... ON CONFLICT (id) DO UPDATE)
         for message in messages {
-            let role = serde_json::to_string(&message.role)
-                .unwrap_or_else(|_| "\"user\"".to_string())
-                .trim_matches('"')
-                .to_string();
+            let role = enum_to_db(&message.role, "user");
 
             sqlx::query(&format!(
                 r#"
@@ -1039,6 +1201,17 @@ impl PostgresPersistence {
                     is_compact_summary, model, request_id, usage, metadata,
                     environment, created_at
                 ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+                ON CONFLICT (id) DO UPDATE SET
+                    parent_id = EXCLUDED.parent_id,
+                    role = EXCLUDED.role,
+                    content = EXCLUDED.content,
+                    is_sidechain = EXCLUDED.is_sidechain,
+                    is_compact_summary = EXCLUDED.is_compact_summary,
+                    model = EXCLUDED.model,
+                    request_id = EXCLUDED.request_id,
+                    usage = EXCLUDED.usage,
+                    metadata = EXCLUDED.metadata,
+                    environment = EXCLUDED.environment
                 "#,
                 messages = c.messages_table
             ))
@@ -1046,7 +1219,10 @@ impl PostgresPersistence {
             .bind(session_id.to_string())
             .bind(message.parent_id.as_ref().map(|id| id.to_string()))
             .bind(&role)
-            .bind(serde_json::to_value(&message.content).unwrap_or_default())
+            .bind(serde_json::to_value(&message.content).unwrap_or_else(|e| {
+                tracing::warn!(message_id = %message.id, error = %e, "Failed to serialize message content");
+                serde_json::Value::Array(Vec::new())
+            }))
             .bind(message.is_sidechain)
             .bind(message.is_compact_summary)
             .bind(&message.metadata.model)
@@ -1057,7 +1233,10 @@ impl PostgresPersistence {
                     .as_ref()
                     .and_then(|u| serde_json::to_value(u).ok()),
             )
-            .bind(serde_json::to_value(&message.metadata).unwrap_or_default())
+            .bind(serde_json::to_value(&message.metadata).unwrap_or_else(|e| {
+                tracing::warn!(message_id = %message.id, error = %e, "Failed to serialize message metadata");
+                serde_json::Value::Object(Default::default())
+            }))
             .bind(
                 message
                     .environment
@@ -1070,41 +1249,38 @@ impl PostgresPersistence {
             .storage_err()?;
         }
 
+        // Delete messages no longer in the session.
+        // Guard: skip when current_ids is empty to avoid deleting ALL messages
+        // (PostgreSQL treats `id != ALL(ARRAY[])` as true for every row).
+        if !current_ids.is_empty() {
+            sqlx::query(&format!(
+                "DELETE FROM {messages} WHERE session_id = $1 AND id != ALL($2)",
+                messages = c.messages_table
+            ))
+            .bind(session_id.to_string())
+            .bind(&current_ids)
+            .execute(&mut **tx)
+            .await
+            .storage_err()?;
+        }
+
         Ok(())
     }
-}
 
-#[async_trait]
-impl Persistence for PostgresPersistence {
-    fn name(&self) -> &str {
-        "postgres"
-    }
-
-    async fn save(&self, session: &Session) -> SessionResult<()> {
+    async fn save_inner(&self, session: &Session) -> SessionResult<()> {
         let c = &self.config;
 
         let mut tx = self.pool.begin().await.storage_err()?;
 
-        let session_type = serde_json::to_string(&session.session_type)
-            .unwrap_or_else(|_| "\"main\"".to_string())
-            .trim_matches('"')
-            .to_string();
-
-        let state = serde_json::to_string(&session.state)
-            .unwrap_or_else(|_| "\"created\"".to_string())
-            .trim_matches('"')
-            .to_string();
-
-        let mode = serde_json::to_string(&session.mode)
-            .unwrap_or_else(|_| "\"default\"".to_string())
-            .trim_matches('"')
-            .to_string();
+        let session_type = enum_to_db(&session.session_type, "main");
+        let state = enum_to_db(&session.state, "created");
+        let mode = "stateless";
 
         sqlx::query(&format!(
             r#"
             INSERT INTO {sessions} (
                 id, parent_id, tenant_id, session_type, state, mode,
-                config, permission_policy, summary,
+                config, permissions, summary,
                 total_input_tokens, total_output_tokens, total_cost_usd,
                 current_leaf_id, static_context_hash, error,
                 created_at, updated_at, expires_at
@@ -1119,7 +1295,7 @@ impl Persistence for PostgresPersistence {
                 state = EXCLUDED.state,
                 mode = EXCLUDED.mode,
                 config = EXCLUDED.config,
-                permission_policy = EXCLUDED.permission_policy,
+                permissions = EXCLUDED.permissions,
                 summary = EXCLUDED.summary,
                 total_input_tokens = EXCLUDED.total_input_tokens,
                 total_output_tokens = EXCLUDED.total_output_tokens,
@@ -1137,9 +1313,15 @@ impl Persistence for PostgresPersistence {
         .bind(&session.tenant_id)
         .bind(&session_type)
         .bind(&state)
-        .bind(&mode)
-        .bind(serde_json::to_value(&session.config).unwrap_or_default())
-        .bind(serde_json::to_value(&session.permission_policy).unwrap_or_default())
+        .bind(mode)
+        .bind(serde_json::to_value(&session.config).unwrap_or_else(|e| {
+            tracing::warn!(session_id = %session.id, error = %e, "Failed to serialize session config");
+            serde_json::Value::Object(Default::default())
+        }))
+        .bind(serde_json::to_value(&session.permissions).unwrap_or_else(|e| {
+            tracing::warn!(session_id = %session.id, error = %e, "Failed to serialize session permissions");
+            serde_json::Value::Object(Default::default())
+        }))
         .bind(&session.summary)
         .bind(session.total_usage.input_tokens as i64)
         .bind(session.total_usage.output_tokens as i64)
@@ -1169,139 +1351,190 @@ impl Persistence for PostgresPersistence {
 
         Ok(())
     }
+}
+
+#[async_trait]
+impl Persistence for PostgresPersistence {
+    fn name(&self) -> &str {
+        "postgres"
+    }
+
+    async fn save(&self, session: &Session) -> SessionResult<()> {
+        self.with_retry(|| self.save_inner(session)).await
+    }
 
     async fn load(&self, id: &SessionId) -> SessionResult<Option<Session>> {
-        match self.load_session_row(id).await {
-            Ok(session) => Ok(Some(session)),
-            Err(SessionError::NotFound { .. }) => Ok(None),
-            Err(e) => Err(e),
-        }
+        self.with_retry(|| async {
+            match self.load_session_row(id).await {
+                Ok(session) => Ok(Some(session)),
+                Err(SessionError::NotFound { .. }) => Ok(None),
+                Err(e) => Err(e),
+            }
+        })
+        .await
     }
 
     async fn delete(&self, id: &SessionId) -> SessionResult<bool> {
-        let c = &self.config;
+        let sid = *id;
+        self.with_retry(|| async move {
+            let c = &self.config;
 
-        let result = sqlx::query(&format!(
-            "DELETE FROM {sessions} WHERE id = $1",
-            sessions = c.sessions_table
-        ))
-        .bind(id.to_string())
-        .execute(self.pool.as_ref())
+            let result = sqlx::query(&format!(
+                "DELETE FROM {sessions} WHERE id = $1",
+                sessions = c.sessions_table
+            ))
+            .bind(sid.to_string())
+            .execute(self.pool.as_ref())
+            .await
+            .storage_err()?;
+
+            Ok(result.rows_affected() > 0)
+        })
         .await
-        .storage_err()?;
-
-        Ok(result.rows_affected() > 0)
     }
 
     async fn list(&self, tenant_id: Option<&str>) -> SessionResult<Vec<SessionId>> {
-        let c = &self.config;
+        let owned_tid = tenant_id.map(|s| s.to_string());
+        self.with_retry(|| {
+            let tid = owned_tid.clone();
+            async move {
+                let c = &self.config;
 
-        let rows = if let Some(tid) = tenant_id {
-            sqlx::query(&format!(
-                "SELECT id FROM {sessions} WHERE tenant_id = $1",
-                sessions = c.sessions_table
-            ))
-            .bind(tid)
-            .fetch_all(self.pool.as_ref())
-            .await
-        } else {
-            sqlx::query(&format!(
-                "SELECT id FROM {sessions}",
-                sessions = c.sessions_table
-            ))
-            .fetch_all(self.pool.as_ref())
-            .await
-        }
-        .storage_err()?;
+                let rows = if let Some(ref tid) = tid {
+                    sqlx::query(&format!(
+                        "SELECT id FROM {sessions} WHERE tenant_id = $1",
+                        sessions = c.sessions_table
+                    ))
+                    .bind(tid.as_str())
+                    .fetch_all(self.pool.as_ref())
+                    .await
+                } else {
+                    sqlx::query(&format!(
+                        "SELECT id FROM {sessions}",
+                        sessions = c.sessions_table
+                    ))
+                    .fetch_all(self.pool.as_ref())
+                    .await
+                }
+                .storage_err()?;
 
-        Ok(rows
-            .into_iter()
-            .filter_map(|row| row.try_get::<&str, _>("id").ok()?.parse().ok())
-            .collect())
-    }
+                let mut ids = Vec::with_capacity(rows.len());
 
-    async fn list_children(&self, parent_id: &SessionId) -> SessionResult<Vec<SessionId>> {
-        let c = &self.config;
+                for row in rows {
+                    let id_str = match row.try_get::<&str, _>("id") {
+                        Ok(id) => id,
+                        Err(e) => {
+                            tracing::warn!(error = %e, "Skipping session row: failed to get id");
+                            continue;
+                        }
+                    };
 
-        let rows = sqlx::query(&format!(
-            "SELECT id FROM {sessions} WHERE parent_id = $1",
-            sessions = c.sessions_table
-        ))
-        .bind(parent_id.to_string())
-        .fetch_all(self.pool.as_ref())
+                    match id_str.parse() {
+                        Ok(id) => ids.push(id),
+                        Err(e) => {
+                            tracing::warn!(id = id_str, error = %e, "Skipping session row: failed to parse id");
+                        }
+                    }
+                }
+
+                Ok(ids)
+            }
+        })
         .await
-        .storage_err()?;
-
-        Ok(rows
-            .into_iter()
-            .filter_map(|row| row.try_get::<&str, _>("id").ok()?.parse().ok())
-            .collect())
     }
 
     async fn add_summary(&self, snapshot: SummarySnapshot) -> SessionResult<()> {
-        let c = &self.config;
+        self.with_retry(|| async {
+            let c = &self.config;
 
-        sqlx::query(&format!(
-            r#"
-            INSERT INTO {summaries} (id, session_id, summary, leaf_message_id, created_at)
-            VALUES ($1, $2, $3, $4, $5)
-            "#,
-            summaries = c.summaries_table
-        ))
-        .bind(snapshot.id)
-        .bind(snapshot.session_id.to_string())
-        .bind(&snapshot.summary)
-        .bind(snapshot.leaf_message_id.map(|id| id.to_string()))
-        .bind(snapshot.created_at)
-        .execute(self.pool.as_ref())
+            let mut tx = self.pool.begin().await.storage_err()?;
+
+            sqlx::query(&format!(
+                r#"
+                INSERT INTO {summaries} (id, session_id, summary, leaf_message_id, created_at)
+                VALUES ($1, $2, $3, $4, $5)
+                "#,
+                summaries = c.summaries_table
+            ))
+            .bind(snapshot.id)
+            .bind(snapshot.session_id.to_string())
+            .bind(&snapshot.summary)
+            .bind(snapshot.leaf_message_id.as_ref().map(|id| id.to_string()))
+            .bind(snapshot.created_at)
+            .execute(&mut *tx)
+            .await
+            .storage_err()?;
+
+            sqlx::query(&format!(
+                "UPDATE {sessions} SET summary = $1, updated_at = NOW() WHERE id = $2",
+                sessions = c.sessions_table
+            ))
+            .bind(&snapshot.summary)
+            .bind(snapshot.session_id.to_string())
+            .execute(&mut *tx)
+            .await
+            .storage_err()?;
+
+            tx.commit().await.storage_err()?;
+
+            Ok(())
+        })
         .await
-        .storage_err()?;
-
-        sqlx::query(&format!(
-            "UPDATE {sessions} SET summary = $1, updated_at = NOW() WHERE id = $2",
-            sessions = c.sessions_table
-        ))
-        .bind(&snapshot.summary)
-        .bind(snapshot.session_id.to_string())
-        .execute(self.pool.as_ref())
-        .await
-        .storage_err()?;
-
-        Ok(())
     }
 
     async fn get_summaries(&self, session_id: &SessionId) -> SessionResult<Vec<SummarySnapshot>> {
-        let c = &self.config;
+        let sid = *session_id;
+        self.with_retry(|| async move {
+            let c = &self.config;
 
-        let rows = sqlx::query(&format!(
-            r#"
-            SELECT id, session_id, summary, leaf_message_id, created_at
-            FROM {summaries}
-            WHERE session_id = $1
-            ORDER BY created_at ASC
-            "#,
-            summaries = c.summaries_table
-        ))
-        .bind(session_id.to_string())
-        .fetch_all(self.pool.as_ref())
-        .await
-        .storage_err()?;
+            let rows = sqlx::query(&format!(
+                r#"
+                SELECT id, session_id, summary, leaf_message_id, created_at
+                FROM {summaries}
+                WHERE session_id = $1
+                ORDER BY created_at ASC
+                "#,
+                summaries = c.summaries_table
+            ))
+            .bind(sid.to_string())
+            .fetch_all(self.pool.as_ref())
+            .await
+            .storage_err()?;
 
-        Ok(rows
-            .into_iter()
-            .filter_map(|row| {
-                Some(SummarySnapshot {
-                    id: row.try_get("id").ok()?,
-                    session_id: row.try_get::<&str, _>("session_id").ok()?.parse().ok()?,
-                    summary: row.try_get("summary").ok()?,
+            let mut summaries = Vec::with_capacity(rows.len());
+
+            for row in rows {
+                let id: Uuid = match row.try_get("id") {
+                    Ok(id) => id,
+                    Err(e) => {
+                        tracing::warn!(session_id = %sid, error = %e, "Skipping summary row: failed to get id");
+                        continue;
+                    }
+                };
+
+                let summary = match row.try_get("summary") {
+                    Ok(s) => s,
+                    Err(e) => {
+                        tracing::warn!(session_id = %sid, summary_id = %id, error = %e, "Skipping summary row: failed to get summary");
+                        continue;
+                    }
+                };
+
+                summaries.push(SummarySnapshot {
+                    id,
+                    session_id: sid,
+                    summary,
                     leaf_message_id: row
                         .try_get::<&str, _>("leaf_message_id")
                         .ok()
                         .and_then(|s| s.parse().ok()),
                     created_at: row.try_get("created_at").unwrap_or_else(|_| Utc::now()),
-                })
-            })
-            .collect())
+                });
+            }
+
+            Ok(summaries)
+        })
+        .await
     }
 
     async fn enqueue(
@@ -1310,127 +1543,183 @@ impl Persistence for PostgresPersistence {
         content: String,
         priority: i32,
     ) -> SessionResult<QueueItem> {
-        let c = &self.config;
-        let item = QueueItem::enqueue(*session_id, &content).with_priority(priority);
+        let sid = *session_id;
+        let item = QueueItem::enqueue(sid, &content).priority(priority);
+        self.with_retry(|| async {
+            let c = &self.config;
 
-        sqlx::query(&format!(
-            r#"
-            INSERT INTO {queue} (id, session_id, operation, content, priority, status, created_at)
-            VALUES ($1, $2, $3, $4, $5, $6, $7)
-            "#,
-            queue = c.queue_table
-        ))
-        .bind(item.id)
-        .bind(session_id.to_string())
-        .bind("enqueue")
-        .bind(&content)
-        .bind(priority)
-        .bind("pending")
-        .bind(item.created_at)
-        .execute(self.pool.as_ref())
+            sqlx::query(&format!(
+                r#"
+                INSERT INTO {queue} (id, session_id, operation, content, priority, status, created_at)
+                VALUES ($1, $2, $3, $4, $5, $6, $7)
+                "#,
+                queue = c.queue_table
+            ))
+            .bind(item.id)
+            .bind(sid.to_string())
+            .bind("enqueue")
+            .bind(&content)
+            .bind(priority)
+            .bind("pending")
+            .bind(item.created_at)
+            .execute(self.pool.as_ref())
+            .await
+            .storage_err()?;
+
+            Ok(item.clone())
+        })
         .await
-        .storage_err()?;
-
-        Ok(item)
     }
 
     async fn dequeue(&self, session_id: &SessionId) -> SessionResult<Option<QueueItem>> {
-        let c = &self.config;
+        let sid = *session_id;
+        self.with_retry(|| async move {
+            let c = &self.config;
 
-        let row = sqlx::query(&format!(
-            r#"
-            UPDATE {queue}
-            SET status = 'processing'
-            WHERE id = (
-                SELECT id FROM {queue}
-                WHERE session_id = $1 AND status = 'pending'
-                ORDER BY priority DESC, created_at ASC
-                LIMIT 1
-                FOR UPDATE SKIP LOCKED
-            )
-            RETURNING id, session_id, operation, content, priority, status, created_at, processed_at
-            "#,
-            queue = c.queue_table
-        ))
-        .bind(session_id.to_string())
-        .fetch_optional(self.pool.as_ref())
-        .await
-        .storage_err()?;
+            let row = sqlx::query(&format!(
+                r#"
+                UPDATE {queue}
+                SET status = 'processing'
+                WHERE id = (
+                    SELECT id FROM {queue}
+                    WHERE session_id = $1 AND status = 'pending'
+                    ORDER BY priority DESC, created_at ASC
+                    LIMIT 1
+                    FOR UPDATE SKIP LOCKED
+                )
+                RETURNING id, session_id, operation, content, priority, status, created_at, processed_at
+                "#,
+                queue = c.queue_table
+            ))
+            .bind(sid.to_string())
+            .fetch_optional(self.pool.as_ref())
+            .await
+            .storage_err()?;
 
-        Ok(row.and_then(|row| {
-            Some(QueueItem {
-                id: row.try_get("id").ok()?,
-                session_id: row.try_get::<&str, _>("session_id").ok()?.parse().ok()?,
+            let Some(row) = row else {
+                return Ok(None);
+            };
+
+            let id: Uuid = match row.try_get("id") {
+                Ok(id) => id,
+                Err(e) => {
+                    tracing::warn!(session_id = %sid, error = %e, "Failed to get dequeued item id");
+                    return Ok(None);
+                }
+            };
+
+            let content = match row.try_get("content") {
+                Ok(c) => c,
+                Err(e) => {
+                    tracing::warn!(session_id = %sid, queue_id = %id, error = %e, "Failed to get dequeued item content");
+                    return Ok(None);
+                }
+            };
+
+            Ok(Some(QueueItem {
+                id,
+                session_id: sid,
                 operation: super::types::QueueOperation::Enqueue,
-                content: row.try_get("content").ok()?,
+                content,
                 priority: row.try_get("priority").unwrap_or(0),
                 status: QueueStatus::Processing,
                 created_at: row.try_get("created_at").unwrap_or_else(|_| Utc::now()),
                 processed_at: row.try_get("processed_at").ok(),
-            })
-        }))
+            }))
+        })
+        .await
     }
 
     async fn cancel_queued(&self, item_id: Uuid) -> SessionResult<bool> {
-        let c = &self.config;
+        self.with_retry(|| async {
+            let c = &self.config;
 
-        let result = sqlx::query(&format!(
-            "UPDATE {queue} SET status = 'cancelled', processed_at = NOW() WHERE id = $1 AND status = 'pending'",
-            queue = c.queue_table
-        ))
-        .bind(item_id)
-        .execute(self.pool.as_ref())
+            let result = sqlx::query(&format!(
+                "UPDATE {queue} SET status = 'cancelled', processed_at = NOW() WHERE id = $1 AND status = 'pending'",
+                queue = c.queue_table
+            ))
+            .bind(item_id)
+            .execute(self.pool.as_ref())
+            .await
+            .storage_err()?;
+
+            Ok(result.rows_affected() > 0)
+        })
         .await
-        .storage_err()?;
-
-        Ok(result.rows_affected() > 0)
     }
 
     async fn pending_queue(&self, session_id: &SessionId) -> SessionResult<Vec<QueueItem>> {
-        let c = &self.config;
+        let sid = *session_id;
+        self.with_retry(|| async move {
+            let c = &self.config;
 
-        let rows = sqlx::query(&format!(
-            r#"
-            SELECT id, session_id, operation, content, priority, status, created_at, processed_at
-            FROM {queue}
-            WHERE session_id = $1 AND status = 'pending'
-            ORDER BY priority DESC, created_at ASC
-            "#,
-            queue = c.queue_table
-        ))
-        .bind(session_id.to_string())
-        .fetch_all(self.pool.as_ref())
-        .await
-        .storage_err()?;
+            let rows = sqlx::query(&format!(
+                r#"
+                SELECT id, session_id, operation, content, priority, status, created_at, processed_at
+                FROM {queue}
+                WHERE session_id = $1 AND status = 'pending'
+                ORDER BY priority DESC, created_at ASC
+                "#,
+                queue = c.queue_table
+            ))
+            .bind(sid.to_string())
+            .fetch_all(self.pool.as_ref())
+            .await
+            .storage_err()?;
 
-        Ok(rows
-            .into_iter()
-            .filter_map(|row| {
-                Some(QueueItem {
-                    id: row.try_get("id").ok()?,
-                    session_id: row.try_get::<&str, _>("session_id").ok()?.parse().ok()?,
+            let mut items = Vec::with_capacity(rows.len());
+
+            for row in rows {
+                let id: Uuid = match row.try_get("id") {
+                    Ok(id) => id,
+                    Err(e) => {
+                        tracing::warn!(session_id = %sid, error = %e, "Skipping queue row: failed to get id");
+                        continue;
+                    }
+                };
+
+                let content = match row.try_get("content") {
+                    Ok(c) => c,
+                    Err(e) => {
+                        tracing::warn!(session_id = %sid, queue_id = %id, error = %e, "Skipping queue row: failed to get content");
+                        continue;
+                    }
+                };
+
+                items.push(QueueItem {
+                    id,
+                    session_id: sid,
                     operation: super::types::QueueOperation::Enqueue,
-                    content: row.try_get("content").ok()?,
+                    content,
                     priority: row.try_get("priority").unwrap_or(0),
                     status: QueueStatus::Pending,
                     created_at: row.try_get("created_at").unwrap_or_else(|_| Utc::now()),
                     processed_at: row.try_get("processed_at").ok(),
-                })
-            })
-            .collect())
+                });
+            }
+
+            Ok(items)
+        })
+        .await
     }
 
     async fn cleanup_expired(&self) -> SessionResult<usize> {
-        let c = &self.config;
+        self.with_retry(|| async {
+            let c = &self.config;
 
-        let result = sqlx::query(&format!(
-            "DELETE FROM {sessions} WHERE expires_at IS NOT NULL AND expires_at < NOW()",
-            sessions = c.sessions_table
-        ))
-        .execute(self.pool.as_ref())
+            let result = sqlx::query(&format!(
+                "DELETE FROM {sessions} WHERE \
+                 (expires_at IS NOT NULL AND expires_at < NOW()) OR \
+                 (updated_at < NOW() - make_interval(days => $1))",
+                sessions = c.sessions_table,
+            ))
+            .bind(c.retention_days as i32)
+            .execute(self.pool.as_ref())
+            .await
+            .storage_err()?;
+
+            Ok(result.rows_affected() as usize)
+        })
         .await
-        .storage_err()?;
-
-        Ok(result.rows_affected() as usize)
     }
 }

@@ -19,7 +19,6 @@ pub trait Persistence: Send + Sync {
     async fn load(&self, id: &SessionId) -> SessionResult<Option<Session>>;
     async fn delete(&self, id: &SessionId) -> SessionResult<bool>;
     async fn list(&self, tenant_id: Option<&str>) -> SessionResult<Vec<SessionId>>;
-    async fn list_children(&self, parent_id: &SessionId) -> SessionResult<Vec<SessionId>>;
 
     // Summaries
     async fn add_summary(&self, snapshot: SummarySnapshot) -> SessionResult<()>;
@@ -39,7 +38,12 @@ pub trait Persistence: Send + Sync {
     // Cleanup
     async fn cleanup_expired(&self) -> SessionResult<usize>;
 
-    // Default implementations (convenience methods)
+    /// Append a message to an existing session.
+    ///
+    /// Concurrency contract: implementations may hold a write lock for the duration
+    /// of this call. Callers must not hold other persistence locks to avoid deadlocks.
+    /// The default implementation performs a load-modify-save cycle; backends should
+    /// override this with a more efficient single-lock approach when possible.
     async fn add_message(
         &self,
         session_id: &SessionId,
@@ -93,15 +97,34 @@ impl Persistence for MemoryPersistence {
         Ok(())
     }
 
+    async fn add_message(
+        &self,
+        session_id: &SessionId,
+        message: SessionMessage,
+    ) -> SessionResult<()> {
+        let mut sessions = self.sessions.write().await;
+        if let Some(session) = sessions.get_mut(&session_id.to_string()) {
+            session.add_message(message);
+            Ok(())
+        } else {
+            Err(SessionError::NotFound {
+                id: session_id.to_string(),
+            })
+        }
+    }
+
     async fn load(&self, id: &SessionId) -> SessionResult<Option<Session>> {
         Ok(self.sessions.read().await.get(&id.to_string()).cloned())
     }
 
     async fn delete(&self, id: &SessionId) -> SessionResult<bool> {
         let key = id.to_string();
-        self.summaries.write().await.remove(&key);
-        self.queue.write().await.remove(&key);
-        Ok(self.sessions.write().await.remove(&key).is_some())
+        let mut sessions = self.sessions.write().await;
+        let mut summaries = self.summaries.write().await;
+        let mut queue = self.queue.write().await;
+        summaries.remove(&key);
+        queue.remove(&key);
+        Ok(sessions.remove(&key).is_some())
     }
 
     async fn list(&self, tenant_id: Option<&str>) -> SessionResult<Vec<SessionId>> {
@@ -115,17 +138,6 @@ impl Persistence for MemoryPersistence {
                     .map(|t| s.tenant_id.as_deref() == Some(t))
                     .unwrap_or(true)
             })
-            .map(|s| s.id)
-            .collect())
-    }
-
-    async fn list_children(&self, parent_id: &SessionId) -> SessionResult<Vec<SessionId>> {
-        Ok(self
-            .sessions
-            .read()
-            .await
-            .values()
-            .filter(|s| s.parent_id.as_ref() == Some(parent_id))
             .map(|s| s.id)
             .collect())
     }
@@ -156,7 +168,7 @@ impl Persistence for MemoryPersistence {
         content: String,
         priority: i32,
     ) -> SessionResult<QueueItem> {
-        let item = QueueItem::enqueue(*session_id, content).with_priority(priority);
+        let item = QueueItem::enqueue(*session_id, content).priority(priority);
         self.queue
             .write()
             .await
@@ -208,10 +220,26 @@ impl Persistence for MemoryPersistence {
     }
 
     async fn cleanup_expired(&self) -> SessionResult<usize> {
+        // Hold all three write locks simultaneously to prevent races where a
+        // concurrent operation could observe a session removed from `sessions`
+        // but still present in `summaries` or `queue`.
         let mut sessions = self.sessions.write().await;
-        let before = sessions.len();
-        sessions.retain(|_, s| !s.is_expired());
-        Ok(before - sessions.len())
+        let mut summaries = self.summaries.write().await;
+        let mut queue = self.queue.write().await;
+
+        let expired_keys: Vec<String> = sessions
+            .iter()
+            .filter(|(_, s)| s.is_expired())
+            .map(|(k, _)| k.clone())
+            .collect();
+
+        for key in &expired_keys {
+            sessions.remove(key);
+            summaries.remove(key);
+            queue.remove(key);
+        }
+
+        Ok(expired_keys.len())
     }
 }
 

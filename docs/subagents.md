@@ -22,8 +22,8 @@ Subagents are independent agents that execute in separate context windows.
 │         ┌───────────────────┼───────────────────┐            │
 │         ▼                   ▼                   ▼            │
 │  ┌─────────────┐    ┌─────────────┐    ┌─────────────┐      │
-│  │   explore   │    │    plan     │    │  general    │      │
-│  │  subagent   │    │  subagent   │    │  subagent   │      │
+│  │   explore   │    │    plan     │    │  general-   │      │
+│  │  subagent   │    │  subagent   │    │  purpose    │      │
 │  │             │    │             │    │             │      │
 │  │ Tools:      │    │ Tools:      │    │ Tools:      │      │
 │  │ Read,Grep,  │    │ All         │    │ All         │      │
@@ -43,27 +43,37 @@ Subagents are independent agents that execute in separate context windows.
 
 ## Built-in Subagents
 
-### explore
+### Bash
+
+Command execution specialist.
+
+| Property | Value |
+|----------|-------|
+| Tools | Bash |
+| Model | Haiku (Small) |
+| Use case | Command execution |
+
+### Explore
 
 Fast agent for codebase exploration.
 
 | Property | Value |
 |----------|-------|
-| Tools | Read, Grep, Glob, Bash |
+| Tools | Read, Grep, Glob, Bash, TodoWrite, KillShell |
 | Model | Haiku (Small) |
 | Use case | Quick file/code search |
 
-### plan
+### Plan
 
 Software architect for implementation planning.
 
 | Property | Value |
 |----------|-------|
-| Tools | All |
+| Tools | Read, Grep, Glob, Bash, TodoWrite, KillShell |
 | Model | Sonnet (Primary) |
 | Use case | Design and planning |
 
-### general
+### general-purpose
 
 Full capability agent for complex tasks.
 
@@ -80,17 +90,17 @@ Full capability agent for complex tasks.
 ```rust
 use claude_agent::{SubagentIndex, ContentSource};
 
-let subagent = SubagentIndex::new("code-reviewer", "Specialized code review agent")
-    .with_source(ContentSource::in_memory(r#"
+let mut subagent = SubagentIndex::new("code-reviewer", "Specialized code review agent")
+    .source(ContentSource::in_memory(r#"
 You are a code review specialist.
 1. Analyze the code for bugs and security issues
 2. Check coding standards compliance
 3. Suggest improvements
 4. Return a structured review report
     "#))
-    .with_allowed_tools(["Read", "Grep", "Glob"])
-    .with_model("claude-sonnet-4-5-20250929")
-    .with_permission_mode("plan");
+    .allowed_tools(["Read", "Grep", "Glob"])
+    .model("claude-sonnet-4-5-20250929");
+subagent.permission_mode = Some("plan".to_string());
 ```
 
 ### File-based
@@ -184,8 +194,8 @@ Subagents can limit available tools:
 
 ```rust
 let subagent = SubagentIndex::new("reader", "Read-only agent")
-    .with_source(ContentSource::in_memory("..."))
-    .with_allowed_tools(["Read", "Glob", "Grep"]);
+    .source(ContentSource::in_memory("..."))
+    .allowed_tools(["Read", "Glob", "Grep"]);
 
 // Write, Bash, etc. are not available
 ```
@@ -193,7 +203,7 @@ let subagent = SubagentIndex::new("reader", "Read-only agent")
 Pattern-based restrictions:
 
 ```rust
-.with_tools(["Bash(git:*)", "Read"])
+.tools(["Bash(git:*)", "Read"])
 // Bash only for git commands
 ```
 
@@ -207,9 +217,9 @@ Pattern-based restrictions:
 | `default` | — | Standard permission flow with allow/deny rules |
 
 ```rust
-let subagent = SubagentIndex::new("safe-agent", "Safe agent")
-    .with_source(ContentSource::in_memory("..."))
-    .with_permission_mode("plan");  // Read-only
+let mut subagent = SubagentIndex::new("safe-agent", "Safe agent")
+    .source(ContentSource::in_memory("..."));
+subagent.permission_mode = Some("plan".to_string());  // Read-only
 ```
 
 ## Registration

@@ -77,13 +77,13 @@ Tracks usage against model limits with status thresholds:
 
 ```rust
 use claude_agent::tokens::ContextWindow;
-use claude_agent::models::read_registry;
+use claude_agent::models::registry;
 
-let registry = read_registry();
+let registry = registry();
 let spec = registry.resolve("sonnet").unwrap();
 
-let mut window = ContextWindow::new(spec, false);  // Standard context
-// let mut window = ContextWindow::new(spec, true); // Extended (1M)
+let mut window = ContextWindow::new(&spec, false);  // Standard context
+// let mut window = ContextWindow::new(&spec, true); // Extended (1M)
 
 window.update(150_000);
 println!("Limit: {}", window.limit());           // 200,000
@@ -123,8 +123,8 @@ if window.status().should_proceed() {
 ### Threshold Configuration
 
 ```rust
-let window = ContextWindow::new(spec, false)
-    .with_thresholds(0.70, 0.90);  // Warning at 70%, Critical at 90%
+let window = ContextWindow::new(&spec, false)
+    .thresholds(0.70, 0.90);  // Warning at 70%, Critical at 90%
 ```
 
 Default thresholds:
@@ -133,23 +133,23 @@ Default thresholds:
 
 ## TokenTracker
 
-Pre-flight validation using the `count_tokens` API:
+Pre-flight validation via local `check()`:
 
 ```rust
 use claude_agent::tokens::{TokenTracker, PreflightResult};
-use claude_agent::models::read_registry;
+use claude_agent::models::registry;
 
-let registry = read_registry();
+let registry = registry();
 let spec = registry.resolve("sonnet").unwrap();
 
-let tracker = TokenTracker::new(spec, false);
+let mut tracker = TokenTracker::new(spec.clone(), false);
 
 // After API response, record the usage
 tracker.record(&response.usage);
 
 // Check current state
 let status = tracker.status();
-println!("Context usage: {}", tracker.context_usage());
+println!("Context usage: {}", tracker.context_window().usage());
 ```
 
 ### PreflightResult
@@ -159,10 +159,12 @@ pub enum PreflightResult {
     Ok {
         estimated_tokens: u64,
         remaining: u64,
+        tier: PricingTier,
     },
     Warning {
         estimated_tokens: u64,
         utilization: f64,
+        tier: PricingTier,
     },
     Exceeded {
         estimated_tokens: u64,
@@ -174,23 +176,22 @@ pub enum PreflightResult {
 
 ## PricingTier
 
-Determines pricing multiplier based on context usage:
+Determines pricing tier based on context usage:
 
 ```rust
 use claude_agent::tokens::PricingTier;
 
 let tier = PricingTier::for_context(150_000);  // Standard
-assert_eq!(tier.multiplier(), 1.0);
+assert!(!tier.is_extended());
 
 let tier = PricingTier::for_context(250_000);  // Extended
-assert_eq!(tier.multiplier(), 2.0);
 assert!(tier.is_extended());
 ```
 
-| Tier | Context Range | Multiplier |
-|------|---------------|------------|
-| Standard | ≤ 200,000 | 1.0x |
-| Extended | > 200,000 | 2.0x |
+| Tier | Context Range | Cost Impact |
+|------|---------------|-------------|
+| Standard | <= 200,000 | Base pricing |
+| Extended | > 200,000 | 2x multiplier on input/cache (via `ModelPricing`) |
 
 ## Agent Integration
 

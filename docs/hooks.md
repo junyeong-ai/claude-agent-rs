@@ -37,7 +37,7 @@ The hooks system allows intercepting and controlling agent execution at specific
 | `Stop` | When agent stops | No | executor.rs |
 | `SubagentStart` | When subagent spawns | Yes | task.rs |
 | `SubagentStop` | When subagent completes | No | task.rs |
-| `PreCompact` | Before context compaction | Yes | executor.rs |
+| `PreCompact` | Before context compaction | No | executor.rs |
 | `SessionStart` | When session begins | Yes | executor.rs |
 | `SessionEnd` | When session ends | No | executor.rs |
 
@@ -124,9 +124,9 @@ Factory methods:
 - `HookOutput::block(reason)` - Stop execution
 
 Builder methods:
-- `.with_system_message(msg)` - Inject system message
-- `.with_context(ctx)` - Add additional context
-- `.with_updated_input(input)` - Modify tool input
+- `.system_message(msg)` - Inject system message
+- `.context(ctx)` - Add additional context
+- `.updated_input(input)` - Modify tool input
 - `.suppress_logging()` - Suppress logging
 
 ### HookContext
@@ -193,6 +193,7 @@ pub struct CommandHook {
     events: Vec<HookEvent>,
     tool_pattern: Option<Regex>,
     timeout_secs: u64,
+    extra_env: HashMap<String, String>,
 }
 ```
 
@@ -381,14 +382,14 @@ let agent = Agent::builder()
     .await?;
 ```
 
-## ToolContext Integration
+## ExecutionContext Integration
 
 For tools that need to fire hooks (like TaskTool for subagent events):
 
 ```rust
-// ToolContext with hooks support
-let ctx = ToolContext::new(security)
-    .with_hooks(hook_manager, session_id);
+// ExecutionContext with hooks support
+let ctx = ExecutionContext::new(security)
+    .hooks(hook_manager, session_id);
 
 // Fire hook from within a tool
 ctx.fire_hook(

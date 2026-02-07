@@ -519,9 +519,9 @@ async fn test_session_tenant() -> Result<(), String> {
 
 fn test_subagent_definition() -> Result<(), String> {
     let subagent = SubagentIndex::new("reviewer", "Code reviewer")
-        .with_source(ContentSource::in_memory("Review the code"))
-        .with_tools(["Read", "Grep", "Glob"])
-        .with_model("claude-haiku-4-5-20251001");
+        .source(ContentSource::in_memory("Review the code"))
+        .tools(["Read", "Grep", "Glob"])
+        .model("claude-haiku-4-5-20251001");
 
     if subagent.name != "reviewer" {
         return Err("Name mismatch".into());
@@ -561,8 +561,8 @@ fn test_subagent_tools() -> Result<(), String> {
     use claude_agent::common::ToolRestricted;
 
     let restricted = SubagentIndex::new("limited", "Limited agent")
-        .with_source(ContentSource::in_memory("Do limited things"))
-        .with_tools(["Read", "Grep"]);
+        .source(ContentSource::in_memory("Do limited things"))
+        .tools(["Read", "Grep"]);
 
     if !restricted.has_tool_restrictions() {
         return Err("Should have restrictions".into());
@@ -577,8 +577,8 @@ fn test_subagent_tools() -> Result<(), String> {
         return Err("Bash should not be allowed".into());
     }
 
-    let unrestricted = SubagentIndex::new("general", "General")
-        .with_source(ContentSource::in_memory("Do anything"));
+    let unrestricted =
+        SubagentIndex::new("general", "General").source(ContentSource::in_memory("Do anything"));
     if unrestricted.has_tool_restrictions() {
         return Err("Should not have restrictions".into());
     }
@@ -595,22 +595,22 @@ fn test_subagent_model() -> Result<(), String> {
     let config = ModelConfig::default();
 
     let direct = SubagentIndex::new("direct", "Direct")
-        .with_source(ContentSource::in_memory("Use direct"))
-        .with_model("custom-model");
+        .source(ContentSource::in_memory("Use direct"))
+        .model("custom-model");
     if direct.resolve_model(&config) != "custom-model" {
         return Err("Direct model mismatch".into());
     }
 
     let haiku = SubagentIndex::new("fast", "Fast")
-        .with_source(ContentSource::in_memory("Be fast"))
-        .with_model("haiku");
+        .source(ContentSource::in_memory("Be fast"))
+        .model("haiku");
     if !haiku.resolve_model(&config).contains("haiku") {
         return Err("Haiku alias failed".into());
     }
 
     let typed = SubagentIndex::new("typed", "Typed")
-        .with_source(ContentSource::in_memory("Use type"))
-        .with_model_type(ModelType::Small);
+        .source(ContentSource::in_memory("Use type"))
+        .model_type(ModelType::Small);
     if !typed.resolve_model(&config).contains("haiku") {
         return Err("ModelType fallback failed".into());
     }

@@ -13,7 +13,7 @@ claude-agent-rs supports multiple authentication methods with automatic credenti
 │       │                                                         │
 │       ▼                                                         │
 │  ┌─────────────────────┐                                        │
-│  │ ClaudeCliProvider   │ ~/.claude/.credentials.json            │
+│  │ ClaudeCliProvider   │ ~/.claude/credentials.json             │
 │  │  ├── Load OAuth     │                                        │
 │  │  ├── Check expiry   │                                        │
 │  │  └── Auto refresh   │ ← `claude auth refresh`                │
@@ -48,13 +48,15 @@ let agent = Agent::builder()
     .build()
     .await?;
 
-// Or with explicit auth
+// Or with explicit auth (requires `cli-integration` feature)
 use claude_agent::Auth;
 let agent = Agent::builder()
-    .auth(Auth::claude_cli()).await?
+    .auth(Auth::claude_cli())
     .build()
     .await?;
 ```
+
+> **Note**: `Auth::claude_cli()` requires the `cli-integration` feature flag.
 
 **Prerequisite**: Run `claude login` first.
 
@@ -64,7 +66,7 @@ let agent = Agent::builder()
 - Required beta headers (`claude-code-20250219`, `oauth-2025-04-20`)
 - Automatic token refresh when expired
 
-**Credential location**: `~/.claude/.credentials.json` (also macOS Keychain)
+**Credential location**: `~/.claude/credentials.json` (also macOS Keychain)
 
 ### Separating Auth from Resources
 
@@ -73,18 +75,18 @@ let agent = Agent::builder()
 ```rust
 // Use API Key with .claude/ resources
 Agent::builder()
-    .auth(Auth::api_key("sk-...")).await?
+    .auth(Auth::api_key("sk-..."))
     .working_dir("./my-project")
-    .with_project_resources()  // Loads .claude/ (skills, rules, CLAUDE.md)
+    .project_resources()  // Loads .claude/ (skills, rules, CLAUDE.md)
     .build()
     .await?
 
 // Use Bedrock with .claude/ resources
 Agent::builder()
-    .auth(Auth::bedrock("us-east-1")).await?
+    .auth(Auth::bedrock("us-east-1"))
     .working_dir("./my-project")
-    .with_project_resources()
-    .with_user_resources()     // Also load ~/.claude/
+    .project_resources()
+    .user_resources()     // Also load ~/.claude/
     .build()
     .await?
 ```
@@ -167,9 +169,11 @@ For detailed cloud provider configuration, see [Cloud Providers Guide](cloud-pro
 
 ### AWS Bedrock
 
+> **Note**: `Auth::bedrock()` requires the `aws` feature flag.
+
 ```rust
 let client = Client::builder()
-    .auth(Auth::bedrock("us-east-1").await?)
+    .auth(Auth::bedrock("us-east-1"))
     .build()
     .await?;
 ```
@@ -183,9 +187,11 @@ let client = Client::builder()
 
 ### Google Vertex AI
 
+> **Note**: `Auth::vertex()` requires the `gcp` feature flag.
+
 ```rust
 let client = Client::builder()
-    .auth(Auth::vertex("my-gcp-project", "us-central1").await?)
+    .auth(Auth::vertex("my-gcp-project", "us-central1"))
     .build()
     .await?;
 ```
@@ -199,9 +205,11 @@ let client = Client::builder()
 
 ### Azure AI Foundry
 
+> **Note**: `Auth::foundry()` requires the `azure` feature flag.
+
 ```rust
 let client = Client::builder()
-    .auth(Auth::foundry("my-resource").await?)
+    .auth(Auth::foundry("my-resource"))
     .build()
     .await?;
 ```
@@ -219,13 +227,14 @@ Custom credential resolution chain.
 ```rust
 use claude_agent::auth::{ChainProvider, ClaudeCliProvider, EnvironmentProvider};
 
-let chain = ChainProvider::new()
-    .with(ClaudeCliProvider::new())
-    .with(EnvironmentProvider::new());
+let chain = ChainProvider::new(vec![
+    Box::new(ClaudeCliProvider::new()),
+    Box::new(EnvironmentProvider::new()),
+]);
 
-let client = Client::builder()
-    .credential_provider(chain)
-    .build()?;
+// Or build incrementally
+let chain = ChainProvider::new(vec![Box::new(EnvironmentProvider::new())])
+    .provider(ClaudeCliProvider::new());
 ```
 
 ## Environment Variables
@@ -261,7 +270,7 @@ async fn refresh(&self) -> Result<Credential> {
 
 ## Security Considerations
 
-- OAuth tokens are stored in `~/.claude/credentials.json`
+- OAuth tokens are stored in `~/.claude/credentials.json` (loaded by `ClaudeCliProvider`)
 - API keys should use environment variables, not hardcoded
 - Cloud providers use their native credential chains
 - Token refresh happens automatically before expiry

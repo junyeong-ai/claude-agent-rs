@@ -39,16 +39,16 @@ Skills are specialized workflows that activate on-demand for context optimizatio
 use claude_agent::{SkillIndex, ContentSource};
 
 let skill = SkillIndex::new("deploy", "Production deployment workflow")
-    .with_source(ContentSource::in_memory(r#"
+    .source(ContentSource::in_memory(r#"
 Deploy the application to $ARGUMENTS environment:
 1. Run tests
 2. Build artifacts
 3. Deploy to server
 4. Verify health checks
     "#))
-    .with_triggers(["deploy", "release"])
-    .with_allowed_tools(["Bash", "Read"])
-    .with_model("claude-sonnet-4-5-20250929");
+    .triggers(["deploy", "release"])
+    .allowed_tools(["Bash", "Read"])
+    .model("claude-sonnet-4-5-20250929");
 ```
 
 ### File-based
@@ -113,8 +113,8 @@ Skills can auto-activate based on keywords:
 
 ```rust
 let skill = SkillIndex::new("deploy", "Deploy")
-    .with_source(ContentSource::in_memory("..."))
-    .with_triggers(["deploy", "release", "ship"]);
+    .source(ContentSource::in_memory("..."))
+    .triggers(["deploy", "release", "ship"]);
 
 // "deploy to production" → activates deploy skill
 // "ship it" → also activates deploy skill
@@ -186,8 +186,8 @@ Skills can limit available tools:
 
 ```rust
 let skill = SkillIndex::new("reader", "Read-only")
-    .with_source(ContentSource::in_memory("..."))
-    .with_allowed_tools(["Read", "Glob", "Grep"]);
+    .source(ContentSource::in_memory("..."))
+    .allowed_tools(["Read", "Glob", "Grep"]);
 
 // Only Read, Glob, Grep are available during this skill
 ```
@@ -195,7 +195,7 @@ let skill = SkillIndex::new("reader", "Read-only")
 Pattern-based restrictions:
 
 ```rust
-.with_allowed_tools(["Bash(git:*)", "Read"])
+.allowed_tools(["Bash(git:*)", "Read"])
 // Bash only for git commands, Read always allowed
 ```
 
@@ -206,13 +206,13 @@ Skills can specify a different model:
 ```rust
 // Use faster model for simple tasks
 let skill = SkillIndex::new("quick-check", "Fast check")
-    .with_source(ContentSource::in_memory("..."))
-    .with_model("claude-haiku-4-5-20251001");
+    .source(ContentSource::in_memory("..."))
+    .model("claude-haiku-4-5-20251001");
 
 // Use stronger model for complex tasks
 let skill = SkillIndex::new("architect", "Design")
-    .with_source(ContentSource::in_memory("..."))
-    .with_model("claude-opus-4-5-20251101");
+    .source(ContentSource::in_memory("..."))
+    .model("claude-opus-4-6");
 ```
 
 ## Registration
@@ -220,7 +220,7 @@ let skill = SkillIndex::new("architect", "Design")
 ```rust
 let agent = Agent::builder()
     .from_claude_code(path).await?
-    .with_project_resources()         // Loads skills from .claude/skills/
+    .project_resources()         // Loads skills from .claude/skills/
     .skill(deploy_skill)              // Add programmatic skills
     .skill(review_skill)
     .build()

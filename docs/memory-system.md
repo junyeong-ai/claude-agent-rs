@@ -29,15 +29,15 @@ The memory system provides project context through CLAUDE.md files and rules.
 ```rust
 Agent::builder()
     .from_claude_code(path).await?    // Auth + working_dir
-    .with_enterprise_resources()      // Enable enterprise level
-    .with_user_resources()            // Enable user level
-    .with_project_resources()         // Enable project level
-    .with_local_resources()           // Enable local level
+    .enterprise_resources()      // Enable enterprise level
+    .user_resources()            // Enable user level
+    .project_resources()         // Enable project level
+    .local_resources()           // Enable local level
     .build()
     .await?;
 ```
 
-**Important**: The `with_*_resources()` methods only enable loading from specific levels.
+**Important**: The `*_resources()` methods only enable loading from specific levels.
 Actual loading happens during `build()` in a **fixed order** regardless of chaining order:
 
 ```
@@ -120,14 +120,14 @@ Control how deep @import directives are followed:
 ```rust
 use claude_agent::context::{MemoryLoader, MemoryLoaderConfig};
 
-// Default (depth 2) - CLI compatible, ~24K tokens
+// Default (depth 2) - CLI compatible, ~31K tokens
 let loader = MemoryLoader::new();
 
 // Full expansion (depth 5) - all nested imports
 let loader = MemoryLoader::full_expansion();
 
 // Custom depth
-let loader = MemoryLoader::with_config(MemoryLoaderConfig::with_max_depth(3));
+let loader = MemoryLoader::from_config(MemoryLoaderConfig::max_depth(3));
 ```
 
 **Constants:**

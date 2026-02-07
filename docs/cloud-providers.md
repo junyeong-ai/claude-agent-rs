@@ -46,22 +46,19 @@ Direct connection to Anthropic's API.
 ```rust
 // Using API key
 let client = Client::builder()
-    .auth("sk-ant-api03-...")
-    .await?
+    .auth(Auth::api_key("sk-ant-api03-..."))
     .build()
     .await?;
 
 // Using environment variable
 let client = Client::builder()
-    .auth(Auth::FromEnv)
-    .await?
+    .auth(Auth::from_env())
     .build()
     .await?;
 
 // Using Claude Code CLI credentials
 let client = Client::builder()
-    .auth(Auth::ClaudeCli)
-    .await?
+    .auth(Auth::claude_cli())
     .build()
     .await?;
 ```
@@ -91,8 +88,7 @@ Claude models via Amazon Bedrock.
 ```rust
 // Using Auth enum (recommended)
 let client = Client::builder()
-    .auth(Auth::Bedrock { region: "us-east-1".into() })
-    .await?
+    .auth(Auth::bedrock("us-east-1"))
     .build()
     .await?;
 ```
@@ -124,11 +120,13 @@ Authorization: AWS4-HMAC-SHA256 ...
 
 ### Model Mapping
 
-| Standard | Bedrock |
-|----------|---------|
-| claude-sonnet-4-5 | anthropic.claude-sonnet-4-5-v1 |
-| claude-haiku-4-5 | anthropic.claude-haiku-4-5-v1 |
-| claude-opus-4-5 | anthropic.claude-opus-4-5-v1 |
+| Standard | Bedrock (ProviderIds) | Bedrock (ModelConfig default) |
+|----------|---------|------|
+| claude-sonnet-4-5 | anthropic.claude-sonnet-4-5-20250929-v1:0 | global.anthropic.claude-sonnet-4-5-20250929-v1:0 |
+| claude-haiku-4-5 | anthropic.claude-haiku-4-5-20251001-v1:0 | global.anthropic.claude-haiku-4-5-20251001-v1:0 |
+| claude-opus-4-6 | anthropic.claude-opus-4-6-v1:0 | global.anthropic.claude-opus-4-6-v1:0 |
+
+> **Note**: `ModelConfig::bedrock()` uses the `global.` prefix for maximum availability across regions. The `ProviderIds` in `ModelSpec` store the base IDs without the prefix.
 
 ## Google Vertex AI
 
@@ -136,11 +134,7 @@ Claude models via Google Cloud Vertex AI.
 
 ```rust
 let client = Client::builder()
-    .auth(Auth::Vertex {
-        project: "my-gcp-project".into(),
-        region: "us-central1".into(),
-    })
-    .await?
+    .auth(Auth::vertex("my-gcp-project", "us-central1"))
     .build()
     .await?;
 ```
@@ -173,9 +167,9 @@ Authorization: Bearer {oauth_token}
 
 | Standard | Vertex |
 |----------|--------|
-| claude-sonnet-4-5 | claude-sonnet-4-5@20250929 |
-| claude-haiku-4-5 | claude-haiku-4-5@20251001 |
-| claude-opus-4-5 | claude-opus-4-5@20251101 |
+| claude-sonnet-4-5-20250929 | claude-sonnet-4-5@20250929 |
+| claude-haiku-4-5-20251001 | claude-haiku-4-5@20251001 |
+| claude-opus-4-6 | claude-opus-4-6 |
 
 ## Azure AI Foundry
 
@@ -183,8 +177,7 @@ Claude models via Azure AI Foundry.
 
 ```rust
 let client = Client::builder()
-    .auth(Auth::Foundry { resource: "my-resource".into() })
-    .await?
+    .auth(Auth::foundry("my-resource"))
     .build()
     .await?;
 ```
@@ -210,9 +203,9 @@ Uses Azure Identity chain:
 ### Request Format
 
 ```http
-POST https://{resource}.openai.azure.com/openai/deployments/{deployment}/chat/completions
+POST https://{resource}.services.ai.azure.com/anthropic/v1/messages
 Authorization: Bearer {azure_token}
-api-version: 2024-02-01
+anthropic-version: 2023-06-01
 ```
 
 ## Provider Adapter Trait
@@ -222,15 +215,19 @@ api-version: 2024-02-01
 pub trait ProviderAdapter: Send + Sync + Debug {
     fn config(&self) -> &ProviderConfig;
     fn name(&self) -> &'static str;
+    fn base_url(&self) -> &str;
     fn model(&self, model_type: ModelType) -> &str;
-    fn build_url(&self, model: &str, stream: bool) -> String;
-    fn prepare_request(&self, request: CreateMessageRequest) -> CreateMessageRequest;
-    fn transform_request(&self, request: CreateMessageRequest) -> serde_json::Value;
+    async fn build_url(&self, model: &str, stream: bool) -> String;
+    async fn prepare_request(&self, request: CreateMessageRequest) -> CreateMessageRequest;
+    async fn transform_request(&self, request: CreateMessageRequest) -> Result<serde_json::Value>;
     fn transform_response(&self, response: serde_json::Value) -> Result<ApiResponse>;
-    fn apply_auth_headers(&self, req: reqwest::RequestBuilder) -> reqwest::RequestBuilder;
+    async fn apply_auth_headers(&self, req: reqwest::RequestBuilder) -> reqwest::RequestBuilder;
     async fn send(&self, http: &reqwest::Client, request: CreateMessageRequest) -> Result<ApiResponse>;
     async fn send_stream(&self, http: &reqwest::Client, request: CreateMessageRequest) -> Result<reqwest::Response>;
+    async fn count_tokens(&self, http: &reqwest::Client, request: CountTokensRequest) -> Result<CountTokensResponse>;
     async fn refresh_credentials(&self) -> Result<()>;
+    async fn ensure_fresh_credentials(&self) -> Result<()>;
+    fn supports_credential_refresh(&self) -> bool;
 }
 ```
 
@@ -238,9 +235,9 @@ pub trait ProviderAdapter: Send + Sync + Debug {
 
 ```rust
 pub enum ModelType {
-    Default,  // Main model for conversations
-    Haiku,    // Fast model for simple tasks
-    Opus,     // Powerful model for complex tasks
+    Primary,    // Main model for conversations (Sonnet)
+    Small,      // Fast model for simple tasks (Haiku)
+    Reasoning,  // Powerful model for complex tasks (Opus)
 }
 ```
 

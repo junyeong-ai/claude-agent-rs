@@ -30,9 +30,10 @@ Per-session cost tracking with configurable limits.
 
 ```rust
 use claude_agent::{BudgetTracker, OnExceed};
+use rust_decimal_macros::dec;
 
-// Set $10 limit
-let tracker = BudgetTracker::new(10.0);
+// Set $10 limit (uses Decimal for precision)
+let tracker = BudgetTracker::new(dec!(10));
 
 // Unlimited (no limit)
 let tracker = BudgetTracker::unlimited();
@@ -47,17 +48,19 @@ let tracker = BudgetTracker::unlimited();
 | `FallbackModel(model)` | Switch to cheaper model |
 
 ```rust
+use rust_decimal_macros::dec;
+
 // Stop when exceeded (default)
-let tracker = BudgetTracker::new(5.0)
-    .with_on_exceed(OnExceed::StopBeforeNext);
+let tracker = BudgetTracker::new(dec!(5))
+    .on_exceed(OnExceed::StopBeforeNext);
 
 // Warn but continue
-let tracker = BudgetTracker::new(5.0)
-    .with_on_exceed(OnExceed::WarnAndContinue);
+let tracker = BudgetTracker::new(dec!(5))
+    .on_exceed(OnExceed::WarnAndContinue);
 
 // Fall back to cheaper model
-let tracker = BudgetTracker::new(5.0)
-    .with_on_exceed(OnExceed::fallback("claude-haiku-4-5-20251001"));
+let tracker = BudgetTracker::new(dec!(5))
+    .on_exceed(OnExceed::fallback("claude-haiku-4-5-20251001"));
 ```
 
 ### Checking Status
@@ -85,14 +88,15 @@ if let Some(model) = tracker.should_fallback() { /* switch model */ }
 ## Agent Integration
 
 ```rust
-use claude_agent::{Agent, BudgetConfig};
+use claude_agent::{Agent, BudgetTracker, OnExceed};
+use rust_decimal_macros::dec;
+
+let tracker = BudgetTracker::new(dec!(10))
+    .on_exceed(OnExceed::StopBeforeNext);
 
 let agent = Agent::builder()
     .auth(Auth::from_env()).await?
-    .budget(BudgetConfig {
-        max_cost_usd: Some(10.0),
-        on_exceed: OnExceed::StopBeforeNext,
-    })
+    .budget(tracker)
     .build()
     .await?;
 ```
@@ -105,7 +109,7 @@ Model-specific pricing for cost calculation.
 
 | Model | Input | Output |
 |-------|-------|--------|
-| claude-opus-4-5 | $15.00 | $75.00 |
+| claude-opus-4-6 | $15.00 | $75.00 |
 | claude-sonnet-4-5 | $3.00 | $15.00 |
 | claude-haiku-4-5 | $0.80 | $4.00 |
 
@@ -113,52 +117,71 @@ Model-specific pricing for cost calculation.
 
 ```rust
 use claude_agent::{PricingTableBuilder, ModelPricing};
+use rust_decimal_macros::dec;
 
+// Full pricing with all 5 fields
 let pricing = PricingTableBuilder::new()
-    .add_model("my-model", ModelPricing {
-        input_per_million: 2.0,
-        output_per_million: 10.0,
-    })
+    .model("my-model", ModelPricing::new(
+        dec!(2),    // input_per_mtok
+        dec!(10),   // output_per_mtok
+        dec!(0.2),  // cache_read_per_mtok
+        dec!(2.5),  // cache_write_per_mtok
+        dec!(2),    // long_context_multiplier
+    ))
+    .build();
+
+// Or use from_base() to auto-derive cache pricing
+let pricing = PricingTableBuilder::new()
+    .model_base("my-model", dec!(2), dec!(10))
     .build();
 ```
 
 ## TenantBudgetManager
 
-Multi-tenant budget allocation with shared pools.
+Multi-tenant budget management with per-tenant cost tracking.
 
 ```rust
-use claude_agent::{TenantBudgetManager, TenantBudget};
+use claude_agent::TenantBudgetManager;
+use rust_decimal_macros::dec;
 
-let manager = TenantBudgetManager::new(1000.0); // $1000 total pool
+let manager = TenantBudgetManager::new();
 
-// Allocate to tenant
-manager.create_tenant("tenant-a", TenantBudget {
-    max_daily: 50.0,
-    max_monthly: 500.0,
-})?;
+// Set per-tenant budgets
+manager.set_budget("tenant-a", dec!(100));
+manager.set_budget("tenant-b", dec!(50));
+
+// Record usage against tenant
+let cost = manager.record("tenant-a", "claude-sonnet-4-5", &usage);
 
 // Check tenant budget
-let budget = manager.get_budget("tenant-a")?;
-if budget.can_spend(5.0) {
-    // proceed
+if let Some(budget) = manager.get("tenant-a") {
+    println!("Used: {}, Remaining: {}", budget.used_cost_usd(), budget.remaining());
+    if budget.is_exceeded() { /* handle */ }
 }
+
+// Check if tenant should stop
+if manager.should_stop("tenant-a") { /* stop execution */ }
+
+// Get summary of all tenants
+let summaries = manager.summary();
 ```
 
 ## Cost Calculation
 
-Costs are calculated from API response usage:
+Costs are calculated from API response usage using `rust_decimal` for precise monetary calculations:
 
 ```rust
-pub struct Usage {
-    pub input_tokens: u64,
-    pub output_tokens: u64,
-    pub cache_creation_input_tokens: u64,
-    pub cache_read_input_tokens: u64,
+// ModelPricing fields (per million tokens)
+pub struct ModelPricing {
+    pub input_per_mtok: Decimal,
+    pub output_per_mtok: Decimal,
+    pub cache_read_per_mtok: Decimal,    // Default: 10% of input
+    pub cache_write_per_mtok: Decimal,   // Default: 125% of input
+    pub long_context_multiplier: Decimal, // Default: 2x for >200K tokens
 }
 
-// Cost = (input * input_rate + output * output_rate) / 1_000_000
-// Cache creation: 25% more than input
-// Cache read: 90% discount
+// Long context threshold: 200,000 tokens
+// When total context > 200K, input/cache costs are multiplied
 ```
 
 ## See Also

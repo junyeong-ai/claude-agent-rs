@@ -44,9 +44,17 @@ The main execution engine implementing the agentic loop pattern.
 |------|---------|
 | `executor.rs` | Agent struct with `execute()` and `execute_stream()` |
 | `state.rs` | Conversation history and state management |
-| `context.rs` | Token estimation and context management |
+| `config.rs` | Agent configuration |
+| `execution.rs` | Execution loop implementation |
+| `request.rs` | Request building |
+| `streaming.rs` | Stream processing |
+| `events.rs` | Agent event types |
+| `common.rs` | Shared utilities |
 | `task.rs` | TaskTool for spawning subagents |
+| `task_output.rs` | Task output handling |
 | `task_registry.rs` | Background task state management |
+| `state_formatter.rs` | State formatting utilities |
+| `options/` | Builder options (build.rs, builder.rs, cli.rs) |
 
 ### Client (`src/client/`)
 
@@ -54,7 +62,7 @@ Low-level API communication with multi-cloud support.
 
 | File | Purpose |
 |------|---------|
-| `messages.rs` | Request/Response building |
+| `messages/` | Request/Response building (config.rs, context.rs, request.rs) |
 | `streaming.rs` | SSE stream processing |
 | `adapter/*.rs` | Provider adapters (Anthropic, Bedrock, Vertex, Foundry) |
 | `gateway.rs` | Unified gateway pattern |
@@ -128,8 +136,10 @@ Model registry with runtime extensibility and pricing tiers.
 | `registry.rs` | Global ModelRegistry with alias resolution |
 | `spec.rs` | ModelSpec with capabilities, context limits |
 | `family.rs` | ModelFamily (Opus, Sonnet, Haiku), ModelRole |
-| `pricing.rs` | PricingTier (Standard/Extended), cost calculation |
+| `provider.rs` | ProviderIds, ProviderKind |
 | `builtin.rs` | Built-in model definitions |
+
+> **Note**: PricingTier is in `src/tokens/tier.rs`, ModelPricing is in `src/budget/pricing.rs`.
 
 **Key Constants:**
 - `LONG_CONTEXT_THRESHOLD`: 200,000 tokens (Standard/Extended boundary)
@@ -144,7 +154,7 @@ Token tracking and context window management.
 | `budget.rs` | TokenBudget - separates billing vs context tokens |
 | `window.rs` | ContextWindow - tracks usage against model limits |
 | `tier.rs` | PricingTier re-export, threshold constants |
-| `tracker.rs` | TokenTracker - pre-flight validation via `count_tokens` API |
+| `tracker.rs` | TokenTracker - pre-flight validation via local `check()` |
 
 **Key Concepts:**
 - `context_usage() = input_tokens + cache_read_tokens + cache_write_tokens`
@@ -157,7 +167,7 @@ Prompt caching and conversation management.
 
 - Prompt caching (system + message history)
 - Automatic context compaction
-- State persistence (Memory/PostgreSQL/Redis)
+- State persistence (Memory/JSONL/PostgreSQL/Redis)
 
 ### Output Style (`src/output_style/`)
 
@@ -174,7 +184,10 @@ System prompt customization.
 
 Modular prompt sections.
 
-- `sections.rs`: BASE_IDENTIFIER, CORE_PRINCIPLES, TOOL_USAGE, SAFETY_RULES
+- `base.rs`: BASE_SYSTEM_PROMPT, TOOL_USAGE_POLICY, MCP_INSTRUCTIONS
+- `coding.rs`: CODING_INSTRUCTIONS, PR_PROTOCOL
+- `environment.rs`: Environment detection
+- `identity.rs`: CLI_IDENTITY
 
 ### Hooks (`src/hooks/`)
 
@@ -228,9 +241,10 @@ Model Context Protocol integration for external tools.
 
 | File | Purpose |
 |------|---------|
-| `client.rs` | McpClient - single server connection (stdio, SSE) |
+| `client.rs` | McpClient - single server connection (stdio) |
 | `manager.rs` | McpManager - multi-server, `mcp__server_tool` naming |
 | `resources.rs` | ResourceManager, ResourceQuery |
+| `toolset.rs` | McpToolset, McpToolsetRegistry, ToolLoadConfig |
 
 ### Subagents (`src/subagents/`)
 
@@ -238,9 +252,10 @@ Independent agents with separate context windows.
 
 | Type | Model | Purpose |
 |------|-------|---------|
-| `explore` | Haiku | Fast codebase search |
-| `plan` | Sonnet | Implementation planning |
-| `general` | Sonnet | Complex multi-step tasks |
+| `Bash` | Small (Haiku) | Command execution |
+| `Explore` | Small (Haiku) | Fast codebase search |
+| `Plan` | Primary (Sonnet) | Implementation planning |
+| `general-purpose` | Primary (Sonnet) | Complex multi-step tasks |
 
 - Context isolation: Clean context for task-specific execution
 - Background execution: Non-blocking async tasks

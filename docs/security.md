@@ -104,16 +104,16 @@ Commands are analyzed via AST (tree-sitter) before execution.
 ### Dangerous Pattern Detection
 
 ```rust
-use claude_agent::security::bash::{BashAnalyzer, BashPolicy};
+use claude_agent::security::bash::{BashAnalyzer, BashPolicy, SecurityConcern};
 
 let policy = BashPolicy::default();
 let analyzer = BashAnalyzer::new(policy);
 
-let result = analyzer.analyze("rm -rf /")?;
-// DangerLevel::Critical
+let analysis = analyzer.analyze("rm -rf /");
+// analysis.concerns contains SecurityConcern::DangerousCommand("rm root")
 
-let result = analyzer.analyze("git status")?;
-// DangerLevel::Safe
+let analysis = analyzer.analyze("git status");
+// analysis.concerns.is_empty() == true (safe command)
 ```
 
 ### Detected Patterns
@@ -128,13 +128,21 @@ let result = analyzer.analyze("git status")?;
 
 ### Custom Policies
 
+`BashPolicy` provides constructor methods and builder-style configuration:
+
 ```rust
-let policy = BashPolicy::builder()
-    .allow_pattern("git:*")
-    .allow_pattern("cargo:*")
-    .deny_pattern("rm:*")
-    .deny_pattern("sudo:*")
-    .build();
+// Default policy (blocks common network commands, allows substitutions)
+let policy = BashPolicy::default();
+
+// Strict policy (blocks all substitutions, remote exec, privilege escalation)
+let policy = BashPolicy::strict();
+
+// Permissive policy (allows everything)
+let policy = BashPolicy::permissive();
+
+// Customize blocked commands via builder method
+let policy = BashPolicy::strict()
+    .blocked_commands(["curl", "wget", "rm", "sudo"]);
 ```
 
 ## Environment Sanitization
@@ -163,45 +171,47 @@ Process isolation via `setrlimit()`.
 use claude_agent::security::ResourceLimits;
 
 let limits = ResourceLimits::default()
-    .with_cpu_time(60)           // 60 seconds
-    .with_memory(512 * 1024 * 1024)  // 512 MB
-    .with_file_count(100)        // 100 open files
-    .with_process_count(10);     // 10 subprocesses
+    .cpu_time(60)                    // 60 seconds
+    .virtual_memory(512 * 1024 * 1024)  // 512 MB
+    .open_files(100)                 // 100 open files
+    .processes(10);                  // 10 subprocesses
 ```
 
 ### Limit Types
 
-| Limit | Description | Default |
-|-------|-------------|---------|
-| CPU time | Maximum CPU seconds | 120s |
-| Memory | Maximum RSS | 1GB |
-| File count | Open file descriptors | 256 |
-| Process count | Child processes | 32 |
-| File size | Maximum file size | 100MB |
+| Limit | Method | Description | Default |
+|-------|--------|-------------|---------|
+| CPU time | `cpu_time()` | Maximum CPU seconds | 300s (5 min) |
+| Virtual memory | `virtual_memory()` | Maximum virtual memory | 2GB |
+| Open files | `open_files()` | Open file descriptors | 256 |
+| Processes | `processes()` | Child processes | 32 |
+| File size | `file_size()` | Maximum file size | 100MB |
 
 ## Network Sandbox
 
-Domain and URL filtering for web operations.
+Domain filtering for web operations.
 
 ```rust
-use claude_agent::tools::sandbox::NetworkSandbox;
+use claude_agent::security::sandbox::NetworkSandbox;
 
-let sandbox = NetworkSandbox::builder()
-    .allow_domain("github.com")
-    .allow_domain("*.githubusercontent.com")
-    .deny_domain("localhost")
-    .deny_domain("*.internal")
-    .build();
+let sandbox = NetworkSandbox::new()
+    .allowed_domains(vec!["github.com".into(), "*.githubusercontent.com".into()])
+    .blocked_domains(vec!["*.internal".into()]);
+
+// Or permissive (all domains allowed)
+let sandbox = NetworkSandbox::permissive();
 ```
 
-### URL Checking
+### Domain Checking
 
 ```rust
-let check = sandbox.check_url("https://github.com/user/repo")?;
+use claude_agent::security::sandbox::DomainCheck;
+
+let check = sandbox.check("github.com");
 // DomainCheck::Allowed
 
-let check = sandbox.check_url("http://localhost:8080")?;
-// DomainCheck::Denied
+let check = sandbox.check("unknown.com");
+// DomainCheck::Blocked (not in allowed list)
 ```
 
 ## SecurityContext Builder
@@ -216,7 +226,9 @@ let ctx = SecurityContext::builder()
     .max_symlink_depth(5)
     .limits(ResourceLimits::default())
     .bash_policy(BashPolicy::strict())
-    .network(NetworkSandbox::restrictive())
+    .network(NetworkSandbox::new()
+        .allowed_domains(vec!["github.com".into()])
+        .blocked_domains(vec!["*.internal".into()]))
     .build()?;
 ```
 

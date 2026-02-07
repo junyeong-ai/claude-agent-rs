@@ -78,9 +78,8 @@ use std::pin::pin;
 #[tokio::main]
 async fn main() -> claude_agent::Result<()> {
     let agent = Agent::builder()
-        .from_claude_code("./my-project").await?  // Auth + working_dir
+        .from_claude_code("./my-project").await?  // Auth + working_dir + server tools
         .tools(ToolAccess::all())                 // 12 built-in tools
-        .with_web_search()                        // + Server tools
         .build()
         .await?;
 
@@ -153,7 +152,7 @@ Agent::builder()
 Agent::builder()
     .auth(Auth::bedrock("us-east-1")).await?
     .working_dir("./my-project")
-    .with_project_resources()  // Load .claude/ without OAuth
+    .project_resources()  // Load .claude/ without OAuth
     .build().await?
 ```
 
@@ -180,12 +179,7 @@ See: [Authentication Guide](docs/authentication.md) | [Cloud Providers](docs/clo
 | **WebSearch** | Web search with citations |
 | **ToolSearch** | Search tools by regex or BM25 |
 
-```rust
-Agent::builder()
-    .with_web_fetch()
-    .with_web_search()
-    .with_tool_search()
-```
+Server tools are auto-enabled when using OAuth/CLI authentication.
 
 ### Tool Access Control
 
@@ -209,7 +203,7 @@ Automatic caching based on Anthropic best practices:
 - **Message history caching**: Last user turn cached with 5-minute TTL
 
 ```rust
-use claude_agent::{CacheConfig, CacheStrategy};
+use claude_agent::CacheConfig;
 
 Agent::builder()
     .cache(CacheConfig::default())        // Full caching (recommended)
@@ -218,13 +212,14 @@ Agent::builder()
     // .cache(CacheConfig::disabled())    // No caching
 ```
 
-### 3 Built-in Subagents
+### 4 Built-in Subagents
 
 | Type | Model | Purpose |
 |------|-------|---------|
-| `explore` | Haiku | Fast codebase search |
-| `plan` | Primary | Implementation planning |
-| `general` | Primary | Complex multi-step tasks |
+| `Bash` | Small/Haiku | Command execution |
+| `Explore` | Small/Haiku | Fast codebase search |
+| `Plan` | Primary | Implementation planning |
+| `general-purpose` | Primary | Complex multi-step tasks |
 
 See: [Subagents Guide](docs/subagents.md)
 
@@ -275,18 +270,18 @@ See: [Session Guide](docs/session.md)
 | Blockable | Non-Blockable |
 |-----------|---------------|
 | PreToolUse, UserPromptSubmit | PostToolUse, PostToolUseFailure |
-| SessionStart, PreCompact | Stop, SubagentStop |
-| SubagentStart | SessionEnd |
+| SessionStart, SubagentStart | Stop, SubagentStop |
+| | PreCompact, SessionEnd |
 
 See: [Hooks Guide](docs/hooks.md)
 
 ### MCP Integration
 
 ```rust
-use claude_agent::{McpManager, McpServerConfig};
+use claude_agent::mcp::{McpManager, McpServerConfig};
 use std::collections::HashMap;
 
-let mut mcp = McpManager::new();
+let mcp = McpManager::new();
 mcp.add_server("filesystem", McpServerConfig::Stdio {
     command: "npx".into(),
     args: vec!["-y".into(), "@anthropic-ai/mcp-server-filesystem".into()],
@@ -361,16 +356,17 @@ claude-agent = { version = "0.2", features = ["mcp", "postgres"] }
 | `redis-backend` | Redis persistence |
 | `plugins` | Plugin system |
 | `otel` | OpenTelemetry |
-| `full` | All features |
+| `full` | All features (except multimedia) |
 
 ---
 
 ## Examples
 
 ```bash
-cargo run --example advanced_test      # Skills, subagents, hooks
-cargo run --example all_tools_test     # All 12 tools
-cargo run --example server_tools       # WebFetch, WebSearch
+cargo run --example advanced_test          # Skills, subagents, hooks
+cargo run --example all_tools_test         # All 12 tools
+cargo run --example server_tools           # WebFetch, WebSearch
+cargo run --example sandbox_verification   # Sandbox testing
 ```
 
 ---

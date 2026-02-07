@@ -25,18 +25,18 @@ Runtime-extensible model management with alias resolution and pricing tiers.
 
 | Family | Model ID | Context Window | Extended |
 |--------|----------|----------------|----------|
-| Opus | `claude-opus-4-5-20251101` | 200K | 1M |
+| Opus | `claude-opus-4-6` | 200K | - |
 | Sonnet | `claude-sonnet-4-5-20250929` | 200K | 1M |
-| Haiku | `claude-haiku-4-5-20251001` | 200K | 1M |
+| Haiku | `claude-haiku-4-5-20251001` | 200K | - |
 
 ## Alias Resolution
 
 The registry supports multiple alias formats:
 
 ```rust
-use claude_agent::models::read_registry;
+use claude_agent::models::registry;
 
-let registry = read_registry();
+let registry = registry();
 
 // All of these resolve to the same model
 registry.resolve("sonnet");                      // Family alias
@@ -56,16 +56,26 @@ registry.resolve("my-sonnet-variant");           // Substring fallback
 pub struct ModelSpec {
     pub id: ModelId,
     pub family: ModelFamily,
+    pub version: ModelVersion,
     pub capabilities: Capabilities,
+    pub pricing: ModelPricing,
     pub provider_ids: ProviderIds,
 }
 
+pub struct ModelVersion {
+    pub version: String,
+    pub snapshot: Option<String>,
+    pub knowledge_cutoff: Option<String>,
+}
+
 pub struct Capabilities {
-    pub context_window: u64,      // Standard limit (200K)
-    pub extended_context: u64,    // Extended limit (1M)
-    pub max_output: u64,
-    pub supports_vision: bool,
-    pub supports_extended_thinking: bool,
+    pub context_window: u64,              // Standard limit (200K)
+    pub extended_context_window: Option<u64>,  // Extended limit (1M, if supported)
+    pub max_output_tokens: u64,
+    pub thinking: bool,
+    pub vision: bool,
+    pub tool_use: bool,
+    pub caching: bool,
 }
 ```
 
@@ -75,10 +85,14 @@ pub struct Capabilities {
 impl Capabilities {
     pub fn effective_context(&self, extended_enabled: bool) -> u64 {
         if extended_enabled {
-            self.extended_context
+            self.extended_context_window.unwrap_or(self.context_window)
         } else {
             self.context_window
         }
+    }
+
+    pub fn supports_extended_context(&self) -> bool {
+        self.extended_context_window.is_some()
     }
 }
 ```
@@ -87,10 +101,10 @@ impl Capabilities {
 
 Two pricing tiers based on context window usage:
 
-| Tier | Token Range | Multiplier |
-|------|-------------|------------|
-| Standard | ≤ 200,000 | 1.0x |
-| Extended | > 200,000 | 2.0x |
+| Tier | Token Range | Cost Impact |
+|------|-------------|-------------|
+| Standard | <= 200,000 | Base pricing |
+| Extended | > 200,000 | 2x input/cache cost (set via `ModelPricing::long_context_multiplier`) |
 
 ```rust
 use claude_agent::tokens::PricingTier;
@@ -98,8 +112,7 @@ use claude_agent::tokens::PricingTier;
 let tier = PricingTier::for_context(150_000);  // Standard
 let tier = PricingTier::for_context(250_000);  // Extended
 
-assert_eq!(PricingTier::Standard.multiplier(), 1.0);
-assert_eq!(PricingTier::Extended.multiplier(), 2.0);
+assert!(tier.is_extended());
 ```
 
 ## Extended Context (1M)
@@ -123,19 +136,29 @@ This automatically adds the `context-1m-2025-08-07` beta feature.
 Register custom models at runtime:
 
 ```rust
-use claude_agent::models::{registry, ModelSpec, ModelFamily, Capabilities};
+use claude_agent::models::{ModelRegistry, ModelSpec, ModelFamily, ModelVersion, Capabilities};
+use claude_agent::budget::ModelPricing;
+use rust_decimal_macros::dec;
 
-let mut reg = registry().write().unwrap();
+let mut reg = ModelRegistry::builtins();
 reg.register(ModelSpec {
     id: "my-custom-model".into(),
     family: ModelFamily::Sonnet,
+    version: ModelVersion {
+        version: "1.0".into(),
+        snapshot: None,
+        knowledge_cutoff: None,
+    },
     capabilities: Capabilities {
         context_window: 200_000,
-        extended_context: 1_000_000,
-        max_output: 16_384,
-        supports_vision: true,
-        supports_extended_thinking: false,
+        extended_context_window: Some(1_000_000),
+        max_output_tokens: 64_000,
+        thinking: true,
+        vision: true,
+        tool_use: true,
+        caching: true,
     },
+    pricing: ModelPricing::from_base(dec!(3), dec!(15)),
     provider_ids: Default::default(),
 });
 
@@ -156,7 +179,7 @@ pub struct ProviderIds {
 }
 
 // Lookup by provider
-let spec = registry.for_provider(CloudProvider::Bedrock, "anthropic.claude-3-5-sonnet-20241022-v2:0");
+let spec = registry.for_provider(ProviderKind::Bedrock, "anthropic.claude-sonnet-4-5-20250929-v1:0");
 ```
 
 ## ModelRole
@@ -167,12 +190,12 @@ Default models by role:
 |------|---------|---------|
 | Primary | Sonnet | Main agent model |
 | Small | Haiku | Subagents, fast tasks |
-| Reasoning | Sonnet | Complex reasoning |
+| Reasoning | Opus | Complex reasoning |
 
 ```rust
-use claude_agent::models::{read_registry, ModelRole};
+use claude_agent::models::{registry, ModelRole};
 
-let registry = read_registry();
+let registry = registry();
 let primary = registry.default_for_role(ModelRole::Primary);
 let small = registry.default_for_role(ModelRole::Small);
 ```

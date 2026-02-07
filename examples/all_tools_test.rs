@@ -199,7 +199,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("\nSection 2: Process Tools");
     println!("------------------------------------------------------------------------");
 
-    let bash = BashTool::with_process_manager(process_manager.clone());
+    let bash = BashTool::process_manager(process_manager.clone());
     let result = bash
         .execute(
             serde_json::json!({"command": "echo 'Hello from Bash'"}),
@@ -245,7 +245,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         },
     );
 
-    let kill = KillShellTool::with_process_manager(process_manager.clone());
+    let kill = KillShellTool::process_manager(process_manager.clone());
     let result = kill
         .execute(serde_json::json!({"shell_id": "nonexistent_12345"}), &ctx)
         .await;
@@ -350,15 +350,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut skill_registry = IndexRegistry::<SkillIndex>::new();
     skill_registry.register(
         SkillIndex::new("calculator", "Math calculator")
-            .with_source(ContentSource::in_memory("Calculate: $ARGUMENTS"))
-            .with_triggers(["calculate", "math"]),
+            .source(ContentSource::in_memory("Calculate: $ARGUMENTS"))
+            .triggers(["calculate", "math"]),
     );
     skill_registry.register(
         SkillIndex::new("greeter", "Greeting generator")
-            .with_source(ContentSource::in_memory(
+            .source(ContentSource::in_memory(
                 "Generate greeting for: $ARGUMENTS",
             ))
-            .with_triggers(["greet"]),
+            .triggers(["greet"]),
     );
 
     let executor = SkillExecutor::new(skill_registry);

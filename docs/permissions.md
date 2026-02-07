@@ -153,8 +153,8 @@ Configure resource constraints per tool:
 use claude_agent::ToolLimits;
 
 let policy = PermissionPolicy::builder()
-    .tool_limits("Bash", ToolLimits::with_timeout(30_000))
-    .tool_limits("Read", ToolLimits::with_max_output(100_000))
+    .tool_limits("Bash", ToolLimits::timeout(30_000))
+    .tool_limits("Read", ToolLimits::max_output(100_000))
     .build();
 ```
 
@@ -172,8 +172,8 @@ let policy = PermissionPolicy::builder()
 
 ```rust
 let limits = ToolLimits::default()
-    .with_allowed_paths(vec!["/project/src".into()])
-    .with_denied_paths(vec!["/project/.env".into()]);
+    .allowed_paths(vec!["/project/src".into()])
+    .denied_paths(vec!["/project/.env".into()]);
 ```
 
 ## PermissionPolicy API
@@ -195,7 +195,7 @@ let policy = PermissionPolicy::builder()
     .deny("Bash(rm:*)")
 
     // Tool limits
-    .tool_limits("Bash", ToolLimits::with_timeout(60_000))
+    .tool_limits("Bash", ToolLimits::timeout(60_000))
 
     .build();
 ```

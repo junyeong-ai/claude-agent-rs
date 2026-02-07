@@ -10,8 +10,18 @@ Output styles customize Claude's behavior and response format.
 ├─────────────────────────────────────────────────────────────┤
 │                                                              │
 │  ┌──────────────────────────────────────────────────────┐   │
-│  │  Base Identifier (always included)                    │   │
+│  │  CLI Identity (conditional: require_cli_identity)     │   │
 │  │  "You are Claude Code, Anthropic's official CLI..."  │   │
+│  └──────────────────────────────────────────────────────┘   │
+│                          │                                   │
+│  ┌──────────────────────────────────────────────────────┐   │
+│  │  Base System Prompt (always included)                 │   │
+│  │  Tone, style, professional objectivity               │   │
+│  └──────────────────────────────────────────────────────┘   │
+│                          │                                   │
+│  ┌──────────────────────────────────────────────────────┐   │
+│  │  Tool Usage Policy (always included)                  │   │
+│  │  Tool-specific guidelines                            │   │
 │  └──────────────────────────────────────────────────────┘   │
 │                          │                                   │
 │                          ▼                                   │
@@ -88,7 +98,7 @@ Keep all responses short and focused:
 - Code over prose
     "#,
 )
-.with_keep_coding_instructions(false);
+.keep_coding_instructions(false);
 ```
 
 ### File-based
@@ -115,94 +125,87 @@ Keep all responses short and focused:
 |-------|------|---------|-------------|
 | `name` | string | filename | Style identifier |
 | `description` | string | - | Brief description |
-| `keep-coding-instructions` | boolean | false | Include standard coding sections |
+| `keep-coding-instructions` | boolean | true | Include standard coding sections |
 
 ## keep-coding-instructions
 
 Controls what's included in the system prompt.
 
-### Sections Controlled by keep-coding-instructions
+### What keep-coding-instructions Controls
 
-When `keep-coding-instructions: true`, these 4 sections from `prompts/sections.rs` are included:
+When `keep-coding-instructions: true`, the coding instructions section from `prompts/coding.rs` is included. This contains software engineering instructions and git commit/PR protocols.
 
-| Section | Content |
-|---------|---------|
-| **Core Principles** | Be helpful, safe, transparent, efficient |
-| **Tool Usage Guidelines** | Read, Write, Edit, Glob, Grep, Bash, TodoWrite usage |
-| **Important Behaviors** | Read before edit, use absolute paths, batch changes |
-| **Safety Rules** | Confirm destructive ops, be cautious with recursion |
+The **Base System Prompt** (tone, style, task management) and **Tool Usage Policy** (tool-specific guidelines) are always included regardless of this setting.
 
 ### true (default style)
 
 ```
-1. BASE_IDENTIFIER (always)
+1. CLI_IDENTITY (only if require_cli_identity is true)
    "You are Claude Code, Anthropic's official CLI..."
 
-2. CORE_PRINCIPLES
-   ## Core Principles
-   1. Be helpful and thorough...
-   2. Be safe...
-   3. Be transparent...
-   4. Be efficient...
+2. BASE_SYSTEM_PROMPT (always)
+   Tone, style, professional objectivity, task management
 
-3. TOOL_USAGE
-   ## Tool Usage Guidelines
-   - Read: Use to read file contents...
-   - Write: Use to create or overwrite files...
-   - Edit: Use for surgical string replacements...
-   ...
+3. TOOL_USAGE_POLICY (always)
+   Tool-specific guidelines
 
-4. IMPORTANT_BEHAVIORS
-   ## Important Behaviors
-   - Always read a file before attempting to edit it
-   - Use absolute paths when possible
-   ...
+4. coding_instructions() (conditional on keep-coding-instructions)
+   Software engineering instructions, git protocols
 
-5. SAFETY_RULES
-   ## Safety Rules
-   - Never execute commands that could cause data loss...
-   ...
+5. Custom Prompt (if set)
 
-6. Custom Prompt (if set)
-
-7. Environment Block (always)
+6. Environment Block (always)
    <env>Working directory: ...</env>
 ```
 
 ### false (custom replacement)
 
 ```
-1. BASE_IDENTIFIER (always)
+1. CLI_IDENTITY (only if require_cli_identity is true)
    "You are Claude Code, Anthropic's official CLI..."
 
-2. Custom Prompt (your content replaces coding instructions)
+2. BASE_SYSTEM_PROMPT (always)
+   Tone, style, professional objectivity, task management
 
-3. Environment Block (always)
+3. TOOL_USAGE_POLICY (always)
+   Tool-specific guidelines
+
+4. Custom Prompt (your content replaces coding instructions)
+
+5. Environment Block (always)
    <env>Working directory: ...</env>
 ```
 
 ### Code Reference
 
 ```rust
-// src/output_style/generator.rs:131-145
+// src/output_style/generator.rs — SystemPromptGenerator::generate()
 pub fn generate(&self) -> String {
     let mut parts = Vec::new();
 
-    // 1. Base Identifier (always)
-    parts.push(sections::BASE_IDENTIFIER.to_string());
-
-    // 2. Coding Instructions (conditional)
-    if self.style.keep_coding_instructions {
-        parts.push(sections::coding_instructions());
+    // 1. CLI Identity (required for CLI OAuth, cannot be replaced)
+    if self.require_cli_identity {
+        parts.push(CLI_IDENTITY.to_string());
     }
 
-    // 3. Custom Prompt (if present)
+    // 2. Base System Prompt (always)
+    parts.push(BASE_SYSTEM_PROMPT.to_string());
+
+    // 3. Tool Usage Policy (always)
+    parts.push(TOOL_USAGE_POLICY.to_string());
+
+    // 4. Coding Instructions (conditional)
+    if self.style.keep_coding_instructions {
+        parts.push(coding::coding_instructions(&self.model_name));
+    }
+
+    // 5. Custom Prompt (if present)
     if !self.style.prompt.is_empty() {
         parts.push(self.style.prompt.clone());
     }
 
-    // 4. Environment Block (always)
-    parts.push(sections::environment_block(...));
+    // 6. Environment Block (always)
+    parts.push(environment_block(...));
 
     parts.join("\n\n")
 }
@@ -217,6 +220,8 @@ pub fn generate(&self) -> String {
 | Project | `.claude/output-styles/` | Highest |
 
 ## Loading Styles
+
+> **Note**: `OutputStyleLoader` requires the `cli-integration` feature flag.
 
 ```rust
 use claude_agent::output_style::OutputStyleLoader;
@@ -244,24 +249,28 @@ let agent = Agent::builder()
 
 ## System Prompt Generation
 
+> **Note**: `SystemPromptGenerator` requires the `cli-integration` feature flag.
+
 ```rust
 use claude_agent::output_style::SystemPromptGenerator;
 
-let generator = SystemPromptGenerator::new();
+// Generate with default style (no CLI identity)
+let prompt = SystemPromptGenerator::new()
+    .working_dir("/path/to/project")
+    .model("claude-sonnet-4-5-20250929")
+    .generate();
 
-// Generate with default style
-let prompt = generator.generate(
-    &default_style(),
-    &environment_info,
-    &tools,
-)?;
+// Generate with CLI identity (required for CLI OAuth)
+let prompt = SystemPromptGenerator::cli_identity()
+    .working_dir("/path/to/project")
+    .model("claude-sonnet-4-5-20250929")
+    .generate();
 
 // Generate with custom style
-let prompt = generator.generate(
-    &custom_style,
-    &environment_info,
-    &tools,
-)?;
+let prompt = SystemPromptGenerator::new()
+    .output_style(custom_style)
+    .working_dir("/path/to/project")
+    .generate();
 ```
 
 ## Environment Block

@@ -23,7 +23,7 @@ MCP enables Claude to connect to external servers that provide tools and resourc
 │        │           │           │                             │
 │        ▼           ▼           ▼                             │
 │   ┌────────┐ ┌────────┐ ┌────────┐                          │
-│   │ stdio  │ │  SSE   │ │ stdio  │   Transport              │
+│   │ stdio  │ │ stdio  │ │ stdio  │   Transport              │
 │   └────────┘ └────────┘ └────────┘                          │
 │        │           │           │                             │
 │        ▼           ▼           ▼                             │
@@ -34,12 +34,14 @@ MCP enables Claude to connect to external servers that provide tools and resourc
 
 ## Transport Types
 
-Three transport protocols supported:
+| Transport | Description | Status |
+|-----------|-------------|--------|
+| `Stdio` | stdin/stdout communication | Supported |
+| `Sse` | Server-Sent Events | Not supported (returns error) |
 
-| Transport | Description | Use Case |
-|-----------|-------------|----------|
-| `Stdio` | stdin/stdout communication | Local servers |
-| `Sse` | Server-Sent Events | Remote servers, streaming |
+> **Note**: SSE transport is not yet implemented. The `connect_sse()` method returns an error.
+> The MCP specification has moved to Streamable HTTP as the preferred remote transport.
+> Use stdio transport for local servers.
 
 ## Configuration
 
@@ -91,6 +93,8 @@ In `~/.claude/settings.json` or `.claude/settings.json`:
         "Authorization": "Bearer ${API_KEY}"
       }
     }
+    // Note: SSE transport is not yet supported and will return an error.
+    // Streamable HTTP transport is planned for a future release.
   }
 }
 ```
@@ -145,12 +149,12 @@ manager.add_server("github", McpServerConfig::Stdio { ... }).await?;
 
 // List all tools (qualified names)
 for (qualified_name, tool) in manager.list_tools().await {
-    // Format: mcp__servername_toolname
+    // Format: mcp__servername__toolname
     println!("{}: {}", qualified_name, tool.description);
 }
 
 // Call tool by qualified name
-let result = manager.call_tool("mcp__filesystem_read_file", json!({
+let result = manager.call_tool("mcp__filesystem__read_file", json!({
     "path": "/tmp/test.txt"
 })).await?;
 
@@ -169,23 +173,18 @@ manager.close_all().await?;
 
 ### Tool Naming Convention
 
-MCP tools are exposed with qualified names:
+MCP tools are exposed with qualified names using double underscore separators:
 
 ```
-mcp__{server_name}_{tool_name}
+mcp__{server_name}__{tool_name}
 
 Examples:
-- mcp__filesystem_read_file
-- mcp__github_create_issue
-- mcp__slack_send_message
+- mcp__filesystem__read_file
+- mcp__github__create_issue
+- mcp__slack__send_message
 ```
 
-Check if a tool is MCP:
-```rust
-if McpManager::is_mcp_tool("mcp__filesystem_read_file") {
-    // Handle MCP tool
-}
-```
+MCP tool naming (parsing, construction, and detection) is handled internally by `McpManager`. The helper functions `parse_mcp_name`, `make_mcp_name`, and `is_mcp_name` are `pub(crate)` and not part of the public API. Use `McpManager::call_tool` with qualified names directly.
 
 ### McpToolDefinition
 
@@ -243,9 +242,6 @@ let files = resource_manager.list_from_server("filesystem").await?;
 // Read as text
 let content = resource_manager.read_text("filesystem", "file:///tmp/test.txt").await?;
 
-// Subscribe to changes (future)
-let sub_id = resource_manager.subscribe("filesystem", "file:///tmp/*.txt");
-
 // Find by pattern
 let matches = resource_manager.find_by_pattern("file://*").await;
 ```
@@ -261,6 +257,46 @@ let results = ResourceQuery::new()
     .await;
 ```
 
+## Toolset Configuration
+
+`McpToolset` supports deferred tool loading for API request optimization:
+
+```rust
+use claude_agent::mcp::{McpToolset, McpToolsetRegistry, ToolLoadConfig};
+
+// Defer all tools for a server (loaded on first use)
+let toolset = McpToolset::new("database").defer_all();
+
+// Defer all but keep specific tools loaded
+let toolset = McpToolset::new("database")
+    .defer_all()
+    .keep_loaded(["search_events"]);
+
+// Registry manages multiple toolsets
+let mut registry = McpToolsetRegistry::new();
+registry.register(toolset);
+
+// Check if a tool is deferred
+let deferred = registry.is_deferred("database", "some_tool");
+```
+
+## ReconnectPolicy
+
+Configure reconnection behavior for MCP servers:
+
+```rust
+use claude_agent::mcp::ReconnectPolicy;
+
+let policy = ReconnectPolicy {
+    base_delay_ms: 1000,    // Initial delay
+    max_delay_ms: 30000,    // Maximum delay
+    max_retries: 3,         // Maximum retry attempts
+    jitter_factor: 0.3,     // Random jitter (0.0 - 1.0)
+};
+
+let manager = McpManager::new().reconnect_policy(policy);
+```
+
 ## Connection Status
 
 ```rust
@@ -268,8 +304,6 @@ pub enum McpConnectionStatus {
     Connecting,
     Connected,
     Disconnected,
-    Failed,
-    NeedsAuth,
 }
 ```
 
@@ -294,7 +328,6 @@ pub enum McpError {
     Protocol { message: String },
     JsonRpc { code: i32, message: String },
     ToolError { message: String },
-    VersionMismatch { supported: Vec<String>, requested: String },
     ServerNotFound { name: String },
     ToolNotFound { name: String },
     ResourceNotFound { uri: String },
@@ -337,7 +370,7 @@ Uses [rmcp](https://github.com/anthropics/rmcp) crate for protocol implementatio
 
 ### Initialization
 
-1. Spawn server process (stdio) or connect (SSE)
+1. Spawn server process (stdio)
 2. Send `initialize` request
 3. Receive server info and capabilities
 4. List available tools
@@ -407,3 +440,7 @@ Uses [rmcp](https://github.com/anthropics/rmcp) crate for protocol implementatio
 | `McpManager` | mcp/manager.rs |
 | `ResourceManager` | mcp/resources.rs |
 | `ResourceQuery` | mcp/resources.rs |
+| `McpToolset` | mcp/toolset.rs |
+| `McpToolsetRegistry` | mcp/toolset.rs |
+| `ToolLoadConfig` | mcp/toolset.rs |
+| `ReconnectPolicy` | mcp/mod.rs |

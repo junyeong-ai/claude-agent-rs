@@ -78,9 +78,8 @@ use std::pin::pin;
 #[tokio::main]
 async fn main() -> claude_agent::Result<()> {
     let agent = Agent::builder()
-        .from_claude_code("./my-project").await?  // Auth + working_dir
+        .from_claude_code("./my-project").await?  // Auth + working_dir + server tools
         .tools(ToolAccess::all())                 // 12개 내장 도구
-        .with_web_search()                        // + 서버 도구
         .build()
         .await?;
 
@@ -153,7 +152,7 @@ Agent::builder()
 Agent::builder()
     .auth(Auth::bedrock("us-east-1")).await?
     .working_dir("./my-project")
-    .with_project_resources()  // OAuth 없이 .claude/ 로드
+    .project_resources()       // OAuth 없이 .claude/ 로드
     .build().await?
 ```
 
@@ -181,10 +180,10 @@ Agent::builder()
 | **ToolSearch** | 정규식 또는 BM25로 도구 검색 |
 
 ```rust
+// 서버 도구는 OAuth/CLI 인증 사용 시 자동 활성화
 Agent::builder()
-    .with_web_fetch()
-    .with_web_search()
-    .with_tool_search()
+    .from_claude_code(".").await?
+    .build().await?
 ```
 
 ### 도구 접근 제어
@@ -209,7 +208,7 @@ Anthropic 베스트 프랙티스 기반 자동 캐싱:
 - **메시지 히스토리 캐싱**: 마지막 user 턴 5분 TTL로 캐싱
 
 ```rust
-use claude_agent::{CacheConfig, CacheStrategy};
+use claude_agent::CacheConfig;
 
 Agent::builder()
     .cache(CacheConfig::default())        // 전체 캐싱 (권장)
@@ -218,13 +217,14 @@ Agent::builder()
     // .cache(CacheConfig::disabled())    // 캐싱 비활성화
 ```
 
-### 3개 내장 서브에이전트
+### 4개 내장 서브에이전트
 
 | 타입 | 모델 | 용도 |
 |------|------|------|
-| `explore` | Haiku | 빠른 코드베이스 검색 |
-| `plan` | Primary | 구현 계획 수립 |
-| `general` | Primary | 복잡한 다단계 작업 |
+| `Bash` | Small (Haiku) | 명령 실행 전문 |
+| `Explore` | Small (Haiku) | 빠른 코드베이스 검색 |
+| `Plan` | Primary | 구현 계획 수립 |
+| `general-purpose` | Primary | 복잡한 다단계 작업 |
 
 자세한 내용: [서브에이전트 가이드](docs/subagents.md)
 
@@ -275,18 +275,18 @@ $ARGUMENTS 환경에 배포합니다.
 | 차단 가능 | 차단 불가 |
 |-----------|-----------|
 | PreToolUse, UserPromptSubmit | PostToolUse, PostToolUseFailure |
-| SessionStart, PreCompact | Stop, SubagentStop |
-| SubagentStart | SessionEnd |
+| SessionStart, SubagentStart | Stop, SubagentStop |
+| | PreCompact, SessionEnd |
 
 자세한 내용: [훅 가이드](docs/hooks.md)
 
 ### MCP 통합
 
 ```rust
-use claude_agent::{McpManager, McpServerConfig};
+use claude_agent::mcp::{McpManager, McpServerConfig};
 use std::collections::HashMap;
 
-let mut mcp = McpManager::new();
+let mcp = McpManager::new();
 mcp.add_server("filesystem", McpServerConfig::Stdio {
     command: "npx".into(),
     args: vec!["-y".into(), "@anthropic-ai/mcp-server-filesystem".into()],
@@ -361,16 +361,17 @@ claude-agent = { version = "0.2", features = ["mcp", "postgres"] }
 | `redis-backend` | Redis 영속성 |
 | `plugins` | 플러그인 시스템 |
 | `otel` | OpenTelemetry |
-| `full` | 모든 기능 |
+| `full` | 모든 기능 (multimedia 제외) |
 
 ---
 
 ## 예제
 
 ```bash
-cargo run --example advanced_test      # 스킬, 서브에이전트, 훅
-cargo run --example all_tools_test     # 12개 전체 도구
-cargo run --example server_tools       # WebFetch, WebSearch
+cargo run --example advanced_test          # 스킬, 서브에이전트, 훅
+cargo run --example all_tools_test         # 12개 전체 도구
+cargo run --example server_tools           # WebFetch, WebSearch
+cargo run --example sandbox_verification   # 샌드박스 테스트
 ```
 
 ---

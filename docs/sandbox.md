@@ -51,8 +51,8 @@ let sandbox = create_sandbox(&working_dir, true);
 
 // With configuration
 let config = SandboxConfig::new(working_dir.to_path_buf())
-    .with_allowed_paths(vec!["/usr/local/bin".into()])
-    .with_excluded_commands(vec!["docker".into()]);
+    .allowed_paths(vec!["/usr/local/bin".into()])
+    .excluded_commands(vec!["docker".into()]);
 
 let sandbox = Sandbox::new(config);
 
@@ -75,6 +75,8 @@ pub struct SandboxConfig {
     pub working_dir: PathBuf,               // Full access directory
     pub allowed_paths: Vec<PathBuf>,        // Read-only allowed paths
     pub denied_paths: Vec<String>,          // Blocked path patterns
+    pub allowed_domains: HashSet<String>,   // Allowed network domains
+    pub blocked_domains: HashSet<String>,   // Blocked network domains
     pub network: NetworkConfig,             // Network restrictions
 }
 ```
@@ -93,20 +95,20 @@ pub struct SandboxConfig {
 
 ```rust
 let config = SandboxConfig::new(PathBuf::from("/project"))
-    .with_auto_allow_bash(true)
-    .with_allowed_paths(vec![
+    .auto_allow_bash(true)
+    .allowed_paths(vec![
         PathBuf::from("/usr/local"),
         PathBuf::from("/opt/tools"),
     ])
-    .with_denied_paths(vec![
+    .denied_paths(vec![
         "*.env".into(),
         "secrets/*".into(),
     ])
-    .with_excluded_commands(vec![
+    .excluded_commands(vec![
         "docker".into(),
         "podman".into(),
     ])
-    .with_network(NetworkConfig::with_proxy(Some(8080), None));
+    .network(NetworkConfig::proxy(Some(8080), None));
 ```
 
 ## NetworkConfig
@@ -124,7 +126,7 @@ pub struct NetworkConfig {
 
 ```rust
 // Force network through proxy
-let network = NetworkConfig::with_proxy(Some(8080), Some(1080));
+let network = NetworkConfig::proxy(Some(8080), Some(1080));
 
 // Environment variables set automatically:
 // HTTP_PROXY=http://127.0.0.1:8080
@@ -133,7 +135,7 @@ let network = NetworkConfig::with_proxy(Some(8080), Some(1080));
 // NO_PROXY=localhost,127.0.0.1,::1
 
 let config = SandboxConfig::new(working_dir)
-    .with_network(network);
+    .network(network);
 ```
 
 ## Linux Landlock
@@ -249,7 +251,7 @@ Some commands need to bypass the sandbox:
 
 ```rust
 let config = SandboxConfig::new(working_dir)
-    .with_excluded_commands(vec![
+    .excluded_commands(vec![
         "docker".into(),    // Needs its own sandboxing
         "podman".into(),
         "kubectl".into(),
@@ -269,7 +271,7 @@ When sandboxing is enabled, bash commands can be auto-approved:
 
 ```rust
 let config = SandboxConfig::new(working_dir)
-    .with_auto_allow_bash(true);
+    .auto_allow_bash(true);
 
 let sandbox = Sandbox::new(config);
 
@@ -284,8 +286,8 @@ if sandbox.should_auto_allow_bash() {
 use claude_agent::{Agent, security::sandbox::SandboxConfig};
 
 let sandbox_config = SandboxConfig::new(project_dir.to_path_buf())
-    .with_auto_allow_bash(true)
-    .with_allowed_paths(vec![deps_dir]);
+    .auto_allow_bash(true)
+    .allowed_paths(vec![deps_dir]);
 
 let agent = Agent::builder()
     .from_claude_code(".").await?
@@ -373,11 +375,11 @@ csrutil status
 ```rust
 // Add the required path to allowed_paths
 let config = SandboxConfig::new(working_dir)
-    .with_allowed_paths(vec![
+    .allowed_paths(vec![
         PathBuf::from("/path/command/needs"),
     ]);
 
 // Or exclude the command entirely
 let config = SandboxConfig::new(working_dir)
-    .with_excluded_commands(vec!["problematic-cmd".into()]);
+    .excluded_commands(vec!["problematic-cmd".into()]);
 ```

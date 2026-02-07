@@ -15,9 +15,9 @@ claude-agent-rs includes 12 built-in tools + 3 server tools.
 
 | Tool | Description | Enable |
 |------|-------------|--------|
-| WebFetch | Fetch URL content | `.with_web_fetch()` |
-| WebSearch | Web search | `.with_web_search()` |
-| ToolSearch | Search tools (regex/BM25) | `.with_tool_search()` |
+| WebFetch | Fetch URL content | `.web_fetch()` |
+| WebSearch | Web search | `.web_search()` |
+| ToolSearch | Search tools (regex/BM25) | `.tool_search()` |
 
 ## File Tools
 
@@ -161,7 +161,7 @@ Fetch and process URL content.
 ```rust
 let agent = Agent::builder()
     .auth(Auth::from_env()).await?
-    .with_web_fetch()
+    .web_fetch()
     .build().await?;
 ```
 
@@ -179,7 +179,7 @@ Web search via Anthropic's search API.
 ```rust
 let agent = Agent::builder()
     .auth(Auth::from_env()).await?
-    .with_web_search()
+    .web_search()
     .build().await?;
 ```
 
@@ -199,7 +199,7 @@ use claude_agent::ToolSearchTool;
 
 let agent = Agent::builder()
     .auth(Auth::from_env()).await?
-    .with_tool_search(ToolSearchTool::regex())  // or ToolSearchTool::bm25()
+    .tool_search(ToolSearchTool::regex())  // or ToolSearchTool::bm25()
     .build().await?;
 ```
 
@@ -226,7 +226,7 @@ Agent::builder().tools(ToolAccess::except(["Bash", "Write"]))
 Implement the `Tool` trait:
 
 ```rust
-use claude_agent::{Tool, ToolOutput};
+use claude_agent::{Tool, ToolResult};
 use async_trait::async_trait;
 
 struct MyTool;
@@ -246,8 +246,8 @@ impl Tool for MyTool {
         })
     }
 
-    async fn execute(&self, input: serde_json::Value, ctx: &ToolContext) -> ToolOutput {
-        ToolOutput::success("Result")
+    async fn execute(&self, input: serde_json::Value, ctx: &ExecutionContext) -> ToolResult {
+        ToolResult::success("Result")
     }
 }
 ```
@@ -271,7 +271,7 @@ impl SchemaTool for MySchemaTool {
     const NAME: &'static str = "my_schema_tool";
     const DESCRIPTION: &'static str = "Schema tool with auto-generated input schema";
 
-    async fn handle(&self, input: Self::Input, ctx: &ToolContext) -> ToolResult {
+    async fn handle(&self, input: Self::Input, ctx: &ExecutionContext) -> ToolResult {
         ToolResult::success(format!("Got: {}", input.value))
     }
 }

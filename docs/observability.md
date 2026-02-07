@@ -29,58 +29,79 @@ claude-agent = { version = "0.2", features = ["otel"] }
 
 ## Built-in Metrics
 
-Local metrics without external dependencies.
+Local metrics without external dependencies. `MetricsRegistry` has predefined atomic counters, gauges, and histograms.
+
+### MetricsRegistry Fields
+
+```rust
+pub struct MetricsRegistry {
+    pub requests_total: Counter,
+    pub requests_success: Counter,
+    pub requests_error: Counter,
+    pub tokens_input: Counter,
+    pub tokens_output: Counter,
+    pub cache_read_tokens: Counter,
+    pub cache_creation_tokens: Counter,
+    pub tool_calls_total: Counter,
+    pub tool_errors: Counter,
+    pub active_sessions: Gauge,
+    pub request_latency_ms: Histogram,
+    pub cost_total_micros: Counter,
+}
+```
 
 ### Counter
 
 ```rust
-use claude_agent::observability::{Counter, MetricsRegistry};
+use claude_agent::observability::Counter;
 
-let registry = MetricsRegistry::default();
-let requests = registry.counter("api_requests_total");
-
-requests.inc();
-requests.add(5);
+let counter = Counter::new();
+counter.inc();
+counter.add(5);
+assert_eq!(counter.get(), 6);
 ```
 
 ### Gauge
 
 ```rust
-let active_sessions = registry.gauge("active_sessions");
+use claude_agent::observability::Gauge;
 
-active_sessions.set(10);
-active_sessions.inc();
-active_sessions.dec();
+let gauge = Gauge::new();
+gauge.set(10);
+gauge.inc();
+gauge.dec();
+assert_eq!(gauge.get(), 10);
 ```
 
 ### Histogram
 
 ```rust
-let latency = registry.histogram("request_latency_ms");
+use claude_agent::observability::Histogram;
 
-latency.observe(150.0);
-latency.observe(200.0);
-
-// Get statistics
-let stats = latency.stats();
-println!("p50: {} p99: {}", stats.p50, stats.p99);
+let hist = Histogram::default_latency();
+hist.observe(150.0);
+hist.observe(200.0);
+println!("Count: {}, Sum: {:.1}ms", hist.count(), hist.sum_ms());
 ```
 
-## Agent Metrics
+## Metrics Summary
 
-Built-in metrics for agent operations.
+Get a snapshot summary from the metrics registry.
 
 ```rust
-use claude_agent::observability::AgentMetrics;
+use claude_agent::observability::{MetricsRegistry, MetricsSummary};
 
-let metrics = AgentMetrics::new(&registry);
+let registry = MetricsRegistry::default();
 
-// Auto-tracked during execution:
-// - api_requests_total
-// - api_errors_total
-// - tool_executions_total
-// - tokens_used_total
-// - request_latency_ms
+// Record some operations...
+registry.record_request_start();
+registry.record_tokens(100, 50);
+registry.record_request_end(true, 150.0);
+
+// Get summary
+let summary = MetricsSummary::from_registry(&registry);
+println!("Requests: {}", summary.total_requests);
+println!("Tokens: {} in / {} out", summary.total_input_tokens, summary.total_output_tokens);
 ```
 
 ## Tracing
@@ -91,7 +112,7 @@ let metrics = AgentMetrics::new(&registry);
 use claude_agent::observability::{SpanContext, TracingLevel};
 
 let ctx = SpanContext::new("my-agent")
-    .with_level(TracingLevel::Debug);
+    .level(TracingLevel::Debug);
 
 ctx.span("operation", || {
     // ... operation
@@ -117,8 +138,8 @@ Requires `otel` feature.
 use claude_agent::observability::{OtelConfig, OtelRuntime};
 
 let config = OtelConfig::new("my-agent")
-    .with_endpoint("http://localhost:4317")
-    .with_service_version("1.0.0");
+    .endpoint("http://localhost:4317")
+    .service_version("1.0.0");
 
 let runtime = OtelRuntime::init(&config)?;
 
@@ -131,11 +152,10 @@ runtime.shutdown(); // Flush before exit
 
 ```rust
 let config = OtelConfig::new("my-agent")
-    .with_endpoint("http://otel-collector:4317")
-    .with_service_version(env!("CARGO_PKG_VERSION"))
-    .with_resource("deployment.environment", "production")
-    .with_batch_size(512)
-    .with_export_timeout_secs(30);
+    .endpoint("http://otel-collector:4317")
+    .service_version(env!("CARGO_PKG_VERSION"))
+    .sample_ratio(1.0)
+    .metrics_interval(Duration::from_secs(60));
 ```
 
 ### Semantic Conventions
@@ -144,10 +164,16 @@ let config = OtelConfig::new("my-agent")
 use claude_agent::observability::semantic;
 
 // Pre-defined attribute keys
-semantic::MODEL_NAME       // "gen_ai.model.name"
-semantic::TOKEN_COUNT      // "gen_ai.usage.tokens"
-semantic::TOOL_NAME        // "claude.tool.name"
-semantic::SESSION_ID       // "claude.session.id"
+semantic::AGENT_MODEL           // "agent.model"
+semantic::AGENT_SESSION_ID      // "agent.session.id"
+semantic::AGENT_TOOL_NAME       // "agent.tool.name"
+semantic::AGENT_INPUT_TOKENS    // "agent.tokens.input"
+semantic::AGENT_OUTPUT_TOKENS   // "agent.tokens.output"
+semantic::AGENT_CACHE_READ_TOKENS    // "agent.tokens.cache_read"
+semantic::AGENT_CACHE_CREATION_TOKENS // "agent.tokens.cache_creation"
+semantic::AGENT_COST_USD        // "agent.cost.usd"
+semantic::AGENT_REQUEST_ID      // "agent.request.id"
+semantic::AGENT_TOOL_USE_ID     // "agent.tool.use_id"
 ```
 
 ## ObservabilityConfig
@@ -160,12 +186,12 @@ use claude_agent::observability::{
 };
 
 let config = ObservabilityConfig::new()
-    .with_service_name("my-agent")
-    .with_tracing(TracingConfig {
+    .service_name("my-agent")
+    .tracing(TracingConfig {
         level: TracingLevel::Info,
         ..Default::default()
     })
-    .with_metrics(MetricsConfig::default());
+    .metrics(MetricsConfig::default());
 
 let registry = config.build_registry();
 ```
@@ -176,7 +202,7 @@ let registry = config.build_registry();
 let agent = Agent::builder()
     .auth(Auth::from_env()).await?
     .observability(ObservabilityConfig::new()
-        .with_service_name("my-agent"))
+        .service_name("my-agent"))
     .build()
     .await?;
 ```
@@ -187,4 +213,4 @@ let agent = Agent::builder()
 |----------|-------------|
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | OTLP endpoint URL |
 | `OTEL_SERVICE_NAME` | Service name |
-| `OTEL_LOG_LEVEL` | Logging level |
+| `OTEL_TRACES_SAMPLER_ARG` | Trace sampling ratio (0.0-1.0) |

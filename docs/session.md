@@ -19,7 +19,7 @@ Stateful conversation management with multi-backend persistence, prompt caching,
 │         └──▶ SessionManager         ← Persistence layer                 │
 │                   ├── Session (messages, todos, plans, compacts)         │
 │                   ├── InputQueue (concurrent inputs)                     │
-│                   └── Persistence (Memory / PostgreSQL / Redis)          │
+│                   └── Persistence (Memory / JSONL / PostgreSQL / Redis)  │
 │                                                                          │
 └─────────────────────────────────────────────────────────────────────────┘
 ```
@@ -37,7 +37,7 @@ pub struct Session {
     pub messages: Vec<SessionMessage>,
     pub todos: Vec<TodoItem>,
     pub current_plan: Option<Plan>,
-    pub compact_history: Vec<CompactRecord>,
+    pub compact_history: VecDeque<CompactRecord>,
     pub summary: Option<String>,
     pub total_usage: TokenUsage,
     // ...
@@ -64,8 +64,8 @@ Claude Code compatible: summarizes **entire conversation**.
 
 ```rust
 let strategy = CompactStrategy::default()
-    .with_threshold(0.85)
-    .with_model("claude-haiku-4-5");
+    .threshold(0.85)
+    .model("claude-haiku-4-5");
 
 let executor = CompactExecutor::new(strategy);
 
@@ -104,6 +104,8 @@ pub trait Persistence: Send + Sync {
     // Queue
     async fn enqueue(&self, session_id: &SessionId, content: String, priority: i32) -> SessionResult<QueueItem>;
     async fn dequeue(&self, session_id: &SessionId) -> SessionResult<Option<QueueItem>>;
+    async fn cancel_queued(&self, item_id: Uuid) -> SessionResult<bool>;
+    async fn pending_queue(&self, session_id: &SessionId) -> SessionResult<Vec<QueueItem>>;
 
     // Cleanup
     async fn cleanup_expired(&self) -> SessionResult<usize>;
@@ -115,6 +117,7 @@ pub trait Persistence: Send + Sync {
 | Backend | Feature | Use Case |
 |---------|---------|----------|
 | `MemoryPersistence` | (default) | Development |
+| `JsonlPersistence` | `jsonl` | CLI-compatible (`~/.claude/projects/`) |
 | `PostgresPersistence` | `postgres` | Production |
 | `RedisPersistence` | `redis-backend` | High-throughput |
 
@@ -130,16 +133,21 @@ claude_sessions ─┬─> claude_messages
 ```
 
 ```rust
-let persistence = PostgresPersistence::new("postgres://localhost/mydb").await?;
-let persistence = PostgresPersistence::with_prefix(pool, "myapp_").await?;
+let persistence = PostgresPersistence::connect("postgres://localhost/mydb").await?;
+// Or with auto-migration:
+// let persistence = PostgresPersistence::connect_and_migrate("postgres://localhost/mydb").await?;
+
+// From existing pool with custom prefix:
+let config = PostgresConfig::prefix("myapp_")?;
+let persistence = PostgresPersistence::pool_and_config(pool, config);
 ```
 
 ### Redis
 
 ```rust
 let persistence = RedisPersistence::new("redis://localhost:6379")?
-    .with_prefix("myapp:")
-    .with_ttl(Duration::from_secs(86400 * 7));
+    .prefix("myapp:")?
+    .ttl(Duration::from_secs(86400 * 7));
 ```
 
 ## Input Queue
@@ -199,12 +207,12 @@ let config = CacheConfig::disabled();
 
 // Custom TTL
 let config = CacheConfig::default()
-    .with_static_ttl(CacheTtl::OneHour)
-    .with_message_ttl(CacheTtl::FiveMinutes);
+    .static_ttl(CacheTtl::OneHour)
+    .message_ttl(CacheTtl::FiveMinutes);
 
 // Custom strategy
 let config = CacheConfig::default()
-    .with_strategy(CacheStrategy::SystemOnly);
+    .strategy(CacheStrategy::SystemOnly);
 
 Agent::builder()
     .auth(Auth::from_env()).await?
@@ -262,11 +270,9 @@ let savings = metrics.cache_cost_savings(3.0);  // $3/MTok
 pub enum SessionError {
     NotFound { id: String },
     Expired { id: String },
-    PermissionDenied { reason: String },
     Storage { message: String },
-    PersistenceError(String),
     Serialization(serde_json::Error),
     Compact { message: String },
-    Plan { message: String },
+    Context(ContextError),
 }
 ```

@@ -41,7 +41,7 @@ impl<T: Named + Clone + Send + Sync> InMemoryProvider<T> {
         }
     }
 
-    pub fn with_item(mut self, item: T) -> Self {
+    pub fn item(mut self, item: T) -> Self {
         self.add(item);
         self
     }
@@ -50,19 +50,19 @@ impl<T: Named + Clone + Send + Sync> InMemoryProvider<T> {
         self.items.insert(item.name().to_string(), item);
     }
 
-    pub fn with_items(mut self, items: impl IntoIterator<Item = T>) -> Self {
+    pub fn items(mut self, items: impl IntoIterator<Item = T>) -> Self {
         for item in items {
             self.add(item);
         }
         self
     }
 
-    pub fn with_priority(mut self, priority: i32) -> Self {
+    pub fn priority(mut self, priority: i32) -> Self {
         self.priority = priority;
         self
     }
 
-    pub fn with_source_type(mut self, source_type: SourceType) -> Self {
+    pub fn source_type(mut self, source_type: SourceType) -> Self {
         self.source_type = source_type;
         self
     }
@@ -103,25 +103,41 @@ impl<T: Named + Clone + Send + Sync + 'static> Provider<T> for InMemoryProvider<
     }
 }
 
-#[derive(Default)]
 pub struct ChainProvider<T: Named + Clone + Send + Sync + 'static> {
     providers: Vec<Box<dyn Provider<T>>>,
+    /// Indices into `providers` sorted by descending priority.
+    sorted_indices: Vec<usize>,
+}
+
+impl<T: Named + Clone + Send + Sync + 'static> Default for ChainProvider<T> {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl<T: Named + Clone + Send + Sync + 'static> ChainProvider<T> {
     pub fn new() -> Self {
         Self {
             providers: Vec::new(),
+            sorted_indices: Vec::new(),
         }
     }
 
-    pub fn with(mut self, provider: impl Provider<T> + 'static) -> Self {
+    fn rebuild_sorted(&mut self) {
+        self.sorted_indices = (0..self.providers.len()).collect();
+        self.sorted_indices
+            .sort_by_key(|&i| std::cmp::Reverse(self.providers[i].priority()));
+    }
+
+    pub fn provider(mut self, provider: impl Provider<T> + 'static) -> Self {
         self.providers.push(Box::new(provider));
+        self.rebuild_sorted();
         self
     }
 
     pub fn add(&mut self, provider: impl Provider<T> + 'static) {
         self.providers.push(Box::new(provider));
+        self.rebuild_sorted();
     }
 }
 
@@ -150,11 +166,8 @@ impl<T: Named + Clone + Send + Sync + 'static> Provider<T> for ChainProvider<T> 
     }
 
     async fn get(&self, name: &str) -> crate::Result<Option<T>> {
-        let mut sorted: Vec<_> = self.providers.iter().collect();
-        sorted.sort_by_key(|b| std::cmp::Reverse(b.priority()));
-
-        for provider in sorted {
-            if let Some(item) = provider.get(name).await? {
+        for &idx in &self.sorted_indices {
+            if let Some(item) = self.providers[idx].get(name).await? {
                 return Ok(Some(item));
             }
         }
@@ -164,11 +177,8 @@ impl<T: Named + Clone + Send + Sync + 'static> Provider<T> for ChainProvider<T> 
     async fn load_all(&self) -> crate::Result<Vec<T>> {
         let mut map: HashMap<String, T> = HashMap::new();
 
-        let mut sorted: Vec<_> = self.providers.iter().collect();
-        sorted.sort_by_key(|p| std::cmp::Reverse(p.priority()));
-
-        for provider in sorted {
-            for item in provider.load_all().await? {
+        for &idx in &self.sorted_indices {
+            for item in self.providers[idx].load_all().await? {
                 map.entry(item.name().to_string()).or_insert(item);
             }
         }
@@ -196,11 +206,11 @@ mod tests {
     #[tokio::test]
     async fn test_in_memory_provider() {
         let provider = InMemoryProvider::new()
-            .with_item(TestItem {
+            .item(TestItem {
                 name: "a".into(),
                 value: 1,
             })
-            .with_item(TestItem {
+            .item(TestItem {
                 name: "b".into(),
                 value: 2,
             });
@@ -220,20 +230,20 @@ mod tests {
     #[tokio::test]
     async fn test_chain_provider_priority() {
         let low = InMemoryProvider::new()
-            .with_item(TestItem {
+            .item(TestItem {
                 name: "shared".into(),
                 value: 1,
             })
-            .with_priority(0);
+            .priority(0);
 
         let high = InMemoryProvider::new()
-            .with_item(TestItem {
+            .item(TestItem {
                 name: "shared".into(),
                 value: 10,
             })
-            .with_priority(10);
+            .priority(10);
 
-        let chain = ChainProvider::new().with(low).with(high);
+        let chain = ChainProvider::new().provider(low).provider(high);
 
         let item = chain.get("shared").await.unwrap().unwrap();
         assert_eq!(item.value, 10);
@@ -242,20 +252,20 @@ mod tests {
     #[tokio::test]
     async fn test_chain_provider_load_all() {
         let p1 = InMemoryProvider::new()
-            .with_item(TestItem {
+            .item(TestItem {
                 name: "a".into(),
                 value: 1,
             })
-            .with_priority(0);
+            .priority(0);
 
         let p2 = InMemoryProvider::new()
-            .with_item(TestItem {
+            .item(TestItem {
                 name: "b".into(),
                 value: 2,
             })
-            .with_priority(10);
+            .priority(10);
 
-        let chain = ChainProvider::new().with(p1).with(p2);
+        let chain = ChainProvider::new().provider(p1).provider(p2);
 
         let items = chain.load_all().await.unwrap();
         assert_eq!(items.len(), 2);
@@ -264,20 +274,20 @@ mod tests {
     #[tokio::test]
     async fn test_chain_provider_load_all_priority_order() {
         let low = InMemoryProvider::new()
-            .with_item(TestItem {
+            .item(TestItem {
                 name: "shared".into(),
                 value: 1,
             })
-            .with_priority(0);
+            .priority(0);
 
         let high = InMemoryProvider::new()
-            .with_item(TestItem {
+            .item(TestItem {
                 name: "shared".into(),
                 value: 100,
             })
-            .with_priority(10);
+            .priority(10);
 
-        let chain = ChainProvider::new().with(low).with(high);
+        let chain = ChainProvider::new().provider(low).provider(high);
 
         let items = chain.load_all().await.unwrap();
         assert_eq!(items.len(), 1);

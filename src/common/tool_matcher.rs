@@ -6,11 +6,8 @@
 /// - `"Read"` - exact match
 /// - `"Bash(git:*)"` - scoped pattern (matches base tool "Bash")
 pub fn matches_tool_pattern(pattern: &str, tool_name: &str) -> bool {
-    if let Some(base) = pattern.split('(').next() {
-        base == tool_name || pattern == tool_name
-    } else {
-        pattern == tool_name
-    }
+    let base = &pattern[..pattern.find('(').unwrap_or(pattern.len())];
+    base == tool_name || pattern == tool_name
 }
 
 /// Checks if a tool is allowed based on a list of allowed patterns.

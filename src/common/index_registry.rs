@@ -107,7 +107,6 @@ impl<I: Index> IndexRegistry<I> {
     ///
     /// Also clears the cached content for this entry.
     pub async fn remove(&mut self, name: &str) -> Option<I> {
-        // Clear cached content
         self.content_cache.write().await.remove(name);
         self.indices.remove(name)
     }
@@ -124,7 +123,6 @@ impl<I: Index> IndexRegistry<I> {
     ///
     /// Returns cached content if available, otherwise loads from source.
     pub async fn load_content(&self, name: &str) -> crate::Result<String> {
-        // Check cache first
         {
             let cache = self.content_cache.read().await;
             if let Some(content) = cache.get(name) {
@@ -132,7 +130,6 @@ impl<I: Index> IndexRegistry<I> {
             }
         }
 
-        // Load from source
         let index = self
             .indices
             .get(name)
@@ -140,7 +137,6 @@ impl<I: Index> IndexRegistry<I> {
 
         let content = index.load_content().await?;
 
-        // Cache the result
         {
             let mut cache = self.content_cache.write().await;
             cache.insert(name.to_string(), content.clone());
@@ -172,6 +168,18 @@ impl<I: Index> IndexRegistry<I> {
             .collect();
         lines.sort();
         lines.join("\n")
+    }
+
+    /// Build a summary with entries ordered by priority (highest first).
+    ///
+    /// Returns a formatted string with one summary line per entry,
+    /// sorted by the entry's priority value.
+    pub fn build_priority_summary(&self) -> String {
+        self.sorted_by_priority()
+            .iter()
+            .map(|idx| idx.to_summary_line())
+            .collect::<Vec<_>>()
+            .join("\n")
     }
 
     /// Build a summary with a custom formatter.

@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 
 use async_trait::async_trait;
 
-use super::{Named, Provider, SourceType, is_markdown, load_files};
+use super::{Named, Provider, SourceType, load_files};
 
 /// Trait for loading items from files.
 ///
@@ -67,84 +67,14 @@ pub trait LookupStrategy: Clone + Send + Sync {
     /// e.g., "skills" or "agents"
     fn config_subdir(&self) -> &'static str;
 
-    /// Check if a directory entry matches the lookup pattern.
-    fn matches_entry(&self, path: &Path) -> bool;
-
     /// Try to find a file for a specific item name in a directory.
     /// Returns the file path if found, None otherwise.
     fn find_by_name(&self, dir: &Path, name: &str) -> Option<PathBuf>;
 }
 
-/// Lookup strategy for skills.
-///
-/// Skills can be defined as:
-/// - `<name>/SKILL.md` - A directory with a SKILL.md file
-/// - `<name>.skill.md` - A standalone skill file
-#[derive(Debug, Clone, Default)]
-pub struct SkillLookupStrategy;
-
-impl LookupStrategy for SkillLookupStrategy {
-    fn config_subdir(&self) -> &'static str {
-        "skills"
-    }
-
-    fn matches_entry(&self, path: &Path) -> bool {
-        // Match directories that contain SKILL.md
-        if path.is_dir() {
-            let skill_file = path.join("SKILL.md");
-            return skill_file.exists();
-        }
-
-        // Match *.skill.md files
-        path.extension().is_some_and(|e| e == "md")
-            && path
-                .file_name()
-                .is_some_and(|n| n.to_string_lossy().ends_with(".skill.md"))
-    }
-
-    fn find_by_name(&self, dir: &Path, name: &str) -> Option<PathBuf> {
-        // Check for directory-based skill first: <name>/SKILL.md
-        let skill_dir = dir.join(name);
-        let skill_file = skill_dir.join("SKILL.md");
-        if skill_file.exists() {
-            return Some(skill_file);
-        }
-
-        // Check for file-based skill: <name>.skill.md
-        let skill_file = dir.join(format!("{}.skill.md", name));
-        if skill_file.exists() {
-            return Some(skill_file);
-        }
-
-        None
-    }
-}
-
-fn is_markdown_file(path: &Path) -> bool {
-    path.is_file() && is_markdown(path)
-}
-
 fn find_markdown_by_name(dir: &Path, name: &str) -> Option<PathBuf> {
     let file = dir.join(format!("{}.md", name));
     file.exists().then_some(file)
-}
-
-/// Lookup strategy for subagents (`<name>.md` in `.claude/agents/`).
-#[derive(Debug, Clone, Copy, Default)]
-pub struct SubagentLookupStrategy;
-
-impl LookupStrategy for SubagentLookupStrategy {
-    fn config_subdir(&self) -> &'static str {
-        "agents"
-    }
-
-    fn matches_entry(&self, path: &Path) -> bool {
-        is_markdown_file(path)
-    }
-
-    fn find_by_name(&self, dir: &Path, name: &str) -> Option<PathBuf> {
-        find_markdown_by_name(dir, name)
-    }
 }
 
 /// Lookup strategy for output styles (`<name>.md` in `.claude/output-styles/`).
@@ -154,10 +84,6 @@ pub struct OutputStyleLookupStrategy;
 impl LookupStrategy for OutputStyleLookupStrategy {
     fn config_subdir(&self) -> &'static str {
         "output-styles"
-    }
-
-    fn matches_entry(&self, path: &Path) -> bool {
-        is_markdown_file(path)
     }
 
     fn find_by_name(&self, dir: &Path, name: &str) -> Option<PathBuf> {
@@ -181,10 +107,10 @@ impl LookupStrategy for OutputStyleLookupStrategy {
 /// # Example
 ///
 /// ```ignore
-/// let provider = FileProvider::new(SkillLoader::new(), SkillLookupStrategy)
-///     .with_project_path(project_dir)
-///     .with_user_path()
-///     .with_priority(10);
+/// let provider = FileProvider::new(StyleLoader::new(), OutputStyleLookupStrategy)
+///     .project_path(project_dir)
+///     .user_path()
+///     .priority(10);
 /// ```
 pub struct FileProvider<T, L, S>
 where
@@ -219,13 +145,13 @@ where
     }
 
     /// Add a path to search for items.
-    pub fn with_path(mut self, path: impl Into<PathBuf>) -> Self {
+    pub fn path(mut self, path: impl Into<PathBuf>) -> Self {
         self.paths.push(path.into());
         self
     }
 
     /// Add the project-specific path (e.g., `<project>/.claude/skills`).
-    pub fn with_project_path(mut self, project_dir: &Path) -> Self {
+    pub fn project_path(mut self, project_dir: &Path) -> Self {
         self.paths.push(
             project_dir
                 .join(".claude")
@@ -235,7 +161,7 @@ where
     }
 
     /// Add the user-specific path (e.g., `~/.claude/skills`).
-    pub fn with_user_path(mut self) -> Self {
+    pub fn user_path(mut self) -> Self {
         if let Some(home) = super::home_dir() {
             self.paths
                 .push(home.join(".claude").join(self.strategy.config_subdir()));
@@ -245,13 +171,13 @@ where
     }
 
     /// Set the priority of this provider.
-    pub fn with_priority(mut self, priority: i32) -> Self {
+    pub fn priority(mut self, priority: i32) -> Self {
         self.priority = priority;
         self
     }
 
     /// Set the source type for items loaded by this provider.
-    pub fn with_source_type(mut self, source_type: SourceType) -> Self {
+    pub fn source_type(mut self, source_type: SourceType) -> Self {
         self.source_type = source_type;
         self
     }
@@ -385,26 +311,10 @@ mod tests {
             "test"
         }
 
-        fn matches_entry(&self, path: &Path) -> bool {
-            path.extension().is_some_and(|e| e == "md")
-        }
-
         fn find_by_name(&self, dir: &Path, name: &str) -> Option<PathBuf> {
             let file = dir.join(format!("{}.md", name));
             if file.exists() { Some(file) } else { None }
         }
-    }
-
-    #[test]
-    fn test_skill_lookup_strategy() {
-        let strategy = SkillLookupStrategy;
-        assert_eq!(strategy.config_subdir(), "skills");
-    }
-
-    #[test]
-    fn test_subagent_lookup_strategy() {
-        let strategy = SubagentLookupStrategy;
-        assert_eq!(strategy.config_subdir(), "agents");
     }
 
     #[tokio::test]
@@ -423,7 +333,7 @@ mod tests {
         tokio::fs::write(&file, "test content").await.unwrap();
 
         let provider: FileProvider<TestItem, TestLoader, TestLookupStrategy> =
-            FileProvider::new(TestLoader, TestLookupStrategy).with_path(temp.path());
+            FileProvider::new(TestLoader, TestLookupStrategy).path(temp.path());
 
         let items = provider.load_all().await.unwrap();
         assert_eq!(items.len(), 1);
@@ -438,7 +348,7 @@ mod tests {
         tokio::fs::write(&file, "my content").await.unwrap();
 
         let provider: FileProvider<TestItem, TestLoader, TestLookupStrategy> =
-            FileProvider::new(TestLoader, TestLookupStrategy).with_path(temp.path());
+            FileProvider::new(TestLoader, TestLookupStrategy).path(temp.path());
 
         let item = provider.get("myitem").await.unwrap();
         assert!(item.is_some());
@@ -452,11 +362,11 @@ mod tests {
     async fn test_file_provider_priority_and_source() {
         let provider: FileProvider<TestItem, TestLoader, TestLookupStrategy> =
             FileProvider::default()
-                .with_priority(42)
-                .with_source_type(SourceType::Builtin);
+                .priority(42)
+                .source_type(SourceType::Builtin);
 
-        assert_eq!(provider.priority(), 42);
-        assert_eq!(provider.source_type(), SourceType::Builtin);
+        assert_eq!(Provider::priority(&provider), 42);
+        assert_eq!(Provider::source_type(&provider), SourceType::Builtin);
         assert_eq!(provider.provider_name(), "file");
     }
 }

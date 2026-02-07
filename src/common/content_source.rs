@@ -5,8 +5,25 @@
 //! but full content is loaded on-demand.
 
 use std::path::PathBuf;
+use std::sync::OnceLock;
+use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
+
+/// Global HTTP client for content fetching.
+static HTTP_CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
+
+/// Default timeout for HTTP content fetching.
+const HTTP_TIMEOUT_SECS: u64 = 30;
+
+fn get_http_client() -> &'static reqwest::Client {
+    HTTP_CLIENT.get_or_init(|| {
+        reqwest::Client::builder()
+            .timeout(Duration::from_secs(HTTP_TIMEOUT_SECS))
+            .build()
+            .unwrap_or_default()
+    })
+}
 
 /// Source location for loading content on-demand.
 ///
@@ -26,12 +43,6 @@ pub enum ContentSource {
     InMemory {
         /// The actual content
         content: String,
-    },
-
-    /// Database storage (for server environments)
-    Database {
-        /// Content ID in database
-        id: String,
     },
 
     /// HTTP endpoint (for remote content)
@@ -54,11 +65,6 @@ impl ContentSource {
         }
     }
 
-    /// Create a database content source.
-    pub fn database(id: impl Into<String>) -> Self {
-        Self::Database { id: id.into() }
-    }
-
     /// Create an HTTP content source.
     pub fn http(url: impl Into<String>) -> Self {
         Self::Http { url: url.into() }
@@ -74,14 +80,25 @@ impl ContentSource {
                 crate::Error::Config(format!("Failed to load content from {:?}: {}", path, e))
             }),
             Self::InMemory { content } => Ok(content.clone()),
-            Self::Database { id } => Err(crate::Error::Config(format!(
-                "Database content source not implemented: {}",
-                id
-            ))),
-            Self::Http { url } => Err(crate::Error::Config(format!(
-                "HTTP content source not implemented: {}",
-                url
-            ))),
+            Self::Http { url } => {
+                let response =
+                    get_http_client().get(url).send().await.map_err(|e| {
+                        crate::Error::Config(format!("Failed to fetch {}: {}", url, e))
+                    })?;
+
+                if !response.status().is_success() {
+                    return Err(crate::Error::Config(format!(
+                        "HTTP {} fetching {}: {}",
+                        response.status().as_u16(),
+                        url,
+                        response.status().canonical_reason().unwrap_or("Unknown")
+                    )));
+                }
+
+                response.text().await.map_err(|e| {
+                    crate::Error::Config(format!("Failed to read response from {}: {}", url, e))
+                })
+            }
         }
     }
 
@@ -136,9 +153,6 @@ mod tests {
         let memory = ContentSource::in_memory("content here");
         assert!(memory.is_in_memory());
 
-        let db = ContentSource::database("skill-123");
-        assert!(matches!(db, ContentSource::Database { id } if id == "skill-123"));
-
         let http = ContentSource::http("https://example.com/skill.md");
         assert!(
             matches!(http, ContentSource::Http { url } if url == "https://example.com/skill.md")
@@ -189,7 +203,6 @@ mod tests {
         let sources = vec![
             ContentSource::file("/path/to/file.md"),
             ContentSource::in_memory("content"),
-            ContentSource::database("id-123"),
             ContentSource::http("https://example.com"),
         ];
 

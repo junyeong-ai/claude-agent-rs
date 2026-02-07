@@ -23,15 +23,23 @@ impl std::fmt::Display for SourceType {
     }
 }
 
+impl std::str::FromStr for SourceType {
+    type Err = std::convert::Infallible;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        Ok(match s {
+            "builtin" => Self::Builtin,
+            "project" => Self::Project,
+            "managed" => Self::Managed,
+            "plugin" => Self::Plugin,
+            _ => Self::User,
+        })
+    }
+}
+
 impl SourceType {
     pub fn from_str_opt(s: Option<&str>) -> Self {
-        match s {
-            Some("builtin") => Self::Builtin,
-            Some("project") => Self::Project,
-            Some("managed") => Self::Managed,
-            Some("plugin") => Self::Plugin,
-            _ => Self::User,
-        }
+        s.map(|v| v.parse().unwrap_or_default()).unwrap_or_default()
     }
 }
 
@@ -71,6 +79,25 @@ mod tests {
         assert_eq!(SourceType::from_str_opt(Some("user")), SourceType::User);
         assert_eq!(SourceType::from_str_opt(None), SourceType::User);
         assert_eq!(SourceType::from_str_opt(Some("unknown")), SourceType::User);
+    }
+
+    #[test]
+    fn test_from_str() {
+        assert_eq!(
+            "builtin".parse::<SourceType>().unwrap(),
+            SourceType::Builtin
+        );
+        assert_eq!(
+            "project".parse::<SourceType>().unwrap(),
+            SourceType::Project
+        );
+        assert_eq!(
+            "managed".parse::<SourceType>().unwrap(),
+            SourceType::Managed
+        );
+        assert_eq!("plugin".parse::<SourceType>().unwrap(), SourceType::Plugin);
+        assert_eq!("user".parse::<SourceType>().unwrap(), SourceType::User);
+        assert_eq!("unknown".parse::<SourceType>().unwrap(), SourceType::User);
     }
 
     #[test]

@@ -15,17 +15,6 @@ pub struct ParsedDocument<F> {
 ///
 /// This is a lightweight operation that returns a slice (no allocation).
 /// Use when you only need the body content without parsing metadata.
-///
-/// # Examples
-/// ```
-/// use claude_agent::common::strip_frontmatter;
-///
-/// let content = "---\nname: test\n---\nBody content";
-/// assert_eq!(strip_frontmatter(content), "Body content");
-///
-/// let no_frontmatter = "Just content";
-/// assert_eq!(strip_frontmatter(no_frontmatter), "Just content");
-/// ```
 pub fn strip_frontmatter(content: &str) -> &str {
     if let Some(after_first) = content.strip_prefix("---")
         && let Some(end_pos) = after_first.find("---")

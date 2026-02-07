@@ -8,14 +8,14 @@ mod response;
 pub mod search;
 mod tool;
 
-pub use crate::models::{DEFAULT_COMPACT_THRESHOLD, context_window};
+pub use crate::models::context_window;
 pub use citations::{
     CharLocationCitation, Citation, CitationsConfig, ContentBlockLocationCitation,
     PageLocationCitation, SearchResultLocationCitation,
 };
 pub use content::{
-    ContentBlock, ImageSource, ServerToolError, ServerToolUseBlock, TextBlock, ThinkingBlock,
-    ToolResultBlock, ToolResultContent, ToolResultContentBlock, ToolUseBlock, WebFetchResultItem,
+    ContentBlock, ImageSource, ServerToolError, ServerToolUseBlock, ThinkingBlock, ToolResultBlock,
+    ToolResultContent, ToolResultContentBlock, ToolUseBlock, WebFetchResultItem,
     WebFetchToolResultBlock, WebFetchToolResultContent, WebSearchResultItem,
     WebSearchToolResultBlock, WebSearchToolResultContent,
 };
@@ -28,7 +28,6 @@ pub use response::{
 };
 pub use search::{SearchResultBlock, SearchResultContentBlock};
 pub use tool::{
-    ServerTool, ToolDefinition, ToolError, ToolInput, ToolOutput, ToolOutputBlock, ToolReference,
-    ToolResult, ToolSearchErrorCode, ToolSearchResult, ToolSearchResultContent, ToolSearchTool,
-    ToolSearchToolResult, UserLocation, WebFetchTool, WebSearchTool,
+    ServerTool, ToolDefinition, ToolError, ToolInput, ToolOutput, ToolOutputBlock, ToolResult,
+    ToolSearchTool, UserLocation, WebFetchTool, WebSearchTool, estimate_tool_tokens,
 };

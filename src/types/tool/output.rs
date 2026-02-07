@@ -178,17 +178,17 @@ impl ToolResult {
         }
     }
 
-    pub fn with_usage(mut self, usage: Usage) -> Self {
+    pub fn usage(mut self, usage: Usage) -> Self {
         self.inner_usage = Some(usage);
         self
     }
 
-    pub fn with_model(mut self, model: impl Into<String>) -> Self {
+    pub fn model(mut self, model: impl Into<String>) -> Self {
         self.inner_model = Some(model.into());
         self
     }
 
-    pub fn with_inner_call(mut self, usage: Usage, model: impl Into<String>) -> Self {
+    pub fn inner_call(mut self, usage: Usage, model: impl Into<String>) -> Self {
         self.inner_usage = Some(usage);
         self.inner_model = Some(model.into());
         self
@@ -196,13 +196,6 @@ impl ToolResult {
 
     pub fn is_error(&self) -> bool {
         self.output.is_error()
-    }
-
-    pub fn is_permission_denied(&self) -> bool {
-        matches!(
-            self.output,
-            ToolOutput::Error(ToolError::PermissionDenied { .. })
-        )
     }
 
     pub fn is_non_retryable(&self) -> bool {

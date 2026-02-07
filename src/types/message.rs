@@ -123,10 +123,10 @@ impl Message {
             .collect()
     }
 
-    pub fn with_cache_on_last_block(mut self) -> Self {
+    pub fn cache_on_last_block(mut self) -> Self {
         if let Some(last) = self.content.pop() {
             self.content
-                .push(last.with_cache_control(CacheControl::ephemeral()));
+                .push(last.cache_control(CacheControl::ephemeral()));
         }
         self
     }
@@ -222,7 +222,7 @@ impl SystemBlock {
         Self {
             block_type: "text".to_string(),
             text: text.into(),
-            cache_control: Some(CacheControl::ephemeral().with_ttl(ttl)),
+            cache_control: Some(CacheControl::ephemeral().ttl(ttl)),
         }
     }
 
@@ -278,7 +278,7 @@ impl<'de> Deserialize<'de> for CacheTtl {
         match s.as_str() {
             "5m" => Ok(CacheTtl::FiveMinutes),
             "1h" => Ok(CacheTtl::OneHour),
-            _ => Err(serde::de::Error::custom(format!("unknown TTL: {}", s))),
+            _ => Err(serde::de::Error::custom(format!("Unknown TTL: {}", s))),
         }
     }
 }
@@ -305,7 +305,7 @@ impl CacheControl {
         }
     }
 
-    pub fn with_ttl(mut self, ttl: CacheTtl) -> Self {
+    pub fn ttl(mut self, ttl: CacheTtl) -> Self {
         self.ttl = Some(ttl);
         self
     }

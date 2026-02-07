@@ -51,22 +51,22 @@ impl WebSearchTool {
         Self::default()
     }
 
-    pub fn with_max_uses(mut self, max_uses: u32) -> Self {
+    pub fn max_uses(mut self, max_uses: u32) -> Self {
         self.max_uses = Some(max_uses);
         self
     }
 
-    pub fn with_allowed_domains(mut self, domains: Vec<String>) -> Self {
+    pub fn allowed_domains(mut self, domains: Vec<String>) -> Self {
         self.allowed_domains = Some(domains);
         self
     }
 
-    pub fn with_blocked_domains(mut self, domains: Vec<String>) -> Self {
+    pub fn blocked_domains(mut self, domains: Vec<String>) -> Self {
         self.blocked_domains = Some(domains);
         self
     }
 
-    pub fn with_user_location(mut self, location: UserLocation) -> Self {
+    pub fn user_location(mut self, location: UserLocation) -> Self {
         self.user_location = Some(location);
         self
     }
@@ -83,17 +83,17 @@ impl UserLocation {
         }
     }
 
-    pub fn with_city(mut self, city: impl Into<String>) -> Self {
+    pub fn city(mut self, city: impl Into<String>) -> Self {
         self.city = Some(city.into());
         self
     }
 
-    pub fn with_region(mut self, region: impl Into<String>) -> Self {
+    pub fn region(mut self, region: impl Into<String>) -> Self {
         self.region = Some(region.into());
         self
     }
 
-    pub fn with_timezone(mut self, timezone: impl Into<String>) -> Self {
+    pub fn timezone(mut self, timezone: impl Into<String>) -> Self {
         self.timezone = Some(timezone.into());
         self
     }
@@ -135,27 +135,27 @@ impl WebFetchTool {
         Self::default()
     }
 
-    pub fn with_max_uses(mut self, max_uses: u32) -> Self {
+    pub fn max_uses(mut self, max_uses: u32) -> Self {
         self.max_uses = Some(max_uses);
         self
     }
 
-    pub fn with_allowed_domains(mut self, domains: Vec<String>) -> Self {
+    pub fn allowed_domains(mut self, domains: Vec<String>) -> Self {
         self.allowed_domains = Some(domains);
         self
     }
 
-    pub fn with_blocked_domains(mut self, domains: Vec<String>) -> Self {
+    pub fn blocked_domains(mut self, domains: Vec<String>) -> Self {
         self.blocked_domains = Some(domains);
         self
     }
 
-    pub fn with_max_content_tokens(mut self, tokens: u32) -> Self {
+    pub fn max_content_tokens(mut self, tokens: u32) -> Self {
         self.max_content_tokens = Some(tokens);
         self
     }
 
-    pub fn with_citations(mut self, enabled: bool) -> Self {
+    pub fn citations(mut self, enabled: bool) -> Self {
         self.citations = Some(if enabled {
             CitationsConfig::enabled()
         } else {

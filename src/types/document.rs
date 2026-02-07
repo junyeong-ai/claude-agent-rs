@@ -127,17 +127,17 @@ impl DocumentBlock {
         }
     }
 
-    pub fn with_title(mut self, title: impl Into<String>) -> Self {
+    pub fn title(mut self, title: impl Into<String>) -> Self {
         self.title = Some(title.into());
         self
     }
 
-    pub fn with_context(mut self, context: impl Into<String>) -> Self {
+    pub fn context(mut self, context: impl Into<String>) -> Self {
         self.context = Some(context.into());
         self
     }
 
-    pub fn with_citations(mut self, enabled: bool) -> Self {
+    pub fn citations(mut self, enabled: bool) -> Self {
         self.citations = Some(if enabled {
             CitationsConfig::enabled()
         } else {
@@ -151,7 +151,7 @@ impl DocumentBlock {
         self
     }
 
-    pub fn with_cache_control(mut self, cache_control: CacheControl) -> Self {
+    pub fn cache_control(mut self, cache_control: CacheControl) -> Self {
         self.cache_control = Some(cache_control);
         self
     }
@@ -169,7 +169,7 @@ mod tests {
     #[test]
     fn test_document_text() {
         let doc = DocumentBlock::text("Hello world")
-            .with_title("Test Doc")
+            .title("Test Doc")
             .cached();
 
         assert!(doc.title.is_some());
@@ -193,7 +193,7 @@ mod tests {
 
     #[test]
     fn test_document_serialization() {
-        let doc = DocumentBlock::text("test content").with_title("Title");
+        let doc = DocumentBlock::text("test content").title("Title");
         let json = serde_json::to_string(&doc).unwrap();
 
         assert!(json.contains("text/plain"));

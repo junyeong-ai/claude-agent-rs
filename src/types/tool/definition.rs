@@ -28,12 +28,12 @@ impl ToolDefinition {
         }
     }
 
-    pub fn with_strict(mut self, strict: bool) -> Self {
+    pub fn strict(mut self, strict: bool) -> Self {
         self.strict = Some(strict);
         self
     }
 
-    pub fn with_defer_loading(mut self, defer: bool) -> Self {
+    pub fn defer_loading(mut self, defer: bool) -> Self {
         self.defer_loading = Some(defer);
         self
     }
@@ -48,9 +48,14 @@ impl ToolDefinition {
     }
 
     pub fn estimated_tokens(&self) -> usize {
-        let name_tokens = self.name.len() / 4;
-        let desc_tokens = self.description.len() / 4;
-        let schema_tokens = self.input_schema.to_string().len() / 4;
-        name_tokens + desc_tokens + schema_tokens + 20
+        estimate_tool_tokens(&self.name, &self.description, &self.input_schema)
     }
+}
+
+/// Estimate token count for a tool based on name, description, and schema sizes.
+///
+/// Uses a chars/4 heuristic (roughly 4 characters per token) plus a fixed
+/// overhead of 20 tokens for JSON structure.
+pub fn estimate_tool_tokens(name: &str, description: &str, schema: &serde_json::Value) -> usize {
+    name.len() / 4 + description.len() / 4 + schema.to_string().len() / 4 + 20
 }

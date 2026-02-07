@@ -47,7 +47,7 @@ impl SearchResultBlock {
         }
     }
 
-    pub fn with_blocks(
+    pub fn blocks(
         source: impl Into<String>,
         title: impl Into<String>,
         blocks: Vec<SearchResultContentBlock>,
@@ -67,7 +67,7 @@ impl SearchResultBlock {
         self
     }
 
-    pub fn with_citations(mut self, enabled: bool) -> Self {
+    pub fn citations(mut self, enabled: bool) -> Self {
         self.citations = Some(if enabled {
             CitationsConfig::enabled()
         } else {
@@ -81,7 +81,7 @@ impl SearchResultBlock {
         self
     }
 
-    pub fn with_cache_control(mut self, cache_control: CacheControl) -> Self {
+    pub fn cache_control(mut self, cache_control: CacheControl) -> Self {
         self.cache_control = Some(cache_control);
         self
     }
@@ -109,7 +109,7 @@ mod tests {
     #[test]
     fn test_search_result_with_citations() {
         let result = SearchResultBlock::new("https://example.com", "Example Page", "Content")
-            .with_citations(true);
+            .citations(true);
 
         assert!(result.citations.is_some());
         assert!(result.citations.unwrap().enabled);

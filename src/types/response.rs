@@ -2,6 +2,7 @@
 
 use std::collections::HashMap;
 
+use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 
 use super::ContentBlock;
@@ -44,7 +45,7 @@ impl TokenUsage {
         if self.input_tokens == 0 {
             return 0.0;
         }
-        self.cache_read_input_tokens as f64 / self.input_tokens as f64
+        (self.cache_read_input_tokens as f64 / self.input_tokens as f64).clamp(0.0, 1.0)
     }
 }
 
@@ -142,7 +143,7 @@ impl Usage {
             + self.cache_creation_input_tokens.unwrap_or(0)
     }
 
-    pub fn estimated_cost(&self, model: &str) -> f64 {
+    pub fn estimated_cost(&self, model: &str) -> Decimal {
         crate::budget::pricing::global_pricing_table().calculate(model, self)
     }
 
@@ -388,10 +389,10 @@ pub struct ModelUsage {
     pub web_fetch_requests: u32,
     /// Estimated cost in USD for this model's usage.
     #[serde(default)]
-    pub cost_usd: f64,
+    pub cost_usd: Decimal,
     /// Context window size for this model.
     #[serde(default)]
-    pub context_window: u32,
+    pub context_window: u64,
 }
 
 impl ModelUsage {
@@ -411,29 +412,45 @@ impl ModelUsage {
             web_search_requests: web_search,
             web_fetch_requests: web_fetch,
             cost_usd: cost,
-            context_window: context_window as u32,
+            context_window,
         }
     }
 
     pub fn add(&mut self, other: &ModelUsage) {
-        self.input_tokens += other.input_tokens;
-        self.output_tokens += other.output_tokens;
-        self.cache_read_input_tokens += other.cache_read_input_tokens;
-        self.cache_creation_input_tokens += other.cache_creation_input_tokens;
-        self.web_search_requests += other.web_search_requests;
-        self.web_fetch_requests += other.web_fetch_requests;
+        self.input_tokens = self.input_tokens.saturating_add(other.input_tokens);
+        self.output_tokens = self.output_tokens.saturating_add(other.output_tokens);
+        self.cache_read_input_tokens = self
+            .cache_read_input_tokens
+            .saturating_add(other.cache_read_input_tokens);
+        self.cache_creation_input_tokens = self
+            .cache_creation_input_tokens
+            .saturating_add(other.cache_creation_input_tokens);
+        self.web_search_requests = self
+            .web_search_requests
+            .saturating_add(other.web_search_requests);
+        self.web_fetch_requests = self
+            .web_fetch_requests
+            .saturating_add(other.web_fetch_requests);
         self.cost_usd += other.cost_usd;
     }
 
     pub fn add_usage(&mut self, usage: &Usage, model: &str) {
-        self.input_tokens += usage.input_tokens;
-        self.output_tokens += usage.output_tokens;
-        self.cache_read_input_tokens += usage.cache_read_input_tokens.unwrap_or(0);
-        self.cache_creation_input_tokens += usage.cache_creation_input_tokens.unwrap_or(0);
+        self.input_tokens = self.input_tokens.saturating_add(usage.input_tokens);
+        self.output_tokens = self.output_tokens.saturating_add(usage.output_tokens);
+        self.cache_read_input_tokens = self
+            .cache_read_input_tokens
+            .saturating_add(usage.cache_read_input_tokens.unwrap_or(0));
+        self.cache_creation_input_tokens = self
+            .cache_creation_input_tokens
+            .saturating_add(usage.cache_creation_input_tokens.unwrap_or(0));
         self.cost_usd += usage.estimated_cost(model);
         if let Some(ref server_usage) = usage.server_tool_use {
-            self.web_search_requests += server_usage.web_search_requests;
-            self.web_fetch_requests += server_usage.web_fetch_requests;
+            self.web_search_requests = self
+                .web_search_requests
+                .saturating_add(server_usage.web_search_requests);
+            self.web_fetch_requests = self
+                .web_fetch_requests
+                .saturating_add(server_usage.web_fetch_requests);
         }
     }
 
@@ -524,7 +541,7 @@ impl PermissionDenial {
     }
 
     /// Add a reason for the denial.
-    pub fn with_reason(mut self, reason: impl Into<String>) -> Self {
+    pub fn reason(mut self, reason: impl Into<String>) -> Self {
         self.reason = Some(reason.into());
         self
     }
@@ -532,6 +549,8 @@ impl PermissionDenial {
 
 #[cfg(test)]
 mod tests {
+    use rust_decimal_macros::dec;
+
     use super::*;
 
     #[test]
@@ -551,9 +570,9 @@ mod tests {
             output_tokens: 1_000_000,
             ..Default::default()
         };
-        // Sonnet: $3 input + $15 output = $18
+        // Sonnet long context (1M > 200K): $3 * 2 input + $15 output = $21
         let cost = usage.estimated_cost("claude-sonnet-4-5");
-        assert!((cost - 18.0).abs() < 0.01);
+        assert_eq!(cost, dec!(21));
     }
 
     #[test]
@@ -569,7 +588,7 @@ mod tests {
         assert_eq!(model_usage.input_tokens, 1000);
         assert_eq!(model_usage.output_tokens, 500);
         assert_eq!(model_usage.cache_read_input_tokens, 100);
-        assert!(model_usage.cost_usd > 0.0);
+        assert!(model_usage.cost_usd > Decimal::ZERO);
     }
 
     #[test]
@@ -577,19 +596,19 @@ mod tests {
         let mut usage1 = ModelUsage {
             input_tokens: 100,
             output_tokens: 50,
-            cost_usd: 0.01,
+            cost_usd: dec!(0.01),
             ..Default::default()
         };
         let usage2 = ModelUsage {
             input_tokens: 200,
             output_tokens: 100,
-            cost_usd: 0.02,
+            cost_usd: dec!(0.02),
             ..Default::default()
         };
         usage1.add(&usage2);
         assert_eq!(usage1.input_tokens, 300);
         assert_eq!(usage1.output_tokens, 150);
-        assert!((usage1.cost_usd - 0.03).abs() < 0.0001);
+        assert_eq!(usage1.cost_usd, dec!(0.03));
     }
 
     #[test]
@@ -612,7 +631,7 @@ mod tests {
             "tool_123",
             serde_json::json!({"query": "test"}),
         )
-        .with_reason("User denied");
+        .reason("User denied");
 
         assert_eq!(denial.tool_name, "WebSearch");
         assert_eq!(denial.reason, Some("User denied".to_string()));

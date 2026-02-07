@@ -2,6 +2,9 @@
 
 use std::sync::atomic::{AtomicU64, Ordering};
 
+use rust_decimal::Decimal;
+
+use super::COST_SCALE_FACTOR;
 use super::pricing::{PricingTable, global_pricing_table};
 
 /// Action to take when budget is exceeded.
@@ -31,7 +34,7 @@ impl OnExceed {
 
 #[derive(Debug)]
 pub struct BudgetTracker {
-    max_cost_usd: Option<f64>,
+    max_cost_usd: Option<Decimal>,
     used_cost_bits: AtomicU64,
     on_exceed: OnExceed,
     pricing: &'static PricingTable,
@@ -60,14 +63,14 @@ impl Clone for BudgetTracker {
 }
 
 impl BudgetTracker {
-    pub fn new(max_cost_usd: f64) -> Self {
+    pub fn new(max_cost_usd: Decimal) -> Self {
         Self {
             max_cost_usd: Some(max_cost_usd),
             ..Default::default()
         }
     }
 
-    pub fn with_on_exceed(mut self, on_exceed: OnExceed) -> Self {
+    pub fn on_exceed(mut self, on_exceed: OnExceed) -> Self {
         self.on_exceed = on_exceed;
         self
     }
@@ -76,15 +79,15 @@ impl BudgetTracker {
         Self::default()
     }
 
-    pub fn record(&self, model: &str, usage: &crate::types::Usage) -> f64 {
+    pub fn record(&self, model: &str, usage: &crate::types::Usage) -> Decimal {
         let cost = self.pricing.calculate(model, usage);
-        let cost_bits = (cost * 1_000_000.0) as u64;
+        let cost_bits = (cost * COST_SCALE_FACTOR).try_into().unwrap_or(u64::MAX);
         self.used_cost_bits.fetch_add(cost_bits, Ordering::Relaxed);
         cost
     }
 
-    fn used_cost_usd_internal(&self) -> f64 {
-        self.used_cost_bits.load(Ordering::Relaxed) as f64 / 1_000_000.0
+    fn used_cost_usd_internal(&self) -> Decimal {
+        Decimal::from(self.used_cost_bits.load(Ordering::Relaxed)) / COST_SCALE_FACTOR
     }
 
     pub fn check(&self) -> BudgetStatus {
@@ -117,16 +120,16 @@ impl BudgetTracker {
         }
     }
 
-    pub fn used_cost_usd(&self) -> f64 {
+    pub fn used_cost_usd(&self) -> Decimal {
         self.used_cost_usd_internal()
     }
 
-    pub fn remaining(&self) -> Option<f64> {
+    pub fn remaining(&self) -> Option<Decimal> {
         self.max_cost_usd
-            .map(|max| (max - self.used_cost_usd_internal()).max(0.0))
+            .map(|max| (max - self.used_cost_usd_internal()).max(Decimal::ZERO))
     }
 
-    pub fn on_exceed(&self) -> &OnExceed {
+    pub fn on_exceed_action(&self) -> &OnExceed {
         &self.on_exceed
     }
 }
@@ -134,17 +137,17 @@ impl BudgetTracker {
 #[derive(Debug, Clone)]
 pub enum BudgetStatus {
     Unlimited {
-        used: f64,
+        used: Decimal,
     },
     WithinBudget {
-        used: f64,
-        limit: f64,
-        remaining: f64,
+        used: Decimal,
+        limit: Decimal,
+        remaining: Decimal,
     },
     Exceeded {
-        used: f64,
-        limit: f64,
-        overage: f64,
+        used: Decimal,
+        limit: Decimal,
+        overage: Decimal,
     },
 }
 
@@ -153,7 +156,7 @@ impl BudgetStatus {
         matches!(self, Self::Exceeded { .. })
     }
 
-    pub fn used(&self) -> f64 {
+    pub fn used(&self) -> Decimal {
         match self {
             Self::Unlimited { used } => *used,
             Self::WithinBudget { used, .. } => *used,
@@ -166,10 +169,11 @@ impl BudgetStatus {
 mod tests {
     use super::*;
     use crate::types::Usage;
+    use rust_decimal_macros::dec;
 
     #[test]
     fn test_budget_tracking() {
-        let tracker = BudgetTracker::new(10.0);
+        let tracker = BudgetTracker::new(dec!(10));
 
         let usage = Usage {
             input_tokens: 100_000,
@@ -179,7 +183,7 @@ mod tests {
 
         // Sonnet: 0.1M * $3 + 0.05M * $15 = $0.30 + $0.75 = $1.05
         let cost = tracker.record("claude-sonnet-4-5", &usage);
-        assert!((cost - 1.05).abs() < 0.01);
+        assert_eq!(cost, dec!(1.05));
         assert!(!tracker.should_stop());
 
         // Add more usage to exceed budget
@@ -202,7 +206,7 @@ mod tests {
         };
 
         for _ in 0..100 {
-            tracker.record("claude-opus-4-5", &usage);
+            tracker.record("claude-opus-4-6", &usage);
         }
 
         assert!(!tracker.should_stop());
@@ -211,7 +215,7 @@ mod tests {
 
     #[test]
     fn test_warn_and_continue() {
-        let tracker = BudgetTracker::new(1.0).with_on_exceed(OnExceed::WarnAndContinue);
+        let tracker = BudgetTracker::new(dec!(1)).on_exceed(OnExceed::WarnAndContinue);
 
         let usage = Usage {
             input_tokens: 1_000_000,

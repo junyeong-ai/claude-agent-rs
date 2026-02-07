@@ -4,20 +4,22 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use dashmap::DashMap;
+use rust_decimal::Decimal;
 
+use super::COST_SCALE_FACTOR;
 use super::pricing::global_pricing_table;
 use super::tracker::OnExceed;
 
 #[derive(Debug)]
 pub struct TenantBudget {
     pub tenant_id: String,
-    max_cost_usd: f64,
+    max_cost_usd: Decimal,
     used_cost_usd: AtomicU64,
     on_exceed: OnExceed,
 }
 
 impl TenantBudget {
-    fn new(tenant_id: impl Into<String>, max_cost_usd: f64) -> Self {
+    fn new(tenant_id: impl Into<String>, max_cost_usd: Decimal) -> Self {
         Self {
             tenant_id: tenant_id.into(),
             max_cost_usd,
@@ -26,24 +28,24 @@ impl TenantBudget {
         }
     }
 
-    pub fn with_on_exceed(mut self, on_exceed: OnExceed) -> Self {
+    pub fn on_exceed(mut self, on_exceed: OnExceed) -> Self {
         self.on_exceed = on_exceed;
         self
     }
 
-    pub fn record(&self, model: &str, usage: &crate::types::Usage) -> f64 {
+    pub fn record(&self, model: &str, usage: &crate::types::Usage) -> Decimal {
         let cost = global_pricing_table().calculate(model, usage);
-        let cost_bits = (cost * 1_000_000.0) as u64;
+        let cost_bits: u64 = (cost * COST_SCALE_FACTOR).try_into().unwrap_or(u64::MAX);
         self.used_cost_usd.fetch_add(cost_bits, Ordering::Relaxed);
         cost
     }
 
-    pub fn used_cost_usd(&self) -> f64 {
-        self.used_cost_usd.load(Ordering::Relaxed) as f64 / 1_000_000.0
+    pub fn used_cost_usd(&self) -> Decimal {
+        Decimal::from(self.used_cost_usd.load(Ordering::Relaxed)) / COST_SCALE_FACTOR
     }
 
-    pub fn remaining(&self) -> f64 {
-        (self.max_cost_usd - self.used_cost_usd()).max(0.0)
+    pub fn remaining(&self) -> Decimal {
+        (self.max_cost_usd - self.used_cost_usd()).max(Decimal::ZERO)
     }
 
     pub fn is_exceeded(&self) -> bool {
@@ -54,11 +56,11 @@ impl TenantBudget {
         matches!(self.on_exceed, OnExceed::StopBeforeNext) && self.is_exceeded()
     }
 
-    pub fn max_cost_usd(&self) -> f64 {
+    pub fn max_cost_usd(&self) -> Decimal {
         self.max_cost_usd
     }
 
-    pub fn on_exceed(&self) -> &OnExceed {
+    pub fn on_exceed_action(&self) -> &OnExceed {
         &self.on_exceed
     }
 }
@@ -73,7 +75,11 @@ impl TenantBudgetManager {
         Self::default()
     }
 
-    pub fn set_budget(&self, tenant_id: impl Into<String>, max_cost_usd: f64) -> Arc<TenantBudget> {
+    pub fn set_budget(
+        &self,
+        tenant_id: impl Into<String>,
+        max_cost_usd: Decimal,
+    ) -> Arc<TenantBudget> {
         let tenant_id = tenant_id.into();
         let budget = Arc::new(TenantBudget::new(tenant_id.clone(), max_cost_usd));
         self.budgets.insert(tenant_id, Arc::clone(&budget));
@@ -83,12 +89,12 @@ impl TenantBudgetManager {
     pub fn set_budget_with_options(
         &self,
         tenant_id: impl Into<String>,
-        max_cost_usd: f64,
+        max_cost_usd: Decimal,
         on_exceed: OnExceed,
     ) -> Arc<TenantBudget> {
         let tenant_id = tenant_id.into();
         let budget =
-            Arc::new(TenantBudget::new(tenant_id.clone(), max_cost_usd).with_on_exceed(on_exceed));
+            Arc::new(TenantBudget::new(tenant_id.clone(), max_cost_usd).on_exceed(on_exceed));
         self.budgets.insert(tenant_id, Arc::clone(&budget));
         budget
     }
@@ -97,7 +103,12 @@ impl TenantBudgetManager {
         self.budgets.get(tenant_id).map(|v| Arc::clone(&v))
     }
 
-    pub fn record(&self, tenant_id: &str, model: &str, usage: &crate::types::Usage) -> Option<f64> {
+    pub fn record(
+        &self,
+        tenant_id: &str,
+        model: &str,
+        usage: &crate::types::Usage,
+    ) -> Option<Decimal> {
         self.budgets
             .get(tenant_id)
             .map(|budget| budget.record(model, usage))
@@ -135,9 +146,9 @@ impl TenantBudgetManager {
 #[derive(Debug, Clone)]
 pub struct TenantBudgetSummary {
     pub tenant_id: String,
-    pub max_cost_usd: f64,
-    pub used_cost_usd: f64,
-    pub remaining: f64,
+    pub max_cost_usd: Decimal,
+    pub used_cost_usd: Decimal,
+    pub remaining: Decimal,
     pub is_exceeded: bool,
 }
 
@@ -145,32 +156,33 @@ pub struct TenantBudgetSummary {
 mod tests {
     use super::*;
     use crate::types::Usage;
+    use rust_decimal_macros::dec;
 
     #[test]
     fn test_tenant_budget_manager() {
         let manager = TenantBudgetManager::new();
 
-        manager.set_budget("tenant-a", 100.0);
-        manager.set_budget("tenant-b", 50.0);
+        manager.set_budget("tenant-a", dec!(100));
+        manager.set_budget("tenant-b", dec!(50));
 
         let usage = Usage {
-            input_tokens: 1_000_000,
-            output_tokens: 500_000,
+            input_tokens: 100_000,
+            output_tokens: 50_000,
             ..Default::default()
         };
 
-        // tenant-a: 1M * $3 + 0.5M * $15 = $3 + $7.5 = $10.5
+        // tenant-a: 0.1M * $3 + 0.05M * $15 = $0.3 + $0.75 = $1.05
         let cost = manager.record("tenant-a", "claude-sonnet-4-5", &usage);
         assert!(cost.is_some());
-        assert!((cost.unwrap() - 10.5).abs() < 0.01);
+        assert_eq!(cost.unwrap(), dec!(1.05));
 
         let budget_a = manager.get("tenant-a").unwrap();
-        assert!((budget_a.used_cost_usd() - 10.5).abs() < 0.01);
+        assert_eq!(budget_a.used_cost_usd(), dec!(1.05));
         assert!(!budget_a.is_exceeded());
 
         // tenant-b unaffected
         let budget_b = manager.get("tenant-b").unwrap();
-        assert!((budget_b.used_cost_usd() - 0.0).abs() < 0.01);
+        assert_eq!(budget_b.used_cost_usd(), Decimal::ZERO);
     }
 
     #[test]
@@ -178,7 +190,7 @@ mod tests {
         use std::thread;
 
         let manager = TenantBudgetManager::new();
-        manager.set_budget("tenant-concurrent", 10000.0);
+        manager.set_budget("tenant-concurrent", dec!(10000));
 
         let handles: Vec<_> = (0..10)
             .map(|_| {
@@ -202,13 +214,13 @@ mod tests {
 
         let budget = manager.get("tenant-concurrent").unwrap();
         // 1000 calls * $1.05 = $1050
-        assert!((budget.used_cost_usd() - 1050.0).abs() < 1.0);
+        assert_eq!(budget.used_cost_usd(), dec!(1050));
     }
 
     #[test]
     fn test_budget_exceeded() {
         let manager = TenantBudgetManager::new();
-        manager.set_budget("small-budget", 5.0);
+        manager.set_budget("small-budget", dec!(5));
 
         let usage = Usage {
             input_tokens: 1_000_000,
@@ -216,7 +228,7 @@ mod tests {
             ..Default::default()
         };
 
-        // First call: ~$10.5, exceeds $5 limit
+        // First call: ~$13.5 (long context), exceeds $5 limit
         manager.record("small-budget", "claude-sonnet-4-5", &usage);
 
         assert!(manager.should_stop("small-budget"));

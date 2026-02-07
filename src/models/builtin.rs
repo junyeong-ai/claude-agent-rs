@@ -1,7 +1,10 @@
+use rust_decimal_macros::dec;
+
 use super::family::{ModelFamily, ModelRole};
 use super::provider::ProviderIds;
 use super::registry::ModelRegistry;
-use super::spec::{Capabilities, ModelSpec, ModelVersion, Pricing};
+use super::spec::{Capabilities, ModelSpec, ModelVersion};
+use crate::budget::ModelPricing;
 
 pub fn register_all(registry: &mut ModelRegistry) {
     registry.register(sonnet_4_5());
@@ -10,8 +13,8 @@ pub fn register_all(registry: &mut ModelRegistry) {
     registry.register(haiku_4_5());
     registry.set_default(ModelRole::Small, "claude-haiku-4-5-20251001".into());
 
-    registry.register(opus_4_5());
-    registry.set_default(ModelRole::Reasoning, "claude-opus-4-5-20251101".into());
+    registry.register(opus_4_6());
+    registry.set_default(ModelRole::Reasoning, "claude-opus-4-6".into());
 }
 
 fn sonnet_4_5() -> ModelSpec {
@@ -32,7 +35,7 @@ fn sonnet_4_5() -> ModelSpec {
             tool_use: true,
             caching: true,
         },
-        pricing: Pricing::new(3.0, 15.0),
+        pricing: ModelPricing::from_base(dec!(3), dec!(15)),
         provider_ids: ProviderIds {
             anthropic: Some("claude-sonnet-4-5-20250929".into()),
             bedrock: Some("anthropic.claude-sonnet-4-5-20250929-v1:0".into()),
@@ -60,7 +63,7 @@ fn haiku_4_5() -> ModelSpec {
             tool_use: true,
             caching: true,
         },
-        pricing: Pricing::new(0.80, 4.0),
+        pricing: ModelPricing::from_base(dec!(0.80), dec!(4)),
         provider_ids: ProviderIds {
             anthropic: Some("claude-haiku-4-5-20251001".into()),
             bedrock: Some("anthropic.claude-haiku-4-5-20251001-v1:0".into()),
@@ -70,13 +73,13 @@ fn haiku_4_5() -> ModelSpec {
     }
 }
 
-fn opus_4_5() -> ModelSpec {
+fn opus_4_6() -> ModelSpec {
     ModelSpec {
-        id: "claude-opus-4-5-20251101".into(),
+        id: "claude-opus-4-6".into(),
         family: ModelFamily::Opus,
         version: ModelVersion {
-            version: "4.5".into(),
-            snapshot: Some("20251101".into()),
+            version: "4.6".into(),
+            snapshot: None,
             knowledge_cutoff: Some("2025-05".into()),
         },
         capabilities: Capabilities {
@@ -88,12 +91,12 @@ fn opus_4_5() -> ModelSpec {
             tool_use: true,
             caching: true,
         },
-        pricing: Pricing::new(15.0, 75.0),
+        pricing: ModelPricing::from_base(dec!(15), dec!(75)),
         provider_ids: ProviderIds {
-            anthropic: Some("claude-opus-4-5-20251101".into()),
-            bedrock: Some("anthropic.claude-opus-4-5-20251101-v1:0".into()),
-            vertex: Some("claude-opus-4-5@20251101".into()),
-            foundry: Some("claude-opus-4-5".into()),
+            anthropic: Some("claude-opus-4-6".into()),
+            bedrock: Some("anthropic.claude-opus-4-6-v1:0".into()),
+            vertex: Some("claude-opus-4-6".into()),
+            foundry: Some("claude-opus-4-6".into()),
         },
     }
 }

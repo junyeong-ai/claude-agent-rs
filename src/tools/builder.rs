@@ -95,9 +95,9 @@ impl ToolRegistryBuilder {
             .unwrap_or_else(|| std::env::current_dir().unwrap_or_default());
         let permission_policy = self.policy.unwrap_or_default();
 
-        let sandbox_config = self.sandbox_config.unwrap_or_else(|| {
-            crate::security::SandboxConfig::disabled().with_working_dir(wd.clone())
-        });
+        let sandbox_config = self
+            .sandbox_config
+            .unwrap_or_else(|| crate::security::SandboxConfig::disabled().working_dir(wd.clone()));
 
         let security = crate::security::SecurityContext::builder()
             .root(&wd)
@@ -121,13 +121,13 @@ impl ToolRegistryBuilder {
             .unwrap_or_else(|| ToolState::new(session_id));
 
         let task_tool: Arc<dyn Tool> = match self.subagent_registry {
-            Some(sr) => Arc::new(TaskTool::new(task_registry.clone()).with_subagent_registry(sr)),
+            Some(sr) => Arc::new(TaskTool::new(task_registry.clone()).subagent_registry(sr)),
             None => Arc::new(TaskTool::new(task_registry.clone())),
         };
 
         let skill_tool: Arc<dyn Tool> = match self.skill_executor {
             Some(executor) => Arc::new(crate::skills::SkillTool::new(executor)),
-            None => Arc::new(crate::skills::SkillTool::with_defaults()),
+            None => Arc::new(crate::skills::SkillTool::defaults()),
         };
 
         let all_tools: Vec<Arc<dyn Tool>> = vec![
@@ -136,10 +136,8 @@ impl ToolRegistryBuilder {
             Arc::new(super::EditTool),
             Arc::new(super::GlobTool),
             Arc::new(super::GrepTool),
-            Arc::new(super::BashTool::with_process_manager(
-                process_manager.clone(),
-            )),
-            Arc::new(super::KillShellTool::with_process_manager(
+            Arc::new(super::BashTool::process_manager(process_manager.clone())),
+            Arc::new(super::KillShellTool::process_manager(
                 process_manager.clone(),
             )),
             task_tool,
@@ -155,7 +153,7 @@ impl ToolRegistryBuilder {
             process_manager: Some(process_manager),
         };
 
-        let mut registry = ToolRegistry::with_env(task_registry, env);
+        let mut registry = ToolRegistry::from_env(task_registry, env);
 
         for tool in all_tools {
             if access.is_allowed(tool.name()) {

@@ -12,6 +12,8 @@ use opentelemetry_sdk::metrics::{PeriodicReader, SdkMeterProvider};
 use opentelemetry_sdk::propagation::TraceContextPropagator;
 use opentelemetry_sdk::trace::{RandomIdGenerator, Sampler, SdkTracerProvider};
 use opentelemetry_semantic_conventions::resource::{SERVICE_NAME, SERVICE_VERSION};
+use rust_decimal::Decimal;
+use rust_decimal::prelude::ToPrimitive;
 use tracing_opentelemetry::OpenTelemetryLayer;
 use tracing_subscriber::EnvFilter;
 use tracing_subscriber::layer::SubscriberExt;
@@ -54,32 +56,32 @@ impl OtelConfig {
         }
     }
 
-    pub fn with_endpoint(mut self, endpoint: impl Into<String>) -> Self {
+    pub fn endpoint(mut self, endpoint: impl Into<String>) -> Self {
         self.otlp_endpoint = endpoint.into();
         self
     }
 
-    pub fn with_service_version(mut self, version: impl Into<String>) -> Self {
+    pub fn service_version(mut self, version: impl Into<String>) -> Self {
         self.service_version = Some(version.into());
         self
     }
 
-    pub fn with_traces(mut self, enabled: bool) -> Self {
+    pub fn traces(mut self, enabled: bool) -> Self {
         self.traces_enabled = enabled;
         self
     }
 
-    pub fn with_metrics(mut self, enabled: bool) -> Self {
+    pub fn metrics(mut self, enabled: bool) -> Self {
         self.metrics_enabled = enabled;
         self
     }
 
-    pub fn with_metrics_interval(mut self, interval: Duration) -> Self {
+    pub fn metrics_interval(mut self, interval: Duration) -> Self {
         self.metrics_export_interval = interval;
         self
     }
 
-    pub fn with_sample_ratio(mut self, ratio: f64) -> Self {
+    pub fn sample_ratio(mut self, ratio: f64) -> Self {
         self.sample_ratio = ratio.clamp(0.0, 1.0);
         self
     }
@@ -292,9 +294,6 @@ pub fn init_tracing_subscriber(config: &OtelConfig, with_console: bool) -> Resul
 pub enum OtelError {
     #[error("OpenTelemetry initialization failed: {0}")]
     Init(String),
-
-    #[error("OpenTelemetry export failed: {0}")]
-    Export(String),
 }
 
 /// Semantic conventions for agent-specific attributes.
@@ -415,8 +414,10 @@ impl OtelMetricsBridge {
         }
     }
 
-    pub fn record_cost(&self, cost_usd: f64) {
-        self.cost_total.add(cost_usd, &[]);
+    pub fn record_cost(&self, cost_usd: Decimal) {
+        // Convert Decimal to f64 at OpenTelemetry boundary
+        let cost_f64 = cost_usd.to_f64().unwrap_or(0.0);
+        self.cost_total.add(cost_f64, &[]);
     }
 }
 
@@ -436,9 +437,9 @@ mod tests {
     #[test]
     fn test_otel_config_builder() {
         let config = OtelConfig::new("my-agent")
-            .with_endpoint("http://otel-collector:4317")
-            .with_sample_ratio(0.5)
-            .with_metrics_interval(Duration::from_secs(30));
+            .endpoint("http://otel-collector:4317")
+            .sample_ratio(0.5)
+            .metrics_interval(Duration::from_secs(30));
 
         assert_eq!(config.service_name, "my-agent");
         assert_eq!(config.otlp_endpoint, "http://otel-collector:4317");
@@ -448,10 +449,10 @@ mod tests {
 
     #[test]
     fn test_sample_ratio_clamping() {
-        let config = OtelConfig::default().with_sample_ratio(1.5);
+        let config = OtelConfig::default().sample_ratio(1.5);
         assert_eq!(config.sample_ratio, 1.0);
 
-        let config = OtelConfig::default().with_sample_ratio(-0.5);
+        let config = OtelConfig::default().sample_ratio(-0.5);
         assert_eq!(config.sample_ratio, 0.0);
     }
 }

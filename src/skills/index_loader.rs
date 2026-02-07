@@ -57,26 +57,26 @@ impl SkillIndexLoader {
     }
 
     fn build_index(&self, fm: SkillFrontmatter, path: &Path) -> SkillIndex {
-        let source_type = SourceType::from_str_opt(fm.source_type.as_deref());
+        let source_type_val = SourceType::from_str_opt(fm.source_type.as_deref());
 
         let mut index = SkillIndex::new(fm.name, fm.description)
-            .with_source(ContentSource::file(path))
-            .with_source_type(source_type);
+            .source(ContentSource::file(path))
+            .source_type(source_type_val);
 
         if !fm.triggers.is_empty() {
-            index = index.with_triggers(fm.triggers);
+            index = index.triggers(fm.triggers);
         }
 
         if !fm.allowed_tools.is_empty() {
-            index = index.with_allowed_tools(fm.allowed_tools);
+            index = index.allowed_tools(fm.allowed_tools);
         }
 
-        if let Some(model) = fm.model {
-            index = index.with_model(model);
+        if let Some(model_val) = fm.model {
+            index = index.model(model_val);
         }
 
         if let Some(hint) = fm.argument_hint {
-            index = index.with_argument_hint(hint);
+            index = index.argument_hint(hint);
         }
 
         index.disable_model_invocation = fm.disable_model_invocation;
@@ -124,7 +124,7 @@ impl SkillIndexLoader {
         description: impl Into<String>,
         content: impl Into<String>,
     ) -> SkillIndex {
-        SkillIndex::new(name, description).with_source(ContentSource::in_memory(content))
+        SkillIndex::new(name, description).source(ContentSource::in_memory(content))
     }
 }
 

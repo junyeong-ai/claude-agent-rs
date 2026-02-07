@@ -2,7 +2,7 @@
 
 use std::ffi::{CString, OsStr, OsString};
 use std::os::unix::ffi::OsStrExt;
-use std::os::unix::io::{AsFd, AsRawFd, BorrowedFd, FromRawFd, OwnedFd};
+use std::os::unix::io::{AsFd, BorrowedFd, OwnedFd};
 use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
 
@@ -66,17 +66,14 @@ impl SafePath {
                 Ok(fd) => {
                     validated_components.push(component.clone());
                     if !is_last {
-                        // SAFETY: fd is valid from openat. Transfer ownership to std_fd, forget fd.
-                        let std_fd = unsafe { OwnedFd::from_raw_fd(fd.as_raw_fd()) };
-                        std::mem::forget(fd);
-                        owned_fds.push(std_fd);
+                        owned_fds.push(fd);
                         // SAFETY: We just pushed to owned_fds, so last() is guaranteed to be Some
                         current_fd = owned_fds
                             .last()
                             .expect("owned_fds is non-empty after push")
                             .as_fd();
                     } else {
-                        std::mem::forget(fd);
+                        drop(fd);
                     }
                 }
                 Err(Errno::LOOP) | Err(Errno::MLINK) => {
@@ -250,8 +247,7 @@ impl SafePath {
                 Mode::empty(),
             )
             .map_err(|e| SecurityError::Io(std::io::Error::from_raw_os_error(e.raw_os_error())))?;
-            // SAFETY: fd is valid from openat. Transfer ownership, original fd leaked intentionally.
-            return Ok(unsafe { OwnedFd::from_raw_fd(fd.as_raw_fd()) });
+            return Ok(fd);
         }
 
         let mut current_fd: BorrowedFd<'_> = self.root_fd.as_fd();
@@ -273,16 +269,10 @@ impl SafePath {
             )?;
 
             if is_last {
-                // SAFETY: fd is valid from openat. Transfer ownership to std_fd, forget fd.
-                let std_fd = unsafe { OwnedFd::from_raw_fd(fd.as_raw_fd()) };
-                std::mem::forget(fd);
-                return Ok(std_fd);
+                return Ok(fd);
             }
 
-            // SAFETY: fd is valid from openat. Transfer ownership to std_fd, forget fd.
-            let std_fd = unsafe { OwnedFd::from_raw_fd(fd.as_raw_fd()) };
-            std::mem::forget(fd);
-            owned_fds.push(std_fd);
+            owned_fds.push(fd);
             // SAFETY: We just pushed to owned_fds, so last() is guaranteed to be Some
             current_fd = owned_fds
                 .last()
@@ -320,10 +310,7 @@ impl SafePath {
                 Mode::empty(),
             ) {
                 Ok(fd) => {
-                    // SAFETY: fd is valid from openat. Transfer ownership to std_fd, forget fd.
-                    let std_fd = unsafe { OwnedFd::from_raw_fd(fd.as_raw_fd()) };
-                    std::mem::forget(fd);
-                    owned_fds.push(std_fd);
+                    owned_fds.push(fd);
                     // SAFETY: We just pushed to owned_fds, so last() is guaranteed to be Some
                     current_fd = owned_fds
                         .last()
@@ -345,10 +332,7 @@ impl SafePath {
                         SecurityError::Io(std::io::Error::from_raw_os_error(e.raw_os_error()))
                     })?;
 
-                    // SAFETY: fd is valid from openat. Transfer ownership to std_fd, forget fd.
-                    let std_fd = unsafe { OwnedFd::from_raw_fd(fd.as_raw_fd()) };
-                    std::mem::forget(fd);
-                    owned_fds.push(std_fd);
+                    owned_fds.push(fd);
                     // SAFETY: We just pushed to owned_fds, so last() is guaranteed to be Some
                     current_fd = owned_fds
                         .last()

@@ -26,8 +26,8 @@
 //!
 //! // Create skill with metadata only (content loaded lazily)
 //! let skill = SkillIndex::new("commit", "Create git commits")
-//!     .with_source(ContentSource::in_memory("Analyze and commit: $ARGUMENTS"))
-//!     .with_triggers(["/commit"]);
+//!     .source(ContentSource::in_memory("Analyze and commit: $ARGUMENTS"))
+//!     .triggers(["/commit"]);
 //!
 //! // Register in IndexRegistry
 //! let mut registry = IndexRegistry::new();
@@ -47,10 +47,6 @@ mod skill_tool;
 pub use executor::{ExecutionMode, SkillExecutionCallback, SkillExecutor};
 pub use index::SkillIndex;
 pub use index_loader::{SkillFrontmatter, SkillIndexLoader};
-pub use processing::{
-    process_bash_backticks, process_file_references, resolve_markdown_paths, strip_frontmatter,
-    substitute_args,
-};
 pub use skill_tool::SkillTool;
 
 use std::path::PathBuf;
@@ -97,17 +93,17 @@ impl SkillResult {
         }
     }
 
-    pub fn with_allowed_tools(mut self, tools: Vec<String>) -> Self {
+    pub fn allowed_tools(mut self, tools: Vec<String>) -> Self {
         self.allowed_tools = tools;
         self
     }
 
-    pub fn with_model(mut self, model: Option<String>) -> Self {
+    pub fn model(mut self, model: Option<String>) -> Self {
         self.model = model;
         self
     }
 
-    pub fn with_base_dir(mut self, dir: Option<PathBuf>) -> Self {
+    pub fn base_dir(mut self, dir: Option<PathBuf>) -> Self {
         self.base_dir = dir;
         self
     }
@@ -125,11 +121,11 @@ mod tests {
     #[test]
     fn test_skill_definition() {
         let skill = SkillIndex::new("commit", "Create a git commit")
-            .with_source(ContentSource::in_memory(
+            .source(ContentSource::in_memory(
                 "Analyze changes and create commit message",
             ))
-            .with_source_type(SourceType::Builtin)
-            .with_triggers(["/commit"]);
+            .source_type(SourceType::Builtin)
+            .triggers(["/commit"]);
 
         assert_eq!(skill.name, "commit");
         assert_eq!(skill.source_type, SourceType::Builtin);
@@ -150,8 +146,8 @@ mod tests {
     #[test]
     fn test_skill_allowed_tools() {
         let skill = SkillIndex::new("reader", "Read files")
-            .with_source(ContentSource::in_memory("Read: $ARGUMENTS"))
-            .with_allowed_tools(["Read", "Grep", "Glob"]);
+            .source(ContentSource::in_memory("Read: $ARGUMENTS"))
+            .allowed_tools(["Read", "Grep", "Glob"]);
 
         assert!(skill.has_tool_restrictions());
         assert!(skill.is_tool_allowed("Read"));
@@ -163,8 +159,8 @@ mod tests {
     #[test]
     fn test_skill_allowed_tools_pattern() {
         let skill = SkillIndex::new("git-helper", "Git commands")
-            .with_source(ContentSource::in_memory("Git: $ARGUMENTS"))
-            .with_allowed_tools(["Bash(git:*)", "Read"]);
+            .source(ContentSource::in_memory("Git: $ARGUMENTS"))
+            .allowed_tools(["Bash(git:*)", "Read"]);
 
         assert!(skill.is_tool_allowed("Bash")); // Base tool name
         assert!(skill.is_tool_allowed("Read"));
@@ -173,8 +169,8 @@ mod tests {
 
     #[test]
     fn test_skill_no_restrictions() {
-        let skill = SkillIndex::new("any", "Any tools")
-            .with_source(ContentSource::in_memory("Do: $ARGUMENTS"));
+        let skill =
+            SkillIndex::new("any", "Any tools").source(ContentSource::in_memory("Do: $ARGUMENTS"));
 
         assert!(!skill.has_tool_restrictions());
         assert!(skill.is_tool_allowed("Bash"));
@@ -185,8 +181,8 @@ mod tests {
     #[test]
     fn test_skill_model_override() {
         let skill = SkillIndex::new("fast-task", "Quick task")
-            .with_source(ContentSource::in_memory("Do: $ARGUMENTS"))
-            .with_model("claude-haiku-4-5-20251001");
+            .source(ContentSource::in_memory("Do: $ARGUMENTS"))
+            .model("claude-haiku-4-5-20251001");
 
         assert_eq!(skill.model, Some("claude-haiku-4-5-20251001".to_string()));
     }
@@ -194,8 +190,8 @@ mod tests {
     #[test]
     fn test_skill_result_with_context() {
         let result = SkillResult::success("Output")
-            .with_allowed_tools(vec!["Read".to_string(), "Grep".to_string()])
-            .with_model(Some("claude-haiku-4-5-20251001".to_string()));
+            .allowed_tools(vec!["Read".to_string(), "Grep".to_string()])
+            .model(Some("claude-haiku-4-5-20251001".to_string()));
 
         assert!(result.has_tool_restrictions());
         assert_eq!(result.allowed_tools, vec!["Read", "Grep"]);
@@ -205,10 +201,10 @@ mod tests {
     #[test]
     fn test_skill_base_dir() {
         let skill = SkillIndex::new("reviewer", "Review code")
-            .with_source(ContentSource::file(
+            .source(ContentSource::file(
                 "/home/user/.claude/skills/reviewer/skill.md",
             ))
-            .with_base_dir("/home/user/.claude/skills/reviewer");
+            .base_dir("/home/user/.claude/skills/reviewer");
 
         assert_eq!(
             skill.resolve_path("style-guide.md"),
@@ -227,8 +223,8 @@ External: [Rust Docs](https://doc.rust-lang.org)
 Absolute: [config](/etc/config.md)"#;
 
         let skill = SkillIndex::new("test", "Test")
-            .with_source(ContentSource::in_memory(content))
-            .with_base_dir("/skills/test");
+            .source(ContentSource::in_memory(content))
+            .base_dir("/skills/test");
 
         let resolved = skill.load_content_with_resolved_paths().await.unwrap();
 
@@ -241,7 +237,7 @@ Absolute: [config](/etc/config.md)"#;
     #[tokio::test]
     async fn test_content_without_base_dir() {
         let skill = SkillIndex::new("test", "Test")
-            .with_source(ContentSource::in_memory("See [file.md](file.md)"));
+            .source(ContentSource::in_memory("See [file.md](file.md)"));
         let resolved = skill.load_content_with_resolved_paths().await.unwrap();
         assert_eq!(resolved, "See [file.md](file.md)");
     }

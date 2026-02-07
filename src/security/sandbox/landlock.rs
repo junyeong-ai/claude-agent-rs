@@ -7,7 +7,8 @@ use super::{SandboxConfig, SandboxError, SandboxResult, SandboxRuntime};
 
 #[cfg(target_os = "linux")]
 use landlock::{
-    ABI, Access, AccessFs, PathBeneath, PathFd, Ruleset, RulesetAttr, RulesetCreatedAttr,
+    ABI, Access, AccessFs, AccessNet, NetPort, PathBeneath, PathFd, Ruleset, RulesetAttr,
+    RulesetCreatedAttr,
 };
 
 pub struct LandlockSandbox {
@@ -60,15 +61,28 @@ impl SandboxRuntime for LandlockSandbox {
             .abi
             .ok_or_else(|| SandboxError::NotAvailable("Landlock not supported".into()))?;
 
-        let mut ruleset = Ruleset::default()
+        let mut base_ruleset = Ruleset::default()
             .handle_access(AccessFs::from_all(abi))
-            .map_err(|e| SandboxError::Creation(e.to_string()))?
+            .map_err(|e| SandboxError::Creation(e.to_string()))?;
+
+        let net_access = AccessNet::from_all(abi);
+        if !net_access.is_empty() {
+            base_ruleset = base_ruleset
+                .handle_access(net_access)
+                .map_err(|e| SandboxError::Creation(e.to_string()))?;
+        }
+
+        let mut ruleset = base_ruleset
             .create()
             .map_err(|e| SandboxError::Creation(e.to_string()))?;
 
         ruleset = self.add_working_dir_rule(ruleset, abi)?;
         ruleset = self.add_allowed_paths_rules(ruleset, abi)?;
         ruleset = self.add_system_paths_rules(ruleset, abi)?;
+
+        if !net_access.is_empty() {
+            ruleset = self.add_network_rules(ruleset)?;
+        }
 
         ruleset
             .restrict_self()
@@ -122,6 +136,43 @@ impl LandlockSandbox {
                 .add_rule(PathBeneath::new(fd, AccessFs::from_read(abi)))
                 .map_err(|e| SandboxError::RuleApplication(e.to_string()))?;
         }
+        Ok(ruleset)
+    }
+
+    fn add_network_rules(
+        &self,
+        mut ruleset: landlock::RulesetCreated,
+    ) -> SandboxResult<landlock::RulesetCreated> {
+        let allowed_ports: &[u16] = &[
+            53,  // DNS
+            80,  // HTTP
+            443, // HTTPS
+        ];
+
+        for &port in allowed_ports {
+            ruleset = ruleset
+                .add_rule(NetPort::new(port, AccessNet::ConnectTcp))
+                .map_err(|e| SandboxError::RuleApplication(e.to_string()))?;
+        }
+
+        let network = &self.config.network;
+        if let Some(http_port) = network.http_proxy_port {
+            ruleset = ruleset
+                .add_rule(NetPort::new(http_port, AccessNet::ConnectTcp))
+                .map_err(|e| SandboxError::RuleApplication(e.to_string()))?;
+        }
+        if let Some(socks_port) = network.socks_proxy_port {
+            ruleset = ruleset
+                .add_rule(NetPort::new(socks_port, AccessNet::ConnectTcp))
+                .map_err(|e| SandboxError::RuleApplication(e.to_string()))?;
+        }
+
+        if network.allow_local_binding {
+            ruleset = ruleset
+                .add_rule(NetPort::new(0, AccessNet::BindTcp))
+                .map_err(|e| SandboxError::RuleApplication(e.to_string()))?;
+        }
+
         Ok(ruleset)
     }
 

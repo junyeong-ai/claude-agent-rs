@@ -36,22 +36,22 @@ impl ToolSearchConfig {
         (self.context_window as f64 * self.threshold) as usize
     }
 
-    pub fn with_threshold(mut self, threshold: f64) -> Self {
+    pub fn threshold(mut self, threshold: f64) -> Self {
         self.threshold = threshold.clamp(0.0, 1.0);
         self
     }
 
-    pub fn with_context_window(mut self, tokens: usize) -> Self {
+    pub fn context_window(mut self, tokens: usize) -> Self {
         self.context_window = tokens;
         self
     }
 
-    pub fn with_search_mode(mut self, mode: SearchMode) -> Self {
+    pub fn search_mode(mut self, mode: SearchMode) -> Self {
         self.search_mode = mode;
         self
     }
 
-    pub fn with_always_load(mut self, tools: Vec<String>) -> Self {
+    pub fn always_load(mut self, tools: Vec<String>) -> Self {
         self.always_load = tools;
         self
     }
@@ -81,11 +81,10 @@ impl ToolSearchManager {
         &self.config
     }
 
-    pub fn set_toolset_registry(&self, registry: McpToolsetRegistry) -> &Self {
+    pub fn set_toolset_registry(&self, registry: McpToolsetRegistry) {
         if let Ok(mut guard) = self.toolset_registry.try_write() {
             *guard = registry;
         }
-        self
     }
 
     pub async fn build_index(&self, mcp_manager: &McpManager) {
@@ -261,9 +260,9 @@ mod tests {
     #[test]
     fn test_config_builder() {
         let config = ToolSearchConfig::default()
-            .with_threshold(0.05)
-            .with_context_window(100_000)
-            .with_search_mode(SearchMode::Bm25);
+            .threshold(0.05)
+            .context_window(100_000)
+            .search_mode(SearchMode::Bm25);
 
         assert_eq!(config.threshold, 0.05);
         assert_eq!(config.context_window, 100_000);

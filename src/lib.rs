@@ -78,105 +78,56 @@ pub mod tokens;
 pub mod tools;
 pub mod types;
 
-// Re-exports for convenience
+// =========================================================================
+// Core API re-exports (user-facing types)
+// =========================================================================
+
+pub use agent::{Agent, AgentBuilder, AgentConfig, AgentEvent, AgentResult};
+pub use auth::{Auth, Credential};
+pub use client::{Client, ClientBuilder};
+pub use permissions::{PermissionMode, PermissionPolicy};
+pub use tools::{ExecutionContext, SchemaTool, Tool, ToolAccess, ToolRegistry};
+pub use types::{ContentBlock, Message, Role, ToolDefinition, ToolError, ToolOutput, ToolResult};
+
+// =========================================================================
+// Commonly used configuration re-exports
+// =========================================================================
+
 pub use agent::{
-    Agent, AgentBuilder, AgentConfig, AgentEvent, AgentMetrics, AgentModelConfig, AgentResult,
-    AgentState, BudgetConfig, CacheConfig, CacheStrategy, DEFAULT_COMPACT_KEEP_MESSAGES,
+    AgentMetrics, AgentModelConfig, AgentState, BudgetConfig, CacheConfig, CacheStrategy,
     ExecutionConfig, PromptConfig, SecurityConfig, SystemPromptMode, ToolStats,
 };
+pub use auth::{CredentialProvider, OAuthConfig};
+pub use client::{
+    BetaConfig, BetaFeature, CloudProvider, EffortLevel, FallbackConfig, ModelConfig, ModelType,
+    OutputConfig, ProviderConfig,
+};
+pub use common::{ContentSource, Index, IndexRegistry, Named, SourceType, ToolRestricted};
+pub use context::{
+    ContextBuilder, MemoryLoader, MemoryProvider, PromptOrchestrator, RuleIndex, StaticContext,
+};
+pub use hooks::{CommandHook, Hook, HookContext, HookEvent, HookManager, HookOutput};
+pub use output_style::OutputStyle;
+pub use session::{
+    Session, SessionConfig, SessionId, SessionManager, SessionMessage, SessionState, ToolState,
+};
+pub use skills::{SkillExecutor, SkillIndex, SkillResult};
+pub use subagents::{SubagentIndex, builtin_subagents};
+
 #[cfg(feature = "cli-integration")]
 pub use auth::ClaudeCliProvider;
-pub use auth::{
-    ApiKeyHelper, Auth, AwsCredentialRefresh, AwsCredentials, ChainProvider, Credential,
-    CredentialManager, CredentialProvider, EnvironmentProvider, ExplicitProvider, OAuthConfig,
-    OAuthConfigBuilder,
-};
-pub use budget::{
-    BudgetStatus, BudgetTracker, ModelPricing, OnExceed, PricingTable, PricingTableBuilder,
-    TenantBudget, TenantBudgetManager,
-};
-pub use client::{
-    AnthropicAdapter, BetaConfig, BetaFeature, CircuitBreaker, CircuitConfig, CircuitState, Client,
-    ClientBuilder, ClientCertConfig, CloudProvider, CountTokensRequest, CountTokensResponse,
-    DEFAULT_MAX_TOKENS, EffortLevel, ExponentialBackoff, FallbackConfig, FallbackTrigger, File,
-    FileData, FileDownload, FileListResponse, FilesClient, GatewayConfig, MAX_TOKENS_128K,
-    MIN_MAX_TOKENS, MIN_THINKING_BUDGET, ModelConfig, ModelType, NetworkConfig, OutputConfig,
-    ProviderAdapter, ProviderConfig, ProxyConfig, Resilience, ResilienceConfig, RetryConfig,
-    TokenValidationError, UploadFileRequest, strict_schema, transform_for_strict,
-};
-pub use common::{
-    ContentSource, Index, IndexRegistry, LoadedEntry, Named, PathMatched, Provider, SourceType,
-    ToolRestricted,
-};
-pub use context::{
-    ContextBuilder, FileMemoryProvider, InMemoryProvider, LeveledMemoryProvider, MemoryContent,
-    MemoryLoader, MemoryProvider, PromptOrchestrator, RoutingStrategy, RuleIndex, StaticContext,
-};
-pub use hooks::{
-    CommandHook, Hook, HookAction, HookContext, HookEvent, HookInput, HookManager, HookOutput,
-    HookRule,
-};
-pub use observability::{
-    AgentMetrics as ObservabilityMetrics, MetricsConfig, MetricsRegistry, ObservabilityConfig,
-    SpanContext, TracingConfig,
-};
-pub use output_style::{
-    OutputStyle, builtin_styles, default_style, explanatory_style, learning_style,
-};
-#[cfg(feature = "cli-integration")]
-pub use output_style::{OutputStyleLoader, SystemPromptGenerator};
-pub use permissions::{PermissionDecision, PermissionMode, PermissionPolicy, PermissionResult};
-pub use session::{
-    CompactExecutor, CompactStrategy, ExecutionGuard, QueueError, Session, SessionConfig,
-    SessionError, SessionId, SessionManager, SessionMessage, SessionResult, SessionState,
-    ToolState,
-};
-pub use skills::{
-    SkillExecutor, SkillFrontmatter, SkillIndex, SkillIndexLoader, SkillResult, SkillTool,
-    process_bash_backticks, process_file_references, resolve_markdown_paths, strip_frontmatter,
-    substitute_args,
-};
-#[cfg(feature = "cli-integration")]
-pub use subagents::{SubagentFrontmatter, SubagentIndexLoader};
-pub use subagents::{SubagentIndex, builtin_subagents, find_builtin};
-pub use tools::{
-    ExecutionContext, SchemaTool, Tool, ToolAccess, ToolRegistry, ToolRegistryBuilder,
-};
-pub use types::{
-    CompactResult, ContentBlock, DocumentBlock, ImageSource, Message, Role, ToolError, ToolOutput,
-    UserLocation, WebSearchTool,
-};
-
-// Plugin re-exports
-#[cfg(feature = "plugins")]
-pub use plugins::{PluginDescriptor, PluginDiscovery, PluginError, PluginManager, PluginManifest};
-
-// MCP re-exports
-pub use mcp::{
-    McpContent, McpError, McpManager, McpResourceDefinition, McpResult, McpServerConfig,
-    McpServerInfo, McpServerState, McpToolDefinition, McpToolResult, ReconnectPolicy,
-};
-
-// Security re-exports
-pub use security::{SecurityContext, SecurityContextBuilder};
-
-// Model registry re-exports
-pub use models::{
-    Capabilities, ModelFamily, ModelId, ModelRegistry, ModelRole, ModelSpec, ModelVersion, Pricing,
-    ProviderIds, registry as model_registry,
-};
-
-// Token management re-exports
-pub use tokens::{
-    ContextWindow, PreflightResult, PricingTier, TokenBudget, TokenTracker, WindowStatus,
-};
-
 #[cfg(feature = "aws")]
 pub use client::BedrockAdapter;
 #[cfg(feature = "azure")]
 pub use client::FoundryAdapter;
 #[cfg(feature = "gcp")]
 pub use client::VertexAdapter;
+#[cfg(feature = "cli-integration")]
+pub use output_style::{OutputStyleLoader, SystemPromptGenerator};
+#[cfg(feature = "plugins")]
+pub use plugins::{PluginDescriptor, PluginDiscovery, PluginError, PluginManager, PluginManifest};
+#[cfg(feature = "cli-integration")]
+pub use subagents::{SubagentFrontmatter, SubagentIndexLoader};
 
 /// Error type for claude-agent operations.
 ///
@@ -273,8 +224,11 @@ pub enum Error {
     Permission(String),
 
     /// Budget limit exceeded.
-    #[error("Budget exceeded: ${used:.2} used (limit: ${limit:.2}, over by ${:.2})", used - limit)]
-    BudgetExceeded { used: f64, limit: f64 },
+    #[error("Budget exceeded: ${used} used (limit: ${limit})")]
+    BudgetExceeded {
+        used: rust_decimal::Decimal,
+        limit: rust_decimal::Decimal,
+    },
 
     /// Model is temporarily overloaded.
     #[error("Model {model} is overloaded, try again later")]
@@ -299,6 +253,10 @@ pub enum Error {
     /// Hook timed out (blockable hooks only).
     #[error("Hook '{hook}' timed out after {duration_secs}s")]
     HookTimeout { hook: String, duration_secs: u64 },
+
+    /// Circuit breaker is open, requests are being rejected.
+    #[error("Circuit breaker is open")]
+    CircuitOpen,
 
     /// Plugin system error.
     #[cfg(feature = "plugins")]
@@ -347,9 +305,10 @@ impl Error {
             | Error::InvalidRequest(_)
             | Error::TokenValidation(_) => ErrorCategory::Configuration,
 
-            Error::Network(_) | Error::RateLimit { .. } | Error::ModelOverloaded { .. } => {
-                ErrorCategory::Transient
-            }
+            Error::Network(_)
+            | Error::RateLimit { .. }
+            | Error::ModelOverloaded { .. }
+            | Error::CircuitOpen => ErrorCategory::Transient,
             Error::Api {
                 status: Some(500..=599),
                 ..
@@ -372,22 +331,6 @@ impl Error {
             #[cfg(feature = "plugins")]
             Error::Plugin(_) => ErrorCategory::Configuration,
         }
-    }
-
-    pub fn is_authorization_error(&self) -> bool {
-        self.category() == ErrorCategory::Authorization
-    }
-
-    pub fn is_configuration_error(&self) -> bool {
-        self.category() == ErrorCategory::Configuration
-    }
-
-    pub fn is_resource_limit(&self) -> bool {
-        self.category() == ErrorCategory::ResourceLimit
-    }
-
-    pub fn is_retryable(&self) -> bool {
-        self.category() == ErrorCategory::Transient
     }
 
     pub fn is_unauthorized(&self) -> bool {
@@ -480,12 +423,10 @@ impl From<session::SessionError> for Error {
             session::SessionError::Expired { id } => {
                 Error::Config(format!("Session expired: {}", id))
             }
-            session::SessionError::PermissionDenied { reason } => Error::auth(reason),
             session::SessionError::Storage { message } => Error::Config(message),
             session::SessionError::Serialization(e) => Error::Json(e),
             session::SessionError::Compact { message } => Error::Config(message),
             session::SessionError::Context(e) => e.into(),
-            session::SessionError::Plan { message } => Error::Config(message),
         }
     }
 }
@@ -497,21 +438,21 @@ impl From<security::SecurityError> for Error {
             security::SecurityError::ResourceLimit(msg) => Error::ResourceExhausted(msg),
             security::SecurityError::BashBlocked(msg) => Error::Permission(msg),
             security::SecurityError::DeniedPath(path) => {
-                Error::Permission(format!("denied path: {}", path.display()))
+                Error::Permission(format!("Denied path: {}", path.display()))
             }
             security::SecurityError::PathEscape(path) => {
-                Error::Permission(format!("path escapes sandbox: {}", path.display()))
+                Error::Permission(format!("Path escapes sandbox: {}", path.display()))
             }
             security::SecurityError::NotWithinSandbox(path) => {
-                Error::Permission(format!("path not within sandbox: {}", path.display()))
+                Error::Permission(format!("Path not within sandbox: {}", path.display()))
             }
             security::SecurityError::InvalidPath(msg) => Error::Config(msg),
             security::SecurityError::AbsoluteSymlink(path) => Error::Permission(format!(
-                "absolute symlink outside sandbox: {}",
+                "Absolute symlink outside sandbox: {}",
                 path.display()
             )),
             security::SecurityError::SymlinkDepthExceeded { path, max } => Error::Permission(
-                format!("symlink depth exceeded (max {}): {}", max, path.display()),
+                format!("Symlink depth exceeded (max {}): {}", max, path.display()),
             ),
         }
     }
@@ -522,12 +463,23 @@ impl From<security::sandbox::SandboxError> for Error {
         match err {
             security::sandbox::SandboxError::Io(e) => Error::Io(e),
             security::sandbox::SandboxError::NotSupported => {
-                Error::Config("sandbox not supported on this platform".into())
+                Error::Config("Sandbox not supported on this platform".into())
             }
             security::sandbox::SandboxError::NotAvailable(msg) => {
-                Error::Config(format!("sandbox not available: {}", msg))
+                Error::Config(format!("Sandbox not available: {}", msg))
             }
-            _ => Error::Config(err.to_string()),
+            security::sandbox::SandboxError::Creation(msg) => {
+                Error::Config(format!("Sandbox creation failed: {}", msg))
+            }
+            security::sandbox::SandboxError::RuleApplication(msg) => {
+                Error::Config(format!("Sandbox rule application failed: {}", msg))
+            }
+            security::sandbox::SandboxError::PathNotAccessible(path) => {
+                Error::Permission(format!("Sandbox path not accessible: {}", path.display()))
+            }
+            security::sandbox::SandboxError::InvalidConfig(msg) => {
+                Error::Config(format!("Invalid sandbox config: {}", msg))
+            }
         }
     }
 }
@@ -555,7 +507,7 @@ pub async fn query_with_model(model: &str, prompt: &str) -> Result<String> {
     use client::CreateMessageRequest;
     let client = Client::builder().auth(Auth::FromEnv).await?.build().await?;
     let request =
-        CreateMessageRequest::new(model, vec![types::Message::user(prompt)]).with_max_tokens(8192);
+        CreateMessageRequest::new(model, vec![types::Message::user(prompt)]).max_tokens(8192);
     let response = client.send(request).await?;
     Ok(response.text())
 }
@@ -583,19 +535,19 @@ mod tests {
     }
 
     #[test]
-    fn test_error_is_retryable() {
+    fn test_error_category() {
         let rate_limit = Error::RateLimit { retry_after: None };
-        assert!(rate_limit.is_retryable());
+        assert_eq!(rate_limit.category(), ErrorCategory::Transient);
 
         let server_error = Error::Api {
             message: "Internal error".to_string(),
             status: Some(500),
             error_type: None,
         };
-        assert!(server_error.is_retryable());
+        assert_eq!(server_error.category(), ErrorCategory::Transient);
 
         let auth_error = Error::auth("Invalid token");
-        assert!(!auth_error.is_retryable());
+        assert_eq!(auth_error.category(), ErrorCategory::Authorization);
     }
 
     #[test]

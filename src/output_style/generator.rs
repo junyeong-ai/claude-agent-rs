@@ -74,7 +74,7 @@ impl SystemPromptGenerator {
 
     /// Create a generator that requires CLI identity.
     /// Use this when using Claude CLI OAuth authentication.
-    pub fn with_cli_identity() -> Self {
+    pub fn cli_identity() -> Self {
         Self {
             style: default_style(),
             working_dir: None,
@@ -92,19 +92,19 @@ impl SystemPromptGenerator {
     }
 
     /// Set the output style directly.
-    pub fn with_style(mut self, style: OutputStyle) -> Self {
+    pub fn output_style(mut self, style: OutputStyle) -> Self {
         self.style = style;
         self
     }
 
     /// Set the working directory for environment block.
-    pub fn with_working_dir(mut self, dir: impl Into<PathBuf>) -> Self {
+    pub fn working_dir(mut self, dir: impl Into<PathBuf>) -> Self {
         self.working_dir = Some(dir.into());
         self
     }
 
     /// Set the model information.
-    pub fn with_model(mut self, model_id: impl Into<String>) -> Self {
+    pub fn model(mut self, model_id: impl Into<String>) -> Self {
         let id = model_id.into();
         self.model_name = derive_model_name(&id);
         self.model_id = id;
@@ -112,7 +112,7 @@ impl SystemPromptGenerator {
     }
 
     /// Set the model name explicitly.
-    pub fn with_model_name(mut self, name: impl Into<String>) -> Self {
+    pub fn model_name(mut self, name: impl Into<String>) -> Self {
         self.model_name = name.into();
         self
     }
@@ -123,27 +123,27 @@ impl SystemPromptGenerator {
     /// 1. Project styles (.claude/output-styles/) - highest priority
     /// 2. User styles (~/.claude/output-styles/)
     /// 3. Built-in styles - lowest priority
-    pub async fn with_style_name(mut self, name: &str) -> crate::Result<Self> {
+    pub async fn style_name(mut self, name: &str) -> crate::Result<Self> {
         let builtins = InMemoryOutputStyleProvider::new()
-            .with_items(builtin_styles())
-            .with_priority(0)
-            .with_source_type(SourceType::Builtin);
+            .items(builtin_styles())
+            .priority(0)
+            .source_type(SourceType::Builtin);
 
-        let mut chain = ChainOutputStyleProvider::new().with(builtins);
+        let mut chain = ChainOutputStyleProvider::new().provider(builtins);
 
         if let Some(ref working_dir) = self.working_dir {
             let project = file_output_style_provider()
-                .with_project_path(working_dir)
-                .with_priority(20)
-                .with_source_type(SourceType::Project);
-            chain = chain.with(project);
+                .project_path(working_dir)
+                .priority(20)
+                .source_type(SourceType::Project);
+            chain = chain.provider(project);
         }
 
         let user = file_output_style_provider()
-            .with_user_path()
-            .with_priority(10)
-            .with_source_type(SourceType::User);
-        chain = chain.with(user);
+            .user_path()
+            .priority(10)
+            .source_type(SourceType::User);
+        chain = chain.provider(user);
 
         if let Some(style) = chain.get(name).await? {
             self.style = style;
@@ -232,32 +232,12 @@ impl SystemPromptGenerator {
 
 /// Derive a friendly model name from model ID.
 fn derive_model_name(model_id: &str) -> String {
-    // Extract base model name from ID
-    // e.g., "claude-sonnet-4-20250514" -> "Claude Sonnet 4"
-    // e.g., "claude-opus-4-5-20251101" -> "Claude Opus 4.5"
-
-    if model_id.contains("opus-4-5") || model_id.contains("opus-4.5") {
-        "Claude Opus 4.5".to_string()
-    } else if model_id.contains("opus-4") {
-        "Claude Opus 4".to_string()
-    } else if model_id.contains("sonnet-4-5") || model_id.contains("sonnet-4.5") {
+    if model_id.contains("opus") {
+        "Claude Opus 4.6".to_string()
+    } else if model_id.contains("sonnet") {
         "Claude Sonnet 4.5".to_string()
-    } else if model_id.contains("sonnet-4") {
-        "Claude Sonnet 4".to_string()
-    } else if model_id.contains("haiku-4-5") || model_id.contains("haiku-4.5") {
+    } else if model_id.contains("haiku") {
         "Claude Haiku 4.5".to_string()
-    } else if model_id.contains("haiku-4") {
-        "Claude Haiku 4".to_string()
-    } else if model_id.contains("3.5") || model_id.contains("3-5") {
-        if model_id.contains("sonnet") {
-            "Claude 3.5 Sonnet".to_string()
-        } else if model_id.contains("haiku") {
-            "Claude 3.5 Haiku".to_string()
-        } else if model_id.contains("opus") {
-            "Claude 3.5 Opus".to_string()
-        } else {
-            "Claude 3.5".to_string()
-        }
     } else {
         "Claude".to_string()
     }
@@ -279,8 +259,8 @@ mod tests {
     }
 
     #[test]
-    fn test_generator_with_cli_identity() {
-        let prompt = SystemPromptGenerator::with_cli_identity().generate();
+    fn test_generator_cli_identity() {
+        let prompt = SystemPromptGenerator::cli_identity().generate();
 
         // CLI Identity MUST be the first line
         assert!(prompt.starts_with(CLI_IDENTITY));
@@ -291,11 +271,11 @@ mod tests {
     #[test]
     fn test_generator_with_custom_style_keep_coding() {
         let style = OutputStyle::new("test", "Test style", "Custom instructions here")
-            .with_source_type(SourceType::User)
-            .with_keep_coding_instructions(true);
+            .source_type(SourceType::User)
+            .keep_coding_instructions(true);
 
-        let prompt = SystemPromptGenerator::with_cli_identity()
-            .with_style(style)
+        let prompt = SystemPromptGenerator::cli_identity()
+            .output_style(style)
             .generate();
 
         assert!(prompt.starts_with(CLI_IDENTITY));
@@ -307,11 +287,11 @@ mod tests {
     #[test]
     fn test_generator_with_custom_style_no_coding() {
         let style = OutputStyle::new("concise", "Be concise", "Keep responses short.")
-            .with_source_type(SourceType::User)
-            .with_keep_coding_instructions(false);
+            .source_type(SourceType::User)
+            .keep_coding_instructions(false);
 
-        let prompt = SystemPromptGenerator::with_cli_identity()
-            .with_style(style)
+        let prompt = SystemPromptGenerator::cli_identity()
+            .output_style(style)
             .generate();
 
         assert!(prompt.starts_with(CLI_IDENTITY)); // CLI Identity preserved
@@ -321,42 +301,36 @@ mod tests {
     }
 
     #[test]
-    fn test_generator_with_working_dir() {
+    fn test_generator_working_dir() {
         let prompt = SystemPromptGenerator::new()
-            .with_working_dir("/test/project")
+            .working_dir("/test/project")
             .generate();
 
         assert!(prompt.contains("/test/project"));
     }
 
     #[test]
-    fn test_generator_with_model() {
+    fn test_generator_model() {
         let prompt = SystemPromptGenerator::new()
-            .with_model("claude-opus-4-5-20251101")
+            .model("claude-opus-4-6")
             .generate();
 
-        assert!(prompt.contains("claude-opus-4-5-20251101"));
-        assert!(prompt.contains("Claude Opus 4.5"));
+        assert!(prompt.contains("claude-opus-4-6"));
+        assert!(prompt.contains("Claude Opus 4.6"));
     }
 
     #[test]
     fn test_derive_model_name() {
+        assert_eq!(derive_model_name("claude-opus-4-6"), "Claude Opus 4.6");
         assert_eq!(
-            derive_model_name("claude-opus-4-5-20251101"),
-            "Claude Opus 4.5"
-        );
-        assert_eq!(
-            derive_model_name("claude-sonnet-4-20250514"),
-            "Claude Sonnet 4"
+            derive_model_name("claude-sonnet-4-5-20250929"),
+            "Claude Sonnet 4.5"
         );
         assert_eq!(
             derive_model_name("claude-haiku-4-5-20251001"),
             "Claude Haiku 4.5"
         );
-        assert_eq!(
-            derive_model_name("claude-3-5-sonnet-20241022"),
-            "Claude 3.5 Sonnet"
-        );
+        assert_eq!(derive_model_name("unknown-model"), "Claude");
     }
 
     #[test]
@@ -373,8 +347,8 @@ mod tests {
         let generator = SystemPromptGenerator::new();
         assert!(generator.has_coding_instructions());
 
-        let style = OutputStyle::new("no-coding", "", "").with_keep_coding_instructions(false);
-        let generator = SystemPromptGenerator::new().with_style(style);
+        let style = OutputStyle::new("no-coding", "", "").keep_coding_instructions(false);
+        let generator = SystemPromptGenerator::new().output_style(style);
         assert!(!generator.has_coding_instructions());
     }
 
@@ -387,10 +361,10 @@ mod tests {
             "Custom identity",
             "I am a different assistant.", // Trying to replace identity
         )
-        .with_keep_coding_instructions(false);
+        .keep_coding_instructions(false);
 
-        let prompt = SystemPromptGenerator::with_cli_identity()
-            .with_style(style)
+        let prompt = SystemPromptGenerator::cli_identity()
+            .output_style(style)
             .generate();
 
         // CLI Identity MUST be first, custom prompt comes after

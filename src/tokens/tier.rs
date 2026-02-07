@@ -23,13 +23,6 @@ impl PricingTier {
         }
     }
 
-    pub fn multiplier(&self) -> f64 {
-        match self {
-            Self::Standard => 1.0,
-            Self::Extended => 2.0,
-        }
-    }
-
     pub fn is_extended(&self) -> bool {
         matches!(self, Self::Extended)
     }
@@ -49,11 +42,5 @@ mod tests {
     fn test_tier_extended() {
         assert_eq!(PricingTier::for_context(200_001), PricingTier::Extended);
         assert_eq!(PricingTier::for_context(1_000_000), PricingTier::Extended);
-    }
-
-    #[test]
-    fn test_multiplier() {
-        assert_eq!(PricingTier::Standard.multiplier(), 1.0);
-        assert_eq!(PricingTier::Extended.multiplier(), 2.0);
     }
 }

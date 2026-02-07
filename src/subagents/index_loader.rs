@@ -34,8 +34,37 @@ pub struct SubagentFrontmatter {
 }
 
 fn split_csv(s: Option<String>) -> Vec<String> {
-    s.map(|v| v.split(',').map(|s| s.trim().to_string()).collect())
-        .unwrap_or_default()
+    s.map(|v| {
+        let mut items = Vec::new();
+        let mut current = String::new();
+        let mut depth = 0u32;
+        for ch in v.chars() {
+            match ch {
+                '(' => {
+                    depth += 1;
+                    current.push(ch);
+                }
+                ')' => {
+                    depth = depth.saturating_sub(1);
+                    current.push(ch);
+                }
+                ',' if depth == 0 => {
+                    let trimmed = current.trim().to_string();
+                    if !trimmed.is_empty() {
+                        items.push(trimmed);
+                    }
+                    current.clear();
+                }
+                _ => current.push(ch),
+            }
+        }
+        let trimmed = current.trim().to_string();
+        if !trimmed.is_empty() {
+            items.push(trimmed);
+        }
+        items
+    })
+    .unwrap_or_default()
 }
 
 #[derive(Debug, Clone, Copy, Default)]
@@ -59,24 +88,24 @@ impl SubagentIndexLoader {
         let disallowed_tools = split_csv(fm.disallowed_tools);
 
         let mut index = SubagentIndex::new(fm.name, fm.description)
-            .with_source(ContentSource::file(path))
-            .with_source_type(source_type)
-            .with_tools(tools)
-            .with_skills(skills);
+            .source(ContentSource::file(path))
+            .source_type(source_type)
+            .tools(tools)
+            .skills(skills);
 
         index.disallowed_tools = disallowed_tools;
         index.permission_mode = fm.permission_mode;
         index.hooks = fm.hooks;
 
-        if let Some(model) = fm.model {
-            index = index.with_model(model);
+        if let Some(m) = fm.model {
+            index = index.model(m);
         }
 
-        if let Some(model_type) = fm.model_type {
-            match model_type.to_lowercase().as_str() {
-                "small" | "haiku" => index = index.with_model_type(ModelType::Small),
-                "primary" | "sonnet" => index = index.with_model_type(ModelType::Primary),
-                "reasoning" | "opus" => index = index.with_model_type(ModelType::Reasoning),
+        if let Some(mt) = fm.model_type {
+            match mt.to_lowercase().as_str() {
+                "small" | "haiku" => index = index.model_type(ModelType::Small),
+                "primary" | "sonnet" => index = index.model_type(ModelType::Primary),
+                "reasoning" | "opus" => index = index.model_type(ModelType::Reasoning),
                 _ => {}
             }
         }
@@ -110,7 +139,7 @@ impl SubagentIndexLoader {
         description: impl Into<String>,
         prompt: impl Into<String>,
     ) -> SubagentIndex {
-        SubagentIndex::new(name, description).with_source(ContentSource::in_memory(prompt))
+        SubagentIndex::new(name, description).source(ContentSource::in_memory(prompt))
     }
 }
 
@@ -141,7 +170,6 @@ You are a senior code reviewer focusing on:
         assert_eq!(index.description, "Expert code reviewer for quality checks");
         assert_eq!(index.allowed_tools, vec!["Read", "Grep", "Glob"]);
         assert_eq!(index.model, Some("haiku".to_string()));
-        // Note: prompt content is NOT loaded here - it's in ContentSource
         assert!(index.source.is_file());
     }
 
@@ -218,6 +246,18 @@ Auto prompt"#;
             .unwrap();
 
         assert_eq!(index.permission_mode, Some("dontAsk".to_string()));
+    }
+
+    #[test]
+    fn test_split_csv_with_parens() {
+        let result = split_csv(Some("Read, Bash(git:*,docker:*), Write".to_string()));
+        assert_eq!(result, vec!["Read", "Bash(git:*,docker:*)", "Write"]);
+    }
+
+    #[test]
+    fn test_split_csv_simple() {
+        let result = split_csv(Some("Read, Grep, Glob".to_string()));
+        assert_eq!(result, vec!["Read", "Grep", "Glob"]);
     }
 
     #[test]

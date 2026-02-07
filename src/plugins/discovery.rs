@@ -8,7 +8,7 @@ pub struct PluginDiscovery;
 impl PluginDiscovery {
     /// Returns the default plugins directory: `~/.claude/plugins/`.
     pub fn default_plugins_dir() -> Option<PathBuf> {
-        dirs::home_dir().map(|home| home.join(".claude").join("plugins"))
+        crate::common::home_dir().map(|home| home.join(".claude").join("plugins"))
     }
 
     pub fn discover(dirs: &[PathBuf]) -> Result<Vec<PluginDescriptor>, PluginError> {

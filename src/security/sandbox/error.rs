@@ -25,9 +25,6 @@ pub enum SandboxError {
     #[error("invalid sandbox configuration: {0}")]
     InvalidConfig(String),
 
-    #[error("sandbox profile error: {0}")]
-    Profile(String),
-
     #[error("io error: {0}")]
     Io(#[from] io::Error),
 }

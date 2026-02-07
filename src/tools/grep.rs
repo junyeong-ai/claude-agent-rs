@@ -11,7 +11,6 @@ use super::SchemaTool;
 use super::context::ExecutionContext;
 use crate::types::ToolResult;
 
-/// Input for the Grep tool
 #[derive(Debug, Deserialize, JsonSchema)]
 #[schemars(deny_unknown_fields)]
 pub struct GrepInput {
@@ -145,7 +144,7 @@ impl SchemaTool for GrepTool {
         let stderr = String::from_utf8_lossy(&output.stderr);
 
         if !output.status.success() && !stderr.is_empty() {
-            return ToolResult::error(format!("ripgrep error: {}", stderr));
+            return ToolResult::error(format!("Ripgrep error: {}", stderr));
         }
 
         if stdout.is_empty() {

@@ -4,31 +4,15 @@
 
 use super::{McpContent, McpError, McpManager, McpResourceDefinition, McpResult};
 
-/// Resource subscription handle
-pub struct ResourceSubscription {
-    /// Server name
-    pub server_name: String,
-    /// Resource URI
-    pub uri: String,
-    /// Whether the subscription is active
-    pub active: bool,
-}
-
 /// Resource manager for handling MCP resource operations
 pub struct ResourceManager {
-    /// Reference to the MCP manager
     manager: std::sync::Arc<McpManager>,
-    /// Active subscriptions
-    subscriptions: Vec<ResourceSubscription>,
 }
 
 impl ResourceManager {
     /// Create a new resource manager
     pub fn new(manager: std::sync::Arc<McpManager>) -> Self {
-        Self {
-            manager,
-            subscriptions: Vec::new(),
-        }
+        Self { manager }
     }
 
     /// List all available resources from all connected servers
@@ -50,7 +34,6 @@ impl ResourceManager {
             .collect();
 
         if resources.is_empty() {
-            // Check if server exists
             let servers = self.manager.list_servers().await;
             if !servers.contains(&server_name.to_string()) {
                 return Err(McpError::ServerNotFound {
@@ -92,36 +75,6 @@ impl ResourceManager {
         } else {
             Ok(text.join("\n"))
         }
-    }
-
-    /// Subscribe to resource changes (placeholder for future implementation)
-    ///
-    /// Returns the index of the newly created subscription, which can be used
-    /// with `subscription()` to retrieve it.
-    pub fn subscribe(&mut self, server_name: &str, uri: &str) -> usize {
-        let subscription = ResourceSubscription {
-            server_name: server_name.to_string(),
-            uri: uri.to_string(),
-            active: true,
-        };
-        self.subscriptions.push(subscription);
-        self.subscriptions.len() - 1
-    }
-
-    /// Get a subscription by index
-    pub fn subscription(&self, index: usize) -> Option<&ResourceSubscription> {
-        self.subscriptions.get(index)
-    }
-
-    /// Unsubscribe from resource changes
-    pub fn unsubscribe(&mut self, server_name: &str, uri: &str) {
-        self.subscriptions
-            .retain(|s| !(s.server_name == server_name && s.uri == uri));
-    }
-
-    /// Get active subscriptions
-    pub fn subscriptions(&self) -> &[ResourceSubscription] {
-        &self.subscriptions
     }
 
     /// Find resources by URI pattern

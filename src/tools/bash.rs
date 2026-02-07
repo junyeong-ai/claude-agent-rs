@@ -46,13 +46,13 @@ impl BashTool {
         }
     }
 
-    pub fn with_process_manager(manager: Arc<ProcessManager>) -> Self {
+    pub fn process_manager(manager: Arc<ProcessManager>) -> Self {
         Self {
             process_manager: manager,
         }
     }
 
-    pub fn process_manager(&self) -> &Arc<ProcessManager> {
+    pub fn get_process_manager(&self) -> &Arc<ProcessManager> {
         &self.process_manager
     }
 
@@ -94,7 +94,9 @@ impl BashTool {
         #[cfg(unix)]
         unsafe {
             cmd.pre_exec(move || {
-                let _ = limits.apply();
+                if let Err(e) = limits.apply() {
+                    eprintln!("Warning: resource limits not applied: {e}");
+                }
                 Ok(())
             });
         }
@@ -398,12 +400,12 @@ mod tests {
     #[tokio::test]
     async fn test_shared_process_manager() {
         let manager = Arc::new(ProcessManager::new());
-        let tool1 = BashTool::with_process_manager(manager.clone());
-        let tool2 = BashTool::with_process_manager(manager.clone());
+        let tool1 = BashTool::process_manager(manager.clone());
+        let tool2 = BashTool::process_manager(manager.clone());
 
         assert!(Arc::ptr_eq(
-            tool1.process_manager(),
-            tool2.process_manager()
+            tool1.get_process_manager(),
+            tool2.get_process_manager()
         ));
     }
 }

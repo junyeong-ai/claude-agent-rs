@@ -2,6 +2,7 @@
 
 use std::ffi::CString;
 use std::io::{Read, Write};
+use std::mem::ManuallyDrop;
 use std::os::unix::ffi::OsStrExt;
 use std::os::unix::io::{AsFd, AsRawFd, FromRawFd, OwnedFd};
 
@@ -14,16 +15,8 @@ use super::super::path::SafePath;
 const MAX_FILE_SIZE: u64 = 100 * 1024 * 1024;
 
 fn with_borrowed_file<T>(fd: &OwnedFd, f: impl FnOnce(&mut std::fs::File) -> T) -> T {
-    let mut file = unsafe { std::fs::File::from_raw_fd(fd.as_raw_fd()) };
-    let result = f(&mut file);
-    std::mem::forget(file);
-    result
-}
-
-fn take_rustix_fd(fd: rustix::fd::OwnedFd) -> OwnedFd {
-    let std_fd = unsafe { OwnedFd::from_raw_fd(fd.as_raw_fd()) };
-    std::mem::forget(fd);
-    std_fd
+    let mut file = ManuallyDrop::new(unsafe { std::fs::File::from_raw_fd(fd.as_raw_fd()) });
+    f(&mut file)
 }
 
 pub struct SecureFileHandle {
@@ -113,15 +106,13 @@ impl SecureFileHandle {
 
         let parent_fd = self.get_parent_fd()?;
 
-        let temp_fd = take_rustix_fd(
-            openat(
-                parent_fd.as_fd(),
-                &temp_cname,
-                OFlags::WRONLY | OFlags::CREATE | OFlags::EXCL | OFlags::CLOEXEC,
-                Mode::from_raw_mode(0o644),
-            )
-            .map_err(|e| SecurityError::Io(std::io::Error::from_raw_os_error(e.raw_os_error())))?,
-        );
+        let temp_fd = openat(
+            parent_fd.as_fd(),
+            &temp_cname,
+            OFlags::WRONLY | OFlags::CREATE | OFlags::EXCL | OFlags::CLOEXEC,
+            Mode::from_raw_mode(0o644),
+        )
+        .map_err(|e| SecurityError::Io(std::io::Error::from_raw_os_error(e.raw_os_error())))?;
 
         let write_result = with_borrowed_file(&temp_fd, |file| file.write_all(content));
 
@@ -154,17 +145,13 @@ impl SecureFileHandle {
         let parent_components = self.path.parent_components();
 
         if parent_components.is_empty() {
-            return Ok(take_rustix_fd(
-                rustix::fs::openat(
-                    self.path.root_fd(),
-                    c".",
-                    OFlags::RDONLY | OFlags::DIRECTORY | OFlags::CLOEXEC,
-                    Mode::empty(),
-                )
-                .map_err(|e| {
-                    SecurityError::Io(std::io::Error::from_raw_os_error(e.raw_os_error()))
-                })?,
-            ));
+            return rustix::fs::openat(
+                self.path.root_fd(),
+                c".",
+                OFlags::RDONLY | OFlags::DIRECTORY | OFlags::CLOEXEC,
+                Mode::empty(),
+            )
+            .map_err(|e| SecurityError::Io(std::io::Error::from_raw_os_error(e.raw_os_error())));
         }
 
         let mut current_fd = self.path.root_fd();
@@ -174,17 +161,13 @@ impl SecureFileHandle {
             let c_name = CString::new(component.as_bytes())
                 .map_err(|_| SecurityError::InvalidPath("null byte".into()))?;
 
-            let fd = take_rustix_fd(
-                openat(
-                    current_fd,
-                    &c_name,
-                    OFlags::RDONLY | OFlags::DIRECTORY | OFlags::NOFOLLOW | OFlags::CLOEXEC,
-                    Mode::empty(),
-                )
-                .map_err(|e| {
-                    SecurityError::Io(std::io::Error::from_raw_os_error(e.raw_os_error()))
-                })?,
-            );
+            let fd = openat(
+                current_fd,
+                &c_name,
+                OFlags::RDONLY | OFlags::DIRECTORY | OFlags::NOFOLLOW | OFlags::CLOEXEC,
+                Mode::empty(),
+            )
+            .map_err(|e| SecurityError::Io(std::io::Error::from_raw_os_error(e.raw_os_error())))?;
 
             owned_fds.push(fd);
             current_fd = owned_fds.last().expect("just pushed").as_fd();

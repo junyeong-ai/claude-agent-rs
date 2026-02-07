@@ -28,7 +28,7 @@ impl MemoryConfigProvider {
     }
 
     /// Create a memory provider with a custom name
-    pub fn with_name(name: impl Into<String>) -> Self {
+    pub fn named(name: impl Into<String>) -> Self {
         Self {
             data: Arc::new(RwLock::new(HashMap::new())),
             name: name.into(),
@@ -36,7 +36,7 @@ impl MemoryConfigProvider {
     }
 
     /// Create a memory provider with initial data
-    pub fn with_data(data: HashMap<String, String>) -> Self {
+    pub fn from_data(data: HashMap<String, String>) -> Self {
         Self {
             data: Arc::new(RwLock::new(data)),
             name: "memory".to_string(),
@@ -44,10 +44,14 @@ impl MemoryConfigProvider {
     }
 
     /// Add an initial value during construction (builder pattern)
-    pub fn with_value(mut self, key: impl Into<String>, value: impl Into<String>) -> Self {
-        // Safe: called during construction before any async access
+    pub fn value(mut self, key: impl Into<String>, value: impl Into<String>) -> Self {
+        // Safe: called during construction before any async access.
+        // Arc::get_mut fails only if the Arc has been cloned, which cannot happen
+        // during builder-style construction.
         Arc::get_mut(&mut self.data)
-            .expect("with_value must be called during construction")
+            .expect(
+                "MemoryConfigProvider::value() called after Arc was shared; use insert() instead",
+            )
             .get_mut()
             .insert(key.into(), value.into());
         self
@@ -174,7 +178,7 @@ mod tests {
         data.insert("key1".to_string(), "value1".to_string());
         data.insert("key2".to_string(), "value2".to_string());
 
-        let provider = MemoryConfigProvider::with_data(data);
+        let provider = MemoryConfigProvider::from_data(data);
 
         assert_eq!(provider.len().await, 2);
         assert_eq!(

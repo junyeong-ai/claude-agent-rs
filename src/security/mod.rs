@@ -151,7 +151,7 @@ impl SecurityContextBuilder {
             .sandbox_config
             .take()
             .unwrap_or_else(|| SandboxConfig::new(root));
-        self.sandbox_config = Some(config.with_auto_allow_bash(auto_allow));
+        self.sandbox_config = Some(config.auto_allow_bash(auto_allow));
         self
     }
 
@@ -170,9 +170,9 @@ impl SecurityContextBuilder {
 
         let sandbox_config = self.sandbox_config.unwrap_or_else(|| {
             SandboxConfig::disabled()
-                .with_working_dir(root)
-                .with_allowed_paths(self.allowed_paths)
-                .with_denied_paths(self.denied_patterns)
+                .working_dir(root)
+                .allowed_paths(self.allowed_paths)
+                .denied_paths(self.denied_patterns)
         });
 
         let network = self

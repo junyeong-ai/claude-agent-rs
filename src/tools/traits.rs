@@ -33,6 +33,14 @@ pub trait SchemaTool: Send + Sync {
 
     async fn handle(&self, input: Self::Input, context: &ExecutionContext) -> ToolResult;
 
+    /// Override to provide a dynamic description instead of the static DESCRIPTION constant.
+    ///
+    /// When this returns `Some(desc)`, the blanket `Tool` impl uses it in `definition()`.
+    /// The default returns `None`, which falls back to `DESCRIPTION`.
+    fn custom_description(&self) -> Option<String> {
+        None
+    }
+
     fn input_schema() -> serde_json::Value {
         let schema = schemars::schema_for!(Self::Input);
         let mut value =
@@ -48,7 +56,7 @@ pub trait SchemaTool: Send + Sync {
             if !obj.contains_key("additionalProperties") {
                 obj.insert(
                     "additionalProperties".to_string(),
-                    serde_json::Value::Bool(true),
+                    serde_json::Value::Bool(!Self::STRICT),
                 );
             }
         }
@@ -72,9 +80,12 @@ impl<T: SchemaTool + 'static> Tool for T {
     }
 
     fn definition(&self) -> ToolDefinition {
-        let mut definition = ToolDefinition::new(T::NAME, T::DESCRIPTION, T::input_schema());
+        let desc = self
+            .custom_description()
+            .unwrap_or_else(|| T::DESCRIPTION.to_string());
+        let mut definition = ToolDefinition::new(T::NAME, &desc, T::input_schema());
         if T::STRICT {
-            definition = definition.with_strict(true);
+            definition = definition.strict(true);
         }
         definition
     }

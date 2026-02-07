@@ -8,7 +8,6 @@ use super::SchemaTool;
 use super::context::ExecutionContext;
 use crate::types::ToolResult;
 
-/// Input for the Glob tool
 #[derive(Debug, Deserialize, JsonSchema)]
 #[schemars(deny_unknown_fields)]
 pub struct GlobInput {

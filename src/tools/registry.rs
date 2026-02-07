@@ -32,7 +32,7 @@ impl ToolRegistry {
         }
     }
 
-    pub(crate) fn with_env(task_registry: TaskRegistry, env: ToolExecutionEnv) -> Self {
+    pub(crate) fn from_env(task_registry: TaskRegistry, env: ToolExecutionEnv) -> Self {
         Self {
             tools: HashMap::new(),
             task_registry,
@@ -44,7 +44,7 @@ impl ToolRegistry {
         ToolRegistryBuilder::new()
     }
 
-    pub fn with_context(context: ExecutionContext) -> Self {
+    pub fn from_context(context: ExecutionContext) -> Self {
         Self {
             tools: HashMap::new(),
             task_registry: TaskRegistry::new(Arc::new(MemoryPersistence::new())),
@@ -68,7 +68,7 @@ impl ToolRegistry {
     }
 
     #[inline]
-    pub fn context(&self) -> &ExecutionContext {
+    pub fn get_context(&self) -> &ExecutionContext {
         &self.env.context
     }
 
@@ -142,7 +142,7 @@ impl ToolRegistry {
         {
             let truncated = format!(
                 "{}...\n(output truncated at {} bytes)",
-                &content[..max_size],
+                &content[..content.floor_char_boundary(max_size)],
                 max_size
             );
             result.output = ToolOutput::Success(truncated);

@@ -51,25 +51,25 @@ impl SkillExecutor {
     }
 
     /// Create an executor with an empty registry.
-    pub fn with_defaults() -> Self {
+    pub fn defaults() -> Self {
         Self::new(IndexRegistry::new())
     }
 
     /// Set execution callback.
-    pub fn with_callback(mut self, callback: SkillExecutionCallback) -> Self {
+    pub fn callback(mut self, callback: SkillExecutionCallback) -> Self {
         self.execution_callback = Some(callback);
         self.mode = ExecutionMode::Callback;
         self
     }
 
     /// Set callback timeout.
-    pub fn with_callback_timeout(mut self, timeout: Duration) -> Self {
+    pub fn callback_timeout(mut self, timeout: Duration) -> Self {
         self.callback_timeout = timeout;
         self
     }
 
     /// Set execution mode.
-    pub fn with_mode(mut self, mode: ExecutionMode) -> Self {
+    pub fn mode(mut self, mode: ExecutionMode) -> Self {
         self.mode = mode;
         self
     }
@@ -115,7 +115,6 @@ impl SkillExecutor {
 
     /// Execute a skill directly.
     async fn execute_skill(&self, skill: &SkillIndex, args: Option<&str>) -> SkillResult {
-        // Load content using registry cache (fixes cache bypass bug)
         let content = match self.registry.load_content(skill.name()).await {
             Ok(c) => c,
             Err(e) => {
@@ -123,7 +122,6 @@ impl SkillExecutor {
             }
         };
 
-        // Use the new execute() method for full processing pipeline
         let prompt = skill.execute(args.unwrap_or(""), &content).await;
 
         let base_result = match self.mode {
@@ -154,17 +152,26 @@ impl SkillExecutor {
         };
 
         base_result
-            .with_allowed_tools(skill.allowed_tools.clone())
-            .with_model(skill.model.clone())
-            .with_base_dir(skill.base_dir())
+            .allowed_tools(skill.allowed_tools.clone())
+            .model(skill.model.clone())
+            .base_dir(skill.get_base_dir())
     }
 
     fn extract_args(&self, input: &str, skill: &SkillIndex) -> Option<String> {
+        let input_lower = input.to_lowercase();
         for trigger in &skill.triggers {
-            if let Some(pos) = input.to_lowercase().find(&trigger.to_lowercase()) {
-                let after_trigger = &input[pos + trigger.len()..].trim();
-                if !after_trigger.is_empty() {
-                    return Some(after_trigger.to_string());
+            let trigger_lower = trigger.to_lowercase();
+            if let Some(byte_pos) = input_lower.find(&trigger_lower) {
+                // byte_pos is valid for input because to_lowercase() preserves
+                // byte positions for ASCII triggers (slash commands like "/commit").
+                // For safety with non-ASCII triggers, re-derive the end position
+                // from the lowercased string.
+                let end_byte = byte_pos + trigger_lower.len();
+                if end_byte <= input.len() && input.is_char_boundary(end_byte) {
+                    let after_trigger = input[end_byte..].trim();
+                    if !after_trigger.is_empty() {
+                        return Some(after_trigger.to_string());
+                    }
                 }
             }
         }
@@ -199,7 +206,7 @@ impl SkillExecutor {
 
 impl Default for SkillExecutor {
     fn default() -> Self {
-        Self::with_defaults()
+        Self::defaults()
     }
 }
 
@@ -211,7 +218,7 @@ mod tests {
 
     fn test_skill(name: &str, content: &str) -> SkillIndex {
         SkillIndex::new(name, format!("Test skill: {}", name))
-            .with_source(ContentSource::in_memory(content))
+            .source(ContentSource::in_memory(content))
     }
 
     #[test]
@@ -230,7 +237,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_execute_not_found() {
-        let executor = SkillExecutor::with_defaults();
+        let executor = SkillExecutor::defaults();
         let result = executor.execute("nonexistent", None).await;
 
         assert!(!result.success);
@@ -254,8 +261,8 @@ mod tests {
         let mut registry = IndexRegistry::new();
         registry.register(
             SkillIndex::new("commit", "Create commit")
-                .with_source(ContentSource::in_memory("Create commit: $ARGUMENTS"))
-                .with_triggers(["/commit"]),
+                .source(ContentSource::in_memory("Create commit: $ARGUMENTS"))
+                .triggers(["/commit"]),
         );
 
         let executor = SkillExecutor::new(registry);
@@ -272,7 +279,7 @@ mod tests {
         let mut registry = IndexRegistry::new();
         registry.register(test_skill("test", "Test content"));
 
-        let executor = SkillExecutor::new(registry).with_mode(ExecutionMode::DryRun);
+        let executor = SkillExecutor::new(registry).mode(ExecutionMode::DryRun);
         let result = executor.execute("test", None).await;
 
         assert!(result.success);
@@ -308,8 +315,8 @@ mod tests {
         let mut registry = IndexRegistry::new();
         registry.register(
             SkillIndex::new("reader", "Read files")
-                .with_source(ContentSource::in_memory("Read: $ARGUMENTS"))
-                .with_allowed_tools(["Read", "Grep"]),
+                .source(ContentSource::in_memory("Read: $ARGUMENTS"))
+                .allowed_tools(["Read", "Grep"]),
         );
 
         let executor = SkillExecutor::new(registry);
@@ -324,8 +331,8 @@ mod tests {
         let mut registry = IndexRegistry::new();
         registry.register(
             SkillIndex::new("fast", "Fast task")
-                .with_source(ContentSource::in_memory("Do: $ARGUMENTS"))
-                .with_model("claude-haiku-4-5-20251001"),
+                .source(ContentSource::in_memory("Do: $ARGUMENTS"))
+                .model("claude-haiku-4-5-20251001"),
         );
 
         let executor = SkillExecutor::new(registry);

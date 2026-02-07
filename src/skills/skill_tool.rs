@@ -29,12 +29,12 @@ impl SkillTool {
     }
 
     /// Create a SkillTool with an empty registry.
-    pub fn with_defaults() -> Self {
-        Self::new(SkillExecutor::with_defaults())
+    pub fn defaults() -> Self {
+        Self::new(SkillExecutor::defaults())
     }
 
     /// Create a SkillTool with a pre-populated registry.
-    pub fn with_registry(registry: IndexRegistry<SkillIndex>) -> Self {
+    pub fn registry(registry: IndexRegistry<SkillIndex>) -> Self {
         Self::new(SkillExecutor::new(registry))
     }
 
@@ -54,7 +54,11 @@ impl SkillTool {
     pub async fn description_with_skills(&self) -> String {
         let executor = self.executor.read().await;
         let registry = executor.registry();
+        Self::build_description(registry)
+    }
 
+    /// Build the full dynamic description from a registry snapshot.
+    fn build_description(registry: &IndexRegistry<SkillIndex>) -> String {
         let skills_section = if registry.is_empty() {
             "<skill>\n<name>No skills registered</name>\n<description>Register skills using IndexRegistry</description>\n</skill>".to_string()
         } else {
@@ -133,7 +137,7 @@ Important:
 
 impl Default for SkillTool {
     fn default() -> Self {
-        Self::with_defaults()
+        Self::defaults()
     }
 }
 
@@ -152,35 +156,17 @@ impl SchemaTool for SkillTool {
     type Input = SkillInput;
 
     const NAME: &'static str = "Skill";
-    const DESCRIPTION: &'static str = r#"Execute a skill within the main conversation
+    const DESCRIPTION: &'static str = "Execute a skill within the main conversation. Use description_with_skills() for the full dynamic description including available skills.";
 
-<skills_instructions>
-When users ask you to perform tasks, check if any of the available skills below can help complete the task more effectively. Skills provide specialized capabilities and domain knowledge.
-
-When users ask you to run a "slash command" or reference "/<something>" (e.g., "/commit", "/review-pr"), they are referring to a skill. Use this tool to invoke the corresponding skill.
-
-<example>
-User: "run /commit"
-Assistant: [Calls Skill tool with skill: "commit"]
-</example>
-
-How to invoke:
-- Use this tool with the skill name and optional arguments
-- Examples:
-  - `skill: "pdf"` - invoke the pdf skill
-  - `skill: "commit", args: "-m 'Fix bug'"` - invoke with arguments
-  - `skill: "review-pr", args: "123"` - invoke with arguments
-  - `skill: "ms-office-suite:pdf"` - invoke using fully qualified name
-
-Important:
-- When a skill is relevant, you must invoke this tool IMMEDIATELY as your first action
-- NEVER just announce or mention a skill in your text response without actually calling this tool
-- This is a BLOCKING REQUIREMENT: invoke the relevant Skill tool BEFORE generating any other response about the task
-- Only use skills that are registered and available
-- Do not invoke a skill that is already running
-</skills_instructions>
-
-Note: For the full list of available skills, use description_with_skills() method when building system prompts."#;
+    fn custom_description(&self) -> Option<String> {
+        // try_read() is intentional: custom_description() is sync (called from Tool::definition()),
+        // so we cannot .await. On lock contention, falls back to static DESCRIPTION — acceptable
+        // because definition() is typically called during setup, not under write-lock contention.
+        self.executor
+            .try_read()
+            .ok()
+            .map(|executor| Self::build_description(executor.registry()))
+    }
 
     async fn handle(&self, input: SkillInput, _context: &ExecutionContext) -> ToolResult {
         let executor = self.executor.read().await;
@@ -210,7 +196,7 @@ mod tests {
     }
 
     fn test_skill(name: &str, description: &str, content: &str) -> SkillIndex {
-        SkillIndex::new(name, description).with_source(ContentSource::in_memory(content))
+        SkillIndex::new(name, description).source(ContentSource::in_memory(content))
     }
 
     #[tokio::test]
@@ -218,7 +204,7 @@ mod tests {
         let mut registry = IndexRegistry::new();
         registry.register(test_skill("test", "Test skill", "Execute with: $ARGUMENTS"));
 
-        let tool = SkillTool::with_registry(registry);
+        let tool = SkillTool::registry(registry);
         let context = test_context();
 
         let result = tool
@@ -239,7 +225,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_skill_tool_not_found() {
-        let tool = SkillTool::with_defaults();
+        let tool = SkillTool::defaults();
         let context = test_context();
 
         let result = tool
@@ -256,7 +242,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_skill_tool_with_defaults() {
-        let tool = SkillTool::with_defaults();
+        let tool = SkillTool::defaults();
         let executor = tool.executor.read().await;
         assert!(!executor.has_skill("nonexistent"));
     }
@@ -267,7 +253,7 @@ mod tests {
         registry.register(test_skill("test-skill", "A test skill", "template"));
         registry.register(test_skill("another-skill", "Another skill", "template"));
 
-        let tool = SkillTool::with_registry(registry);
+        let tool = SkillTool::registry(registry);
         let desc = tool.description_with_skills().await;
 
         assert!(desc.contains("<skills_instructions>"));
@@ -283,12 +269,12 @@ mod tests {
         let mut registry = IndexRegistry::new();
         registry.register(
             SkillIndex::new("reader", "Read files")
-                .with_source(ContentSource::in_memory("content"))
-                .with_allowed_tools(["Read", "Grep"])
-                .with_argument_hint("<file_path>"),
+                .source(ContentSource::in_memory("content"))
+                .allowed_tools(["Read", "Grep"])
+                .argument_hint("<file_path>"),
         );
 
-        let tool = SkillTool::with_registry(registry);
+        let tool = SkillTool::registry(registry);
         let desc = tool.description_with_skills().await;
 
         assert!(desc.contains("<tools>Read, Grep</tools>"));
@@ -297,7 +283,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_register_skill() {
-        let tool = SkillTool::with_defaults();
+        let tool = SkillTool::defaults();
 
         tool.register_skill(test_skill("dynamic", "Dynamic skill", "content"))
             .await;
@@ -307,13 +293,14 @@ mod tests {
     }
 
     #[test]
-    fn test_description_has_skills_instructions_tag() {
+    fn test_definition_has_skills_instructions_tag() {
         use crate::tools::Tool;
 
-        let tool = SkillTool::with_defaults();
-        let desc = tool.description();
+        let tool = SkillTool::defaults();
+        let def = tool.definition();
 
-        assert!(desc.contains("<skills_instructions>"));
-        assert!(desc.contains("</skills_instructions>"));
+        assert!(def.description.contains("<skills_instructions>"));
+        assert!(def.description.contains("</skills_instructions>"));
+        assert!(def.description.contains("<available_skills>"));
     }
 }

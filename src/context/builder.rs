@@ -3,7 +3,7 @@
 use std::path::{Path, PathBuf};
 
 use crate::client::DEFAULT_MODEL;
-use crate::common::{Index, IndexRegistry};
+use crate::common::IndexRegistry;
 use crate::skills::SkillIndex;
 
 use super::ContextResult;
@@ -59,32 +59,32 @@ impl ContextBuilder {
         self
     }
 
-    pub fn with_skill(mut self, skill: SkillIndex) -> Self {
+    pub fn skill(mut self, skill: SkillIndex) -> Self {
         self.skill_registry.register(skill);
         self
     }
 
-    pub fn with_skills(mut self, skills: impl IntoIterator<Item = SkillIndex>) -> Self {
+    pub fn skills(mut self, skills: impl IntoIterator<Item = SkillIndex>) -> Self {
         self.skill_registry.register_all(skills);
         self
     }
 
-    pub fn with_skill_registry(mut self, registry: IndexRegistry<SkillIndex>) -> Self {
+    pub fn skill_registry(mut self, registry: IndexRegistry<SkillIndex>) -> Self {
         self.skill_registry = registry;
         self
     }
 
-    pub fn with_rule(mut self, rule: RuleIndex) -> Self {
+    pub fn rule(mut self, rule: RuleIndex) -> Self {
         self.rule_registry.register(rule);
         self
     }
 
-    pub fn with_rules(mut self, rules: impl IntoIterator<Item = RuleIndex>) -> Self {
+    pub fn rules(mut self, rules: impl IntoIterator<Item = RuleIndex>) -> Self {
         self.rule_registry.register_all(rules);
         self
     }
 
-    pub fn with_rule_registry(mut self, registry: IndexRegistry<RuleIndex>) -> Self {
+    pub fn rule_registry(mut self, registry: IndexRegistry<RuleIndex>) -> Self {
         self.rule_registry = registry;
         self
     }
@@ -115,53 +115,44 @@ impl ContextBuilder {
         let mut static_context = StaticContext::new();
 
         if let Some(ref prompt) = self.system_prompt {
-            static_context = static_context.with_system_prompt(prompt.clone());
+            static_context = static_context.system_prompt(prompt.clone());
         }
 
         if let Some(ref md) = self.claude_md {
-            static_context = static_context.with_claude_md(md.clone());
+            static_context = static_context.claude_md(md.clone());
         }
 
         let skill_summary = self.build_skill_summary();
         if !skill_summary.is_empty() {
-            static_context = static_context.with_skill_summary(skill_summary);
+            static_context = static_context.skill_summary(skill_summary);
         }
 
-        // Build rules summary for static context
         let rules_summary = self.build_rules_summary();
         if !rules_summary.is_empty() {
-            static_context = static_context.with_rules_summary(rules_summary);
+            static_context = static_context.rules_summary(rules_summary);
         }
 
         let orchestrator = PromptOrchestrator::new(static_context, &self.model)
-            .with_rule_registry(self.rule_registry)
-            .with_skill_registry(self.skill_registry);
+            .rule_registry(self.rule_registry)
+            .skill_registry(self.skill_registry);
 
         Ok(orchestrator)
     }
 
     fn build_skill_summary(&self) -> String {
-        if self.skill_registry.is_empty() {
+        let summary = self.skill_registry.build_summary();
+        if summary.is_empty() {
             return String::new();
         }
-
-        let mut lines = vec!["# Available Skills".to_string()];
-        for skill in self.skill_registry.iter() {
-            lines.push(skill.to_summary_line());
-        }
-        lines.join("\n")
+        format!("# Available Skills\n{summary}")
     }
 
     fn build_rules_summary(&self) -> String {
-        if self.rule_registry.is_empty() {
+        let summary = self.rule_registry.build_priority_summary();
+        if summary.is_empty() {
             return String::new();
         }
-
-        let mut lines = vec!["# Available Rules".to_string()];
-        for rule in self.rule_registry.sorted_by_priority() {
-            lines.push(rule.to_summary_line());
-        }
-        lines.join("\n")
+        format!("# Available Rules\n{summary}")
     }
 }
 
@@ -187,9 +178,9 @@ mod tests {
     fn test_context_builder_with_skills() {
         let skill = SkillIndex::new("test", "A test skill");
 
-        let orchestrator = ContextBuilder::new().with_skill(skill).build().unwrap();
+        let orchestrator = ContextBuilder::new().skill(skill).build().unwrap();
 
-        assert!(!orchestrator.static_context().skill_index_summary.is_empty());
+        assert!(!orchestrator.static_context().skill_summary.is_empty());
     }
 
     #[tokio::test]
@@ -237,14 +228,14 @@ paths: **/*.rs
         use crate::common::ContentSource;
 
         let rule = RuleIndex::new("test-rule")
-            .with_description("Test description")
-            .with_paths(vec!["**/*.rs".into()])
-            .with_source(ContentSource::in_memory("Rule content"));
+            .description("Test description")
+            .paths(vec!["**/*.rs".into()])
+            .source(ContentSource::in_memory("Rule content"));
 
-        let orchestrator = ContextBuilder::new().with_rule(rule).build().unwrap();
+        let orchestrator = ContextBuilder::new().rule(rule).build().unwrap();
 
         // Check that rule is in the registry
-        let registry = orchestrator.rule_registry().await;
+        let registry = orchestrator.get_rule_registry().await;
         assert!(registry.contains("test-rule"));
     }
 }

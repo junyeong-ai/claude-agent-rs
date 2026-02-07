@@ -1,3 +1,5 @@
+use rust_decimal::Decimal;
+
 use super::{ContextWindow, PricingTier, TokenBudget, WindowStatus};
 use crate::models::ModelSpec;
 
@@ -65,8 +67,8 @@ impl TokenTracker {
         }
     }
 
-    pub fn with_thresholds(mut self, warning: f64, critical: f64) -> Self {
-        self.context_window = self.context_window.with_thresholds(warning, critical);
+    pub fn thresholds(mut self, warning: f64, critical: f64) -> Self {
+        self.context_window = self.context_window.thresholds(warning, critical);
         self
     }
 
@@ -131,8 +133,8 @@ impl TokenTracker {
         PricingTier::for_context(self.context_window.usage())
     }
 
-    pub fn total_cost(&self) -> f64 {
-        self.model_spec.pricing.calculate(
+    pub fn total_cost(&self) -> Decimal {
+        self.model_spec.pricing.calculate_raw(
             self.cumulative.input_tokens,
             self.cumulative.output_tokens,
             self.cumulative.cache_read_tokens,
@@ -152,11 +154,11 @@ impl TokenTracker {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::models::read_registry;
+    use crate::models::registry;
 
     #[test]
     fn test_preflight_ok() {
-        let spec = read_registry().resolve("sonnet").unwrap().clone();
+        let spec = registry().resolve("sonnet").unwrap().clone();
         let tracker = TokenTracker::new(spec, false);
 
         let result = tracker.check(50_000);
@@ -166,7 +168,7 @@ mod tests {
 
     #[test]
     fn test_preflight_warning() {
-        let spec = read_registry().resolve("sonnet").unwrap().clone();
+        let spec = registry().resolve("sonnet").unwrap().clone();
         let tracker = TokenTracker::new(spec, false);
 
         let result = tracker.check(180_000);
@@ -176,7 +178,7 @@ mod tests {
 
     #[test]
     fn test_preflight_exceeded() {
-        let spec = read_registry().resolve("sonnet").unwrap().clone();
+        let spec = registry().resolve("sonnet").unwrap().clone();
         let tracker = TokenTracker::new(spec, false);
 
         let result = tracker.check(250_000);
@@ -186,7 +188,7 @@ mod tests {
 
     #[test]
     fn test_extended_context_not_exceeded() {
-        let spec = read_registry().resolve("sonnet").unwrap().clone();
+        let spec = registry().resolve("sonnet").unwrap().clone();
         let tracker = TokenTracker::new(spec, true);
 
         let result = tracker.check(500_000);

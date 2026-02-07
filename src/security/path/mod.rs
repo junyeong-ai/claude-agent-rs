@@ -4,12 +4,11 @@ mod resolver;
 
 pub use resolver::SafePath;
 
-use std::ffi::OsString;
 use std::path::{Component, Path, PathBuf};
 
-pub const DEFAULT_MAX_SYMLINK_DEPTH: u8 = 10;
+pub(crate) const DEFAULT_MAX_SYMLINK_DEPTH: u8 = 10;
 
-pub fn normalize_path(path: &Path) -> PathBuf {
+pub(crate) fn normalize_path(path: &Path) -> PathBuf {
     let mut components = Vec::new();
 
     for component in path.components() {
@@ -36,15 +35,6 @@ pub fn normalize_path(path: &Path) -> PathBuf {
     }
 }
 
-pub fn extract_relative_components(path: &Path) -> Vec<OsString> {
-    path.components()
-        .filter_map(|c| match c {
-            Component::Normal(s) => Some(s.to_os_string()),
-            _ => None,
-        })
-        .collect()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -60,14 +50,5 @@ mod tests {
             normalize_path(Path::new("/a/b/../../c")),
             PathBuf::from("/c")
         );
-    }
-
-    #[test]
-    fn test_extract_relative_components() {
-        let components = extract_relative_components(Path::new("/a/b/c"));
-        assert_eq!(components.len(), 3);
-        assert_eq!(components[0], "a");
-        assert_eq!(components[1], "b");
-        assert_eq!(components[2], "c");
     }
 }

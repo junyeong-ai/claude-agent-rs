@@ -29,13 +29,13 @@ impl KillShellTool {
         }
     }
 
-    pub fn with_process_manager(manager: Arc<ProcessManager>) -> Self {
+    pub fn process_manager(manager: Arc<ProcessManager>) -> Self {
         Self {
             process_manager: manager,
         }
     }
 
-    pub fn process_manager(&self) -> &Arc<ProcessManager> {
+    pub fn get_process_manager(&self) -> &Arc<ProcessManager> {
         &self.process_manager
     }
 }
@@ -91,7 +91,7 @@ mod tests {
         let mgr = Arc::new(ProcessManager::new());
         let id = mgr.spawn("sleep 10", &PathBuf::from("/tmp")).await.unwrap();
 
-        let tool = KillShellTool::with_process_manager(mgr.clone());
+        let tool = KillShellTool::process_manager(mgr.clone());
         let context = ExecutionContext::default();
         let result = tool
             .execute(serde_json::json!({"shell_id": id}), &context)

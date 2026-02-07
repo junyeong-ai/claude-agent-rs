@@ -11,7 +11,7 @@ pub fn bash_subagent() -> SubagentIndex {
         "Bash",
         "Command execution specialist for running bash commands. Use this for git operations, command execution, and other terminal tasks.",
     )
-    .with_source(ContentSource::in_memory(
+    .source(ContentSource::in_memory(
         r#"You are a Bash agent specialized for command execution.
 
 Your task is to execute shell commands efficiently and safely:
@@ -21,9 +21,9 @@ Your task is to execute shell commands efficiently and safely:
 
 Always verify command safety before execution. Return clear, concise results."#,
     ))
-    .with_source_type(SourceType::Builtin)
-    .with_tools(["Bash"])
-    .with_model_type(ModelType::Small)
+    .source_type(SourceType::Builtin)
+    .tools(["Bash"])
+    .model_type(ModelType::Small)
 }
 
 /// Explore agent - Fast codebase exploration.
@@ -33,7 +33,7 @@ pub fn explore_subagent() -> SubagentIndex {
         "Explore",
         "Fast agent specialized for exploring codebases. Use this when you need to quickly find files by patterns, search code for keywords, or answer questions about the codebase. When calling this agent, specify the desired thoroughness level: \"quick\" for basic searches, \"medium\" for moderate exploration, or \"very thorough\" for comprehensive analysis across multiple locations and naming conventions.",
     )
-    .with_source(ContentSource::in_memory(
+    .source(ContentSource::in_memory(
         r#"You are an Explore agent specialized for investigating codebases.
 
 Your task is to quickly find relevant information through:
@@ -48,9 +48,9 @@ Thoroughness levels:
 
 Be thorough but efficient. Return a concise summary of your findings."#,
     ))
-    .with_source_type(SourceType::Builtin)
-    .with_tools(["Read", "Grep", "Glob", "Bash", "TodoWrite", "KillShell"])
-    .with_model_type(ModelType::Small)
+    .source_type(SourceType::Builtin)
+    .tools(["Read", "Grep", "Glob", "Bash", "TodoWrite", "KillShell"])
+    .model_type(ModelType::Small)
 }
 
 /// Plan agent - Software architect for implementation planning.
@@ -60,7 +60,7 @@ pub fn plan_subagent() -> SubagentIndex {
         "Plan",
         "Software architect agent for designing implementation plans. Use this when you need to plan the implementation strategy for a task. Returns step-by-step plans, identifies critical files, and considers architectural trade-offs.",
     )
-    .with_source(ContentSource::in_memory(
+    .source(ContentSource::in_memory(
         r#"You are a Plan agent for designing implementation strategies.
 
 Your task is to:
@@ -76,9 +76,9 @@ Present your plan clearly with:
 - Potential risks or considerations
 - Recommended approach with rationale"#,
     ))
-    .with_source_type(SourceType::Builtin)
-    .with_tools(["Read", "Grep", "Glob", "Bash", "TodoWrite", "KillShell"])
-    .with_model_type(ModelType::Primary)
+    .source_type(SourceType::Builtin)
+    .tools(["Read", "Grep", "Glob", "Bash", "TodoWrite", "KillShell"])
+    .model_type(ModelType::Primary)
 }
 
 /// General-purpose agent - Full capability for complex tasks.
@@ -88,7 +88,7 @@ pub fn general_purpose_subagent() -> SubagentIndex {
         "general-purpose",
         "General-purpose agent for researching complex questions, searching for code, and executing multi-step tasks. When you are searching for a keyword or file and are not confident that you will find the right match in the first few tries, use this agent to perform the search for you.",
     )
-    .with_source(ContentSource::in_memory(
+    .source(ContentSource::in_memory(
         r#"You are a general-purpose agent capable of handling complex, multi-step tasks.
 
 You have full access to all tools and can:
@@ -105,8 +105,8 @@ Work autonomously and methodically:
 4. Verify results
 5. Return comprehensive results when complete"#,
     ))
-    .with_source_type(SourceType::Builtin)
-    .with_model_type(ModelType::Primary)
+    .source_type(SourceType::Builtin)
+    .model_type(ModelType::Primary)
 }
 
 pub fn builtin_subagents() -> Vec<SubagentIndex> {

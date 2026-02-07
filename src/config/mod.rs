@@ -36,45 +36,26 @@ pub use validator::{ConfigValidator, ValueType};
 
 use thiserror::Error;
 
-/// Errors that can occur in configuration operations
 #[derive(Error, Debug)]
 pub enum ConfigError {
-    /// Key not found
     #[error("Key not found: {key}")]
-    NotFound {
-        /// The key that was not found
-        key: String,
-    },
+    NotFound { key: String },
 
-    /// Invalid configuration value
     #[error("Invalid value for {key}: {message}")]
-    InvalidValue {
-        /// The key with invalid value
-        key: String,
-        /// Error message
-        message: String,
-    },
+    InvalidValue { key: String, message: String },
 
-    /// Serialization/deserialization error
     #[error("Serialization error: {0}")]
     Serialization(#[from] serde_json::Error),
 
-    /// IO error (file operations)
     #[error("IO error: {0}")]
     Io(#[from] std::io::Error),
 
-    /// Environment variable error
     #[error("Environment error: {0}")]
     Env(#[from] std::env::VarError),
 
-    /// Provider error
     #[error("Provider error: {message}")]
-    Provider {
-        /// Error message
-        message: String,
-    },
+    Provider { message: String },
 
-    /// Multiple validation errors
     #[error("{0}")]
     ValidationErrors(ValidationErrors),
 }
@@ -90,36 +71,30 @@ impl std::fmt::Display for ValidationErrors {
     }
 }
 
-/// Result type for configuration operations
 pub type ConfigResult<T> = std::result::Result<T, ConfigError>;
 
-/// Configuration builder for fluent API
 pub struct ConfigBuilder {
     providers: Vec<Box<dyn ConfigProvider>>,
 }
 
 impl ConfigBuilder {
-    /// Create a new configuration builder
     pub fn new() -> Self {
         Self {
             providers: Vec::new(),
         }
     }
 
-    /// Add environment variable provider
     pub fn env(mut self) -> Self {
         self.providers.push(Box::new(EnvConfigProvider::new()));
         self
     }
 
-    /// Add environment variable provider with prefix
     pub fn env_with_prefix(mut self, prefix: &str) -> Self {
         self.providers
-            .push(Box::new(EnvConfigProvider::with_prefix(prefix)));
+            .push(Box::new(EnvConfigProvider::prefixed(prefix)));
         self
     }
 
-    /// Add file provider
     pub fn file(mut self, path: impl AsRef<std::path::Path>) -> Self {
         self.providers.push(Box::new(FileConfigProvider::new(
             path.as_ref().to_path_buf(),
@@ -127,19 +102,16 @@ impl ConfigBuilder {
         self
     }
 
-    /// Add memory provider
     pub fn memory(mut self, provider: MemoryConfigProvider) -> Self {
         self.providers.push(Box::new(provider));
         self
     }
 
-    /// Add a custom provider
     pub fn provider(mut self, provider: Box<dyn ConfigProvider>) -> Self {
         self.providers.push(provider);
         self
     }
 
-    /// Build the composite configuration
     pub async fn build(self) -> ConfigResult<CompositeConfigProvider> {
         let mut composite = CompositeConfigProvider::new();
         for provider in self.providers {

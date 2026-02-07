@@ -9,7 +9,6 @@ use super::context::ExecutionContext;
 use crate::security::fs::SecureFileHandle;
 use crate::types::ToolResult;
 
-/// Input for the Write tool
 #[derive(Debug, Deserialize, JsonSchema)]
 #[schemars(deny_unknown_fields)]
 pub struct WriteInput {

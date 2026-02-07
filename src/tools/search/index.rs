@@ -1,6 +1,7 @@
 //! Tool index for efficient searching.
 
 use crate::mcp::McpToolDefinition;
+use crate::types::estimate_tool_tokens;
 
 #[derive(Debug, Clone)]
 pub struct ToolIndexEntry {
@@ -16,7 +17,8 @@ pub struct ToolIndexEntry {
 impl ToolIndexEntry {
     pub fn from_mcp_tool(server: &str, tool: &McpToolDefinition) -> Self {
         let (arg_names, arg_descriptions) = Self::extract_arg_info(&tool.input_schema);
-        let estimated_tokens = Self::estimate_tokens(tool);
+        let estimated_tokens =
+            estimate_tool_tokens(&tool.name, &tool.description, &tool.input_schema);
 
         Self {
             qualified_name: crate::mcp::make_mcp_name(server, &tool.name),
@@ -43,13 +45,6 @@ impl ToolIndexEntry {
         }
 
         (names, descs)
-    }
-
-    fn estimate_tokens(tool: &McpToolDefinition) -> usize {
-        let name_tokens = tool.name.len() / 4;
-        let desc_tokens = tool.description.len() / 4;
-        let schema_tokens = tool.input_schema.to_string().len() / 4;
-        name_tokens + desc_tokens + schema_tokens + 20
     }
 
     pub fn searchable_text(&self) -> String {
@@ -129,7 +124,7 @@ mod tests {
         let tool = make_test_tool("read_file", "Read a file from disk");
         let entry = ToolIndexEntry::from_mcp_tool("filesystem", &tool);
 
-        assert_eq!(entry.qualified_name, "mcp__filesystem_read_file");
+        assert_eq!(entry.qualified_name, "mcp__filesystem__read_file");
         assert_eq!(entry.server_name, "filesystem");
         assert_eq!(entry.tool_name, "read_file");
         assert!(entry.estimated_tokens > 0);
@@ -158,6 +153,6 @@ mod tests {
         index.add(entry);
         assert_eq!(index.len(), 1);
         assert_eq!(index.total_tokens(), tokens);
-        assert!(index.get("mcp__server_test").is_some());
+        assert!(index.get("mcp__server__test").is_some());
     }
 }

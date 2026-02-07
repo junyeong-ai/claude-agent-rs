@@ -22,23 +22,32 @@ use super::{McpContent, McpServerInfo};
 use rmcp::{
     RoleClient,
     model::{CallToolRequestParam, ReadResourceRequestParam},
-    service::{RunningService, ServiceExt},
+    service::{RunningService, ServiceError, ServiceExt},
     transport::{ConfigureCommandExt, TokioChildProcess},
 };
 #[cfg(feature = "mcp")]
 use tokio::process::Command;
 
-/// Type alias for the running MCP service
 #[cfg(feature = "mcp")]
 type McpRunningService = RunningService<RoleClient, ()>;
 
-/// MCP client wrapper for rmcp
+/// Convert rmcp ServiceError into our McpError, preserving JSON-RPC error codes.
+#[cfg(feature = "mcp")]
+fn map_service_error(e: ServiceError, context: &str) -> McpError {
+    match e {
+        ServiceError::McpError(err_data) => McpError::JsonRpc {
+            code: err_data.code.0,
+            message: err_data.message.to_string(),
+        },
+        _ => McpError::Protocol {
+            message: format!("{}: {}", context, e),
+        },
+    }
+}
+
 pub struct McpClient {
-    /// Server name
     name: String,
-    /// Server state
     state: McpServerState,
-    /// rmcp service handle
     #[cfg(feature = "mcp")]
     service: Option<Arc<RwLock<McpRunningService>>>,
     #[cfg(not(feature = "mcp"))]
@@ -46,7 +55,6 @@ pub struct McpClient {
 }
 
 impl McpClient {
-    /// Create a new MCP client
     pub fn new(name: impl Into<String>, config: McpServerConfig) -> Self {
         let name = name.into();
         Self {
@@ -59,7 +67,6 @@ impl McpClient {
         }
     }
 
-    /// Connect to the MCP server
     #[cfg(feature = "mcp")]
     pub async fn connect(&mut self) -> McpResult<()> {
         match &self.state.config {
@@ -75,7 +82,6 @@ impl McpClient {
         }
     }
 
-    /// Connect to the MCP server (stub when feature disabled)
     #[cfg(not(feature = "mcp"))]
     pub async fn connect(&mut self) -> McpResult<()> {
         Err(McpError::Protocol {
@@ -83,7 +89,6 @@ impl McpClient {
         })
     }
 
-    /// Connect via stdio transport
     #[cfg(feature = "mcp")]
     async fn connect_stdio(
         &mut self,
@@ -103,7 +108,6 @@ impl McpClient {
             message: format!("Failed to create transport: {}", e),
         })?;
 
-        // Create client service using rmcp's serve pattern with timeout
         let service: McpRunningService = timeout(super::MCP_CONNECT_TIMEOUT, ().serve(transport))
             .await
             .map_err(|_| McpError::ConnectionFailed {
@@ -116,24 +120,30 @@ impl McpClient {
                 message: format!("Failed to connect: {}", e),
             })?;
 
-        // Get server info
         if let Some(info) = service.peer_info() {
+            let protocol_version = info.protocol_version.to_string();
+
+            if !super::SUPPORTED_PROTOCOL_VERSIONS.contains(&protocol_version.as_str()) {
+                tracing::warn!(
+                    server = %self.name,
+                    server_version = %protocol_version,
+                    supported = ?super::SUPPORTED_PROTOCOL_VERSIONS,
+                    "MCP protocol version mismatch"
+                );
+            }
+
             self.state.server_info = Some(McpServerInfo {
                 name: info.server_info.name.to_string(),
                 version: info.server_info.version.to_string(),
-                protocol_version: info.protocol_version.to_string(),
+                protocol_version,
             });
         }
         self.state.status = McpConnectionStatus::Connected;
 
-        // List and cache tools
-        let tools_result =
-            service
-                .list_tools(Default::default())
-                .await
-                .map_err(|e| McpError::Protocol {
-                    message: format!("Failed to list tools: {}", e),
-                })?;
+        let tools_result = service
+            .list_tools(Default::default())
+            .await
+            .map_err(|e| map_service_error(e, "Failed to list tools"))?;
 
         self.state.tools = tools_result
             .tools
@@ -145,7 +155,6 @@ impl McpClient {
             })
             .collect();
 
-        // List and cache resources (optional, may fail)
         if let Ok(resources_result) = service.list_resources(Default::default()).await {
             self.state.resources = resources_result
                 .resources
@@ -159,55 +168,52 @@ impl McpClient {
                 .collect();
         }
 
-        // Store service handle
         self.service = Some(Arc::new(RwLock::new(service)));
 
         Ok(())
     }
 
-    /// Connect via SSE transport
+    /// Connect via SSE transport.
     ///
-    /// Note: SSE client transport requires rmcp's server-side SSE support.
-    /// Currently only stdio transport is fully supported.
+    /// SSE transport is not yet supported by the rmcp crate.
+    /// The MCP specification has moved to Streamable HTTP as the preferred
+    /// remote transport. Use stdio transport for local servers.
     #[cfg(feature = "mcp")]
     async fn connect_sse(
         &mut self,
-        _url: String,
+        url: String,
         _headers: HashMap<String, String>,
     ) -> McpResult<()> {
-        // SSE client transport is not yet available in rmcp 0.12
-        // When rmcp adds SSE client support, this can be implemented
         Err(McpError::Protocol {
-            message: "SSE client transport not available. Use stdio transport instead.".into(),
+            message: format!(
+                "SSE transport is not supported (url: {}). \
+                 Use stdio transport for local MCP servers, or wait for \
+                 Streamable HTTP transport support.",
+                url
+            ),
         })
     }
 
-    /// Get server name
     pub fn name(&self) -> &str {
         &self.name
     }
 
-    /// Get server state
     pub fn state(&self) -> &McpServerState {
         &self.state
     }
 
-    /// Check if connected
     pub fn is_connected(&self) -> bool {
         self.state.is_connected()
     }
 
-    /// Get available tools
     pub fn tools(&self) -> &[McpToolDefinition] {
         &self.state.tools
     }
 
-    /// Get available resources
     pub fn resources(&self) -> &[McpResourceDefinition] {
         &self.state.resources
     }
 
-    /// Call a tool
     #[cfg(feature = "mcp")]
     pub async fn call_tool(&self, name: &str, arguments: Value) -> McpResult<McpToolResult> {
         use tokio::time::timeout;
@@ -231,9 +237,7 @@ impl McpClient {
         .map_err(|_| McpError::ToolError {
             message: format!("Tool call timed out after {:?}", super::MCP_CALL_TIMEOUT),
         })?
-        .map_err(|e| McpError::ToolError {
-            message: format!("Tool call failed: {}", e),
-        })?;
+        .map_err(|e| map_service_error(e, "Tool call failed"))?;
 
         let content = result
             .content
@@ -298,7 +302,6 @@ impl McpClient {
         })
     }
 
-    /// Call a tool (stub when feature disabled)
     #[cfg(not(feature = "mcp"))]
     pub async fn call_tool(
         &self,
@@ -310,7 +313,6 @@ impl McpClient {
         })
     }
 
-    /// Read a resource
     #[cfg(feature = "mcp")]
     pub async fn read_resource(&self, uri: &str) -> McpResult<Vec<McpContent>> {
         use tokio::time::timeout;
@@ -331,9 +333,7 @@ impl McpClient {
         .map_err(|_| McpError::ResourceNotFound {
             uri: format!("{}: timed out after {:?}", uri, super::MCP_RESOURCE_TIMEOUT),
         })?
-        .map_err(|e| McpError::ResourceNotFound {
-            uri: format!("{}: {}", uri, e),
-        })?;
+        .map_err(|e| map_service_error(e, &format!("Resource read failed for {}", uri)))?;
 
         Ok(result
             .contents
@@ -365,7 +365,6 @@ impl McpClient {
             .collect())
     }
 
-    /// Read a resource (stub when feature disabled)
     #[cfg(not(feature = "mcp"))]
     pub async fn read_resource(&self, _uri: &str) -> McpResult<Vec<super::McpContent>> {
         Err(McpError::Protocol {
@@ -373,7 +372,6 @@ impl McpClient {
         })
     }
 
-    /// Close the connection
     #[cfg(feature = "mcp")]
     pub async fn close(&mut self) -> McpResult<()> {
         if let Some(service_arc) = self.service.take() {
@@ -403,7 +401,6 @@ impl McpClient {
         Ok(())
     }
 
-    /// Close the connection (stub when feature disabled)
     #[cfg(not(feature = "mcp"))]
     pub async fn close(&mut self) -> McpResult<()> {
         self.state.status = McpConnectionStatus::Disconnected;

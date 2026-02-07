@@ -28,40 +28,40 @@ pub trait MemoryProvider: Send + Sync {
 ///
 /// # Example
 /// ```
-/// use claude_agent::context::InMemoryProvider;
+/// use claude_agent::context::MemoryContextProvider;
 ///
-/// let provider = InMemoryProvider::new()
-///     .with_claude_md("# Project Rules\nUse async/await for all I/O.");
+/// let provider = MemoryContextProvider::new()
+///     .claude_md("# Project Rules\nUse async/await for all I/O.");
 /// ```
 #[derive(Debug, Clone, Default)]
-pub struct InMemoryProvider {
+pub struct MemoryContextProvider {
     /// Content to include as CLAUDE.md.
     pub claude_md: Vec<String>,
     /// Content to include as CLAUDE.local.md.
     pub local_md: Vec<String>,
 }
 
-impl InMemoryProvider {
-    /// Creates a new empty InMemoryProvider.
+impl MemoryContextProvider {
+    /// Creates a new empty MemoryContextProvider.
     pub fn new() -> Self {
         Self::default()
     }
 
     /// Adds content to the CLAUDE.md section.
-    pub fn with_claude_md(mut self, content: impl Into<String>) -> Self {
+    pub fn claude_md(mut self, content: impl Into<String>) -> Self {
         self.claude_md.push(content.into());
         self
     }
 
     /// Adds content to the CLAUDE.local.md section.
-    pub fn with_local_md(mut self, content: impl Into<String>) -> Self {
+    pub fn local_md(mut self, content: impl Into<String>) -> Self {
         self.local_md.push(content.into());
         self
     }
 }
 
 #[async_trait]
-impl MemoryProvider for InMemoryProvider {
+impl MemoryProvider for MemoryContextProvider {
     fn name(&self) -> &str {
         "in-memory"
     }
@@ -117,9 +117,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_in_memory_provider() {
-        let provider = InMemoryProvider::new()
-            .with_claude_md("# Project Rules")
-            .with_claude_md("Use async/await.");
+        let provider = MemoryContextProvider::new()
+            .claude_md("# Project Rules")
+            .claude_md("Use async/await.");
 
         let content = provider.load().await.unwrap();
         assert_eq!(content.claude_md.len(), 2);
@@ -128,9 +128,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_in_memory_provider_with_local() {
-        let provider = InMemoryProvider::new()
-            .with_claude_md("Shared rules")
-            .with_local_md("Local settings");
+        let provider = MemoryContextProvider::new()
+            .claude_md("Shared rules")
+            .local_md("Local settings");
 
         let content = provider.load().await.unwrap();
         assert_eq!(content.claude_md.len(), 1);
@@ -139,7 +139,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_empty_provider() {
-        let provider = InMemoryProvider::new();
+        let provider = MemoryContextProvider::new();
         let content = provider.load().await.unwrap();
         assert!(content.is_empty());
     }

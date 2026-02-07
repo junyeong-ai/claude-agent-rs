@@ -130,15 +130,15 @@ mod tests {
 
     #[test]
     fn test_git_commit_protocol_model_substitution() {
-        let protocol = git_commit_protocol("Claude Opus 4.5");
-        assert!(protocol.contains("Co-Authored-By: Claude Opus 4.5 <noreply@anthropic.com>"));
+        let protocol = git_commit_protocol("Claude Opus 4.6");
+        assert!(protocol.contains("Co-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>"));
         assert!(!protocol.contains("{MODEL_NAME}"));
     }
 
     #[test]
     fn test_coding_instructions() {
-        let instructions = coding_instructions("Claude Sonnet 4");
-        assert!(instructions.contains("Co-Authored-By: Claude Sonnet 4 <noreply@anthropic.com>"));
+        let instructions = coding_instructions("Claude Sonnet 4.5");
+        assert!(instructions.contains("Co-Authored-By: Claude Sonnet 4.5 <noreply@anthropic.com>"));
         assert!(instructions.contains("# Doing tasks"));
         assert!(instructions.contains("# Creating pull requests"));
     }

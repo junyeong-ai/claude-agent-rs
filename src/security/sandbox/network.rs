@@ -45,12 +45,12 @@ impl NetworkSandbox {
         }
     }
 
-    pub fn with_allowed_domains(mut self, domains: impl IntoIterator<Item = String>) -> Self {
+    pub fn allowed_domains(mut self, domains: impl IntoIterator<Item = String>) -> Self {
         self.allowed_domains.extend(domains);
         self
     }
 
-    pub fn with_blocked_domains(mut self, domains: impl IntoIterator<Item = String>) -> Self {
+    pub fn blocked_domains(mut self, domains: impl IntoIterator<Item = String>) -> Self {
         self.blocked_domains.extend(domains);
         self
     }
@@ -94,11 +94,11 @@ impl NetworkSandbox {
                 .any(|pattern| matches_domain_pattern(pattern, domain))
     }
 
-    pub fn allowed_domains(&self) -> &HashSet<String> {
+    pub fn get_allowed_domains(&self) -> &HashSet<String> {
         &self.allowed_domains
     }
 
-    pub fn blocked_domains(&self) -> &HashSet<String> {
+    pub fn get_blocked_domains(&self) -> &HashSet<String> {
         &self.blocked_domains
     }
 }
@@ -170,20 +170,20 @@ mod tests {
 
     #[test]
     fn test_blocked_domain() {
-        let sandbox = NetworkSandbox::new().with_blocked_domains(vec!["evil.com".into()]);
+        let sandbox = NetworkSandbox::new().blocked_domains(vec!["evil.com".into()]);
         assert_eq!(sandbox.check("evil.com"), DomainCheck::Blocked);
     }
 
     #[test]
     fn test_wildcard_allowed() {
-        let sandbox = NetworkSandbox::new().with_allowed_domains(vec!["*.example.com".into()]);
+        let sandbox = NetworkSandbox::new().allowed_domains(vec!["*.example.com".into()]);
         assert_eq!(sandbox.check("sub.example.com"), DomainCheck::Allowed);
         assert_eq!(sandbox.check("example.com"), DomainCheck::Allowed);
     }
 
     #[test]
     fn test_wildcard_blocked() {
-        let sandbox = NetworkSandbox::new().with_blocked_domains(vec!["*.malware.com".into()]);
+        let sandbox = NetworkSandbox::new().blocked_domains(vec!["*.malware.com".into()]);
         assert_eq!(sandbox.check("sub.malware.com"), DomainCheck::Blocked);
     }
 
@@ -203,8 +203,8 @@ mod tests {
     #[test]
     fn test_blocked_takes_precedence() {
         let sandbox = NetworkSandbox::new()
-            .with_allowed_domains(vec!["example.com".into()])
-            .with_blocked_domains(vec!["example.com".into()]);
+            .allowed_domains(vec!["example.com".into()])
+            .blocked_domains(vec!["example.com".into()]);
         assert_eq!(sandbox.check("example.com"), DomainCheck::Blocked);
     }
 }

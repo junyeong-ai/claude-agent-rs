@@ -34,6 +34,14 @@ const SAFE_ENV_VARS: &[&str] = &[
     "DISPLAY",
     "WAYLAND_DISPLAY",
     "SSH_AUTH_SOCK",
+    "HTTP_PROXY",
+    "HTTPS_PROXY",
+    "NO_PROXY",
+    "ALL_PROXY",
+    "http_proxy",
+    "https_proxy",
+    "no_proxy",
+    "all_proxy",
 ];
 
 const BLOCKED_ENV_PATTERNS: &[&str] = &[
@@ -186,7 +194,7 @@ impl SanitizedEnv {
         Self { vars }
     }
 
-    pub fn with_var(mut self, key: impl Into<String>, value: impl Into<String>) -> Self {
+    pub fn var(mut self, key: impl Into<String>, value: impl Into<String>) -> Self {
         let key = key.into();
         if !Self::is_blocked(&key) {
             self.vars.insert(key, value.into());
@@ -194,13 +202,13 @@ impl SanitizedEnv {
         self
     }
 
-    pub fn with_working_dir(mut self, dir: impl AsRef<std::path::Path>) -> Self {
+    pub fn working_dir(mut self, dir: impl AsRef<std::path::Path>) -> Self {
         self.vars
             .insert("PWD".to_string(), dir.as_ref().display().to_string());
         self
     }
 
-    pub fn with_vars(mut self, vars: HashMap<String, String>) -> Self {
+    pub fn vars(mut self, vars: HashMap<String, String>) -> Self {
         for (key, value) in vars {
             if !Self::is_blocked(&key) {
                 self.vars.insert(key, value);
@@ -209,7 +217,7 @@ impl SanitizedEnv {
         self
     }
 
-    pub fn vars(&self) -> &HashMap<String, String> {
+    pub fn get_vars(&self) -> &HashMap<String, String> {
         &self.vars
     }
 
@@ -291,8 +299,8 @@ mod tests {
     }
 
     #[test]
-    fn test_with_working_dir() {
-        let sanitized = SanitizedEnv::from_env(std::iter::empty()).with_working_dir("/tmp/sandbox");
+    fn test_working_dir() {
+        let sanitized = SanitizedEnv::from_env(std::iter::empty()).working_dir("/tmp/sandbox");
 
         assert_eq!(sanitized.vars.get("PWD").unwrap(), "/tmp/sandbox");
     }

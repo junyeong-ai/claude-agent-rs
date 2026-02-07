@@ -73,7 +73,7 @@ pub struct Settings {
 }
 
 impl Settings {
-    pub fn with_source(mut self, source: SettingsSource) -> Self {
+    pub fn source(mut self, source: SettingsSource) -> Self {
         self.source = source;
         self
     }
@@ -171,7 +171,7 @@ impl SandboxSettings {
     /// Convert settings to SandboxConfig for use with SecurityContext.
     ///
     /// # Default Behaviors
-    /// - `auto_allow_bash_if_sandboxed`: defaults to `true` for backward compatibility
+    /// - `auto_allow_bash_if_sandboxed`: defaults to `true`
     /// - `enable_weaker_nested_sandbox`: defaults to `false` (strict mode)
     /// - `allowed_paths` and `denied_paths`: empty by default (use working_dir as root)
     pub fn to_sandbox_config(
@@ -251,10 +251,10 @@ impl ToolSearchSettings {
     pub fn to_config(&self, context_window: usize) -> crate::tools::ToolSearchConfig {
         use crate::tools::{SearchMode, ToolSearchConfig};
 
-        let mut config = ToolSearchConfig::default().with_context_window(context_window);
+        let mut config = ToolSearchConfig::default().context_window(context_window);
 
         if let Some(threshold) = self.threshold {
-            config = config.with_threshold(threshold);
+            config = config.threshold(threshold);
         }
 
         if let Some(ref mode) = self.mode {
@@ -262,7 +262,7 @@ impl ToolSearchSettings {
                 "bm25" => SearchMode::Bm25,
                 _ => SearchMode::Regex,
             };
-            config = config.with_search_mode(search_mode);
+            config = config.search_mode(search_mode);
         }
 
         if let Some(max_results) = self.max_results {
@@ -270,7 +270,7 @@ impl ToolSearchSettings {
         }
 
         if let Some(ref always_load) = self.always_load {
-            config = config.with_always_load(always_load.clone());
+            config = config.always_load(always_load.clone());
         }
 
         config
@@ -583,8 +583,10 @@ mod tests {
         assert!(config.blocked_domains.contains("malware.com"));
 
         let network_sandbox = config.to_network_sandbox();
-        assert!(network_sandbox.allowed_domains().contains("example.com"));
-        assert!(network_sandbox.blocked_domains().contains("malware.com"));
+        // Use check() to verify domains - allowed_domains/blocked_domains are builder methods
+        use crate::security::DomainCheck;
+        assert_eq!(network_sandbox.check("example.com"), DomainCheck::Allowed);
+        assert_eq!(network_sandbox.check("malware.com"), DomainCheck::Blocked);
     }
 
     #[test]
@@ -603,14 +605,14 @@ mod tests {
             threshold: Some(0.15),
             mode: Some("bm25".to_string()),
             max_results: Some(10),
-            always_load: Some(vec!["mcp__my_tool".to_string()]),
+            always_load: Some(vec!["mcp__my__tool".to_string()]),
         };
 
         let config = settings.to_config(200_000);
         assert_eq!(config.threshold, 0.15);
         assert_eq!(config.search_mode, SearchMode::Bm25);
         assert_eq!(config.max_results, 10);
-        assert!(config.always_load.contains(&"mcp__my_tool".to_string()));
+        assert!(config.always_load.contains(&"mcp__my__tool".to_string()));
     }
 
     #[test]

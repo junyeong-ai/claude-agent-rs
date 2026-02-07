@@ -25,7 +25,7 @@ impl CompositeConfigProvider {
     }
 
     /// Add a provider and return self (for chaining)
-    pub fn with_provider(mut self, provider: Box<dyn ConfigProvider>) -> Self {
+    pub fn provider(mut self, provider: Box<dyn ConfigProvider>) -> Self {
         self.providers.push(provider);
         self
     }
@@ -110,16 +110,16 @@ mod tests {
 
     #[tokio::test]
     async fn test_composite_provider_priority() {
-        let high_priority = MemoryConfigProvider::with_name("high");
+        let high_priority = MemoryConfigProvider::named("high");
         high_priority.set_raw("key", "high_value").await.unwrap();
 
-        let low_priority = MemoryConfigProvider::with_name("low");
+        let low_priority = MemoryConfigProvider::named("low");
         low_priority.set_raw("key", "low_value").await.unwrap();
         low_priority.set_raw("only_low", "from_low").await.unwrap();
 
         let composite = CompositeConfigProvider::new()
-            .with_provider(Box::new(high_priority))
-            .with_provider(Box::new(low_priority));
+            .provider(Box::new(high_priority))
+            .provider(Box::new(low_priority));
 
         // High priority wins
         assert_eq!(
@@ -145,8 +145,8 @@ mod tests {
         p2.set_raw("other", "value4").await.unwrap();
 
         let composite = CompositeConfigProvider::new()
-            .with_provider(Box::new(p1))
-            .with_provider(Box::new(p2));
+            .provider(Box::new(p1))
+            .provider(Box::new(p2));
 
         let keys = composite.list_keys("app.").await.unwrap();
         assert_eq!(keys.len(), 3); // name, version, config
@@ -155,8 +155,8 @@ mod tests {
     #[tokio::test]
     async fn test_composite_provider_set() {
         let composite = CompositeConfigProvider::new()
-            .with_provider(Box::new(MemoryConfigProvider::new()))
-            .with_provider(Box::new(MemoryConfigProvider::new()));
+            .provider(Box::new(MemoryConfigProvider::new()))
+            .provider(Box::new(MemoryConfigProvider::new()));
 
         composite.set_raw("new_key", "new_value").await.unwrap();
 
@@ -176,8 +176,8 @@ mod tests {
         p2.set_raw("shared", "from_p2").await.unwrap();
 
         let composite = CompositeConfigProvider::new()
-            .with_provider(Box::new(p1))
-            .with_provider(Box::new(p2));
+            .provider(Box::new(p1))
+            .provider(Box::new(p2));
 
         // Delete from all
         assert!(composite.delete("shared").await.unwrap());
@@ -187,8 +187,8 @@ mod tests {
     #[tokio::test]
     async fn test_composite_provider_names() {
         let composite = CompositeConfigProvider::new()
-            .with_provider(Box::new(MemoryConfigProvider::with_name("first")))
-            .with_provider(Box::new(MemoryConfigProvider::with_name("second")));
+            .provider(Box::new(MemoryConfigProvider::named("first")))
+            .provider(Box::new(MemoryConfigProvider::named("second")));
 
         let names = composite.provider_names();
         assert_eq!(names, vec!["first", "second"]);

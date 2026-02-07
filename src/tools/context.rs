@@ -46,7 +46,7 @@ impl ExecutionContext {
         }
     }
 
-    pub fn with_hooks(mut self, hooks: HookManager, session_id: impl Into<String>) -> Self {
+    pub fn hooks(mut self, hooks: HookManager, session_id: impl Into<String>) -> Self {
         self.hooks = Some(hooks);
         self.session_id = Some(session_id.into());
         self
@@ -58,8 +58,7 @@ impl ExecutionContext {
 
     pub async fn fire_hook(&self, event: HookEvent, input: HookInput) {
         if let Some(ref hooks) = self.hooks {
-            let context =
-                HookContext::new(input.session_id.clone()).with_cwd(self.root().to_path_buf());
+            let context = HookContext::new(input.session_id.clone()).cwd(self.root().to_path_buf());
             if let Err(e) = hooks.execute(event, input, &context).await {
                 tracing::warn!(error = %e, "Hook execution failed");
             }
@@ -149,7 +148,7 @@ impl ExecutionContext {
     }
 
     fn sanitized_env(&self) -> SanitizedEnv {
-        SanitizedEnv::from_current().with_working_dir(self.root())
+        SanitizedEnv::from_current().working_dir(self.root())
     }
 
     pub fn resource_limits(&self) -> &ResourceLimits {
@@ -182,7 +181,7 @@ impl ExecutionContext {
 
     pub fn sanitized_env_with_sandbox(&self) -> SanitizedEnv {
         let sandbox_env = self.sandbox_env();
-        self.sanitized_env().with_vars(sandbox_env)
+        self.sanitized_env().vars(sandbox_env)
     }
 
     pub fn check_permission(&self, tool_name: &str, input: &serde_json::Value) -> PermissionResult {

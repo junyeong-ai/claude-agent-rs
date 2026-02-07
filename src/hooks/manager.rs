@@ -27,7 +27,7 @@ impl HookManager {
         }
     }
 
-    pub fn with_timeout(timeout_secs: u64) -> Self {
+    pub fn timeout(timeout_secs: u64) -> Self {
         Self {
             hooks: Vec::new(),
             cache: HashMap::new(),
@@ -455,7 +455,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_blockable_hook_timeout_returns_error() {
-        let mut manager = HookManager::with_timeout(1);
+        let mut manager = HookManager::timeout(1);
         manager.register(SlowHook::new("slow", vec![HookEvent::UserPromptSubmit]));
 
         let input = HookInput::user_prompt_submit("session-1", "test prompt");
@@ -489,7 +489,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_non_blockable_hook_timeout_continues() {
-        let mut manager = HookManager::with_timeout(1);
+        let mut manager = HookManager::timeout(1);
         // PostToolUse is non-blockable
         manager.register(SlowHook::new("slow", vec![HookEvent::PostToolUse]));
 

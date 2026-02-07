@@ -32,7 +32,7 @@ impl FileConfigProvider {
     }
 
     /// Create a file provider with auto-reload enabled
-    pub fn with_auto_reload(path: PathBuf) -> Self {
+    pub fn auto_reload(path: PathBuf) -> Self {
         Self {
             path,
             data: Arc::new(RwLock::new(None)),
@@ -62,7 +62,6 @@ impl FileConfigProvider {
 
     /// Save configuration to file
     async fn save(&self, data: &HashMap<String, serde_json::Value>) -> ConfigResult<()> {
-        // Ensure parent directory exists
         if let Some(parent) = self.path.parent() {
             tokio::fs::create_dir_all(parent).await?;
         }

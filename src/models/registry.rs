@@ -1,21 +1,15 @@
 use std::collections::HashMap;
-use std::sync::{OnceLock, RwLock, RwLockReadGuard};
+use std::sync::OnceLock;
 
 use super::builtin;
 use super::family::{ModelFamily, ModelRole};
 use super::provider::ProviderKind;
 use super::spec::{ModelId, ModelSpec};
 
-static REGISTRY: OnceLock<RwLock<ModelRegistry>> = OnceLock::new();
+static REGISTRY: OnceLock<ModelRegistry> = OnceLock::new();
 
-pub fn registry() -> &'static RwLock<ModelRegistry> {
-    REGISTRY.get_or_init(|| RwLock::new(ModelRegistry::with_builtins()))
-}
-
-pub fn read_registry() -> RwLockReadGuard<'static, ModelRegistry> {
-    registry()
-        .read()
-        .expect("model registry lock poisoned - this indicates a panic during write")
+pub fn registry() -> &'static ModelRegistry {
+    REGISTRY.get_or_init(ModelRegistry::builtins)
 }
 
 #[derive(Debug, Default)]
@@ -31,7 +25,7 @@ impl ModelRegistry {
         Self::default()
     }
 
-    pub fn with_builtins() -> Self {
+    pub fn builtins() -> Self {
         let mut registry = Self::new();
         builtin::register_all(&mut registry);
         registry
@@ -131,7 +125,7 @@ mod tests {
 
     #[test]
     fn test_registry_resolve() {
-        let registry = ModelRegistry::with_builtins();
+        let registry = ModelRegistry::builtins();
 
         assert!(registry.resolve("sonnet").is_some());
         assert!(registry.resolve("haiku").is_some());
@@ -140,7 +134,7 @@ mod tests {
 
     #[test]
     fn test_registry_default_roles() {
-        let registry = ModelRegistry::with_builtins();
+        let registry = ModelRegistry::builtins();
 
         assert!(registry.default_for_role(ModelRole::Primary).is_some());
         assert!(registry.default_for_role(ModelRole::Small).is_some());
@@ -149,6 +143,6 @@ mod tests {
 
     #[test]
     fn test_registry_global() {
-        assert!(read_registry().resolve("sonnet").is_some());
+        assert!(registry().resolve("sonnet").is_some());
     }
 }

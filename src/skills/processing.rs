@@ -140,7 +140,7 @@ pub fn resolve_markdown_paths(content: &str, base_dir: &Path) -> String {
 }
 
 /// Re-export strip_frontmatter from common module.
-pub use crate::common::strip_frontmatter;
+pub(crate) use crate::common::strip_frontmatter;
 
 fn resolve_path(path_str: &str, base_dir: &Path) -> std::path::PathBuf {
     if path_str.starts_with("~/") {

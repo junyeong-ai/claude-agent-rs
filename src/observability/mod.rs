@@ -32,7 +32,7 @@ mod metrics;
 mod otel;
 mod spans;
 
-pub use metrics::{AgentMetrics, Counter, Gauge, Histogram, MetricsConfig, MetricsRegistry};
+pub use metrics::{Counter, Gauge, Histogram, MetricsConfig, MetricsRegistry, MetricsSummary};
 #[cfg(feature = "otel")]
 pub use otel::{
     OtelConfig, OtelError, OtelRuntime, SERVICE_NAME_DEFAULT, init_tracing_subscriber, semantic,
@@ -55,23 +55,23 @@ impl ObservabilityConfig {
         Self::default()
     }
 
-    pub fn with_tracing(mut self, config: TracingConfig) -> Self {
+    pub fn tracing(mut self, config: TracingConfig) -> Self {
         self.tracing = config;
         self
     }
 
-    pub fn with_metrics(mut self, config: MetricsConfig) -> Self {
+    pub fn metrics(mut self, config: MetricsConfig) -> Self {
         self.metrics = config;
         self
     }
 
-    pub fn with_service_name(mut self, name: impl Into<String>) -> Self {
+    pub fn service_name(mut self, name: impl Into<String>) -> Self {
         self.tracing.service_name = Some(name.into());
         self
     }
 
     #[cfg(feature = "otel")]
-    pub fn with_otel(mut self, config: OtelConfig) -> Self {
+    pub fn otel(mut self, config: OtelConfig) -> Self {
         self.otel = Some(config);
         self
     }
@@ -79,7 +79,7 @@ impl ObservabilityConfig {
     pub fn build_registry(&self) -> Arc<MetricsRegistry> {
         #[cfg(feature = "otel")]
         if let Some(ref otel_config) = self.otel {
-            return Arc::new(MetricsRegistry::with_otel(&self.metrics, otel_config));
+            return Arc::new(MetricsRegistry::otel(&self.metrics, otel_config));
         }
 
         Arc::new(MetricsRegistry::new(&self.metrics))
@@ -93,8 +93,8 @@ mod tests {
     #[test]
     fn test_observability_config() {
         let config = ObservabilityConfig::new()
-            .with_service_name("test-agent")
-            .with_metrics(MetricsConfig::default());
+            .service_name("test-agent")
+            .metrics(MetricsConfig::default());
 
         assert_eq!(config.tracing.service_name, Some("test-agent".to_string()));
     }
@@ -103,8 +103,8 @@ mod tests {
     #[test]
     fn test_observability_with_otel() {
         let config = ObservabilityConfig::new()
-            .with_service_name("test-agent")
-            .with_otel(OtelConfig::new("test-agent"));
+            .service_name("test-agent")
+            .otel(OtelConfig::new("test-agent"));
 
         assert!(config.otel.is_some());
     }

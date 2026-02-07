@@ -14,10 +14,10 @@ use super::{ContextError, ContextResult};
 /// Default maximum import depth for CLI-like behavior.
 /// CLI uses depth 5 technically but loads ~24K tokens of memory.
 /// Depth 2 gives ~31K tokens which is the closest match.
-pub const DEFAULT_IMPORT_DEPTH: usize = 2;
+pub(crate) const DEFAULT_IMPORT_DEPTH: usize = 2;
 
 /// Maximum import depth when full expansion is needed (CLI's technical limit).
-pub const MAX_IMPORT_DEPTH: usize = 5;
+pub(crate) const MAX_IMPORT_DEPTH: usize = 5;
 
 /// Configuration for MemoryLoader.
 #[derive(Debug, Clone)]
@@ -44,7 +44,7 @@ impl MemoryLoaderConfig {
     }
 
     /// Creates config with specified max depth.
-    pub fn with_max_depth(max_depth: usize) -> Self {
+    pub fn max_depth(max_depth: usize) -> Self {
         Self { max_depth }
     }
 }
@@ -70,11 +70,11 @@ pub struct MemoryLoader {
 impl MemoryLoader {
     /// Creates a new MemoryLoader with default configuration (depth 3).
     pub fn new() -> Self {
-        Self::with_config(MemoryLoaderConfig::default())
+        Self::from_config(MemoryLoaderConfig::default())
     }
 
     /// Creates a new MemoryLoader with custom configuration.
-    pub fn with_config(config: MemoryLoaderConfig) -> Self {
+    pub fn from_config(config: MemoryLoaderConfig) -> Self {
         Self {
             extractor: ImportExtractor::new(),
             config,
@@ -83,7 +83,7 @@ impl MemoryLoader {
 
     /// Creates a new MemoryLoader with full import expansion (depth 5).
     pub fn full_expansion() -> Self {
-        Self::with_config(MemoryLoaderConfig::full_expansion())
+        Self::from_config(MemoryLoaderConfig::full_expansion())
     }
 
     /// Loads all memory content (CLAUDE.md + CLAUDE.local.md + rules) from a directory.
@@ -178,7 +178,6 @@ impl MemoryLoader {
             }
             visited.insert(canonical);
 
-            // Read file content
             let content =
                 tokio::fs::read_to_string(path)
                     .await
@@ -186,7 +185,6 @@ impl MemoryLoader {
                         message: format!("Failed to read {}: {}", path.display(), e),
                     })?;
 
-            // Extract and process imports
             // Use current file's directory for relative path resolution
             let file_dir = path.parent().unwrap_or(Path::new("."));
             let imports = self.extractor.extract(&content, file_dir);
@@ -198,7 +196,6 @@ impl MemoryLoader {
                 .map(|p| Self::normalize_project_relative_path(&p, project_root))
                 .collect();
 
-            // Build result with imported content appended
             let mut result = content;
             for import_path in imports {
                 if import_path.exists() {
@@ -591,7 +588,7 @@ mod tests {
         }
 
         // Custom depth 1: should only load levels 0-1
-        let loader = MemoryLoader::with_config(MemoryLoaderConfig::with_max_depth(1));
+        let loader = MemoryLoader::from_config(MemoryLoaderConfig::max_depth(1));
         let content = loader.load(dir.path()).await.unwrap();
         let combined = content.combined_claude_md();
 

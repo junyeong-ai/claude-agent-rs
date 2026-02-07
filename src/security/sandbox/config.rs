@@ -83,42 +83,42 @@ impl SandboxConfig {
         Self::default()
     }
 
-    pub fn with_working_dir(mut self, dir: PathBuf) -> Self {
+    pub fn working_dir(mut self, dir: PathBuf) -> Self {
         self.working_dir = dir;
         self
     }
 
-    pub fn with_auto_allow_bash(mut self, enabled: bool) -> Self {
+    pub fn auto_allow_bash(mut self, enabled: bool) -> Self {
         self.auto_allow_bash_if_sandboxed = enabled;
         self
     }
 
-    pub fn with_allowed_paths(mut self, paths: impl IntoIterator<Item = PathBuf>) -> Self {
+    pub fn allowed_paths(mut self, paths: impl IntoIterator<Item = PathBuf>) -> Self {
         self.allowed_paths = paths.into_iter().collect();
         self
     }
 
-    pub fn with_denied_paths(mut self, patterns: impl IntoIterator<Item = String>) -> Self {
+    pub fn denied_paths(mut self, patterns: impl IntoIterator<Item = String>) -> Self {
         self.denied_paths = patterns.into_iter().collect();
         self
     }
 
-    pub fn with_excluded_commands(mut self, commands: impl IntoIterator<Item = String>) -> Self {
+    pub fn excluded_commands(mut self, commands: impl IntoIterator<Item = String>) -> Self {
         self.excluded_commands = commands.into_iter().collect();
         self
     }
 
-    pub fn with_network(mut self, network: NetworkConfig) -> Self {
+    pub fn network(mut self, network: NetworkConfig) -> Self {
         self.network = network;
         self
     }
 
-    pub fn with_allowed_domains(mut self, domains: impl IntoIterator<Item = String>) -> Self {
+    pub fn allowed_domains(mut self, domains: impl IntoIterator<Item = String>) -> Self {
         self.allowed_domains = domains.into_iter().collect();
         self
     }
 
-    pub fn with_blocked_domains(mut self, domains: impl IntoIterator<Item = String>) -> Self {
+    pub fn blocked_domains(mut self, domains: impl IntoIterator<Item = String>) -> Self {
         self.blocked_domains = domains.into_iter().collect();
         self
     }
@@ -135,8 +135,8 @@ impl SandboxConfig {
 
     pub fn to_network_sandbox(&self) -> super::NetworkSandbox {
         super::NetworkSandbox::new()
-            .with_allowed_domains(self.allowed_domains.iter().cloned())
-            .with_blocked_domains(self.blocked_domains.iter().cloned())
+            .allowed_domains(self.allowed_domains.iter().cloned())
+            .blocked_domains(self.blocked_domains.iter().cloned())
     }
 
     pub fn is_command_excluded(&self, command: &str) -> bool {
@@ -174,7 +174,7 @@ impl NetworkConfig {
         Self::default()
     }
 
-    pub fn with_proxy(http_port: Option<u16>, socks_port: Option<u16>) -> Self {
+    pub fn proxy(http_port: Option<u16>, socks_port: Option<u16>) -> Self {
         Self {
             http_proxy_port: http_port,
             socks_proxy_port: socks_port,
@@ -182,12 +182,12 @@ impl NetworkConfig {
         }
     }
 
-    pub fn with_unix_sockets(mut self, paths: impl IntoIterator<Item = String>) -> Self {
+    pub fn unix_sockets(mut self, paths: impl IntoIterator<Item = String>) -> Self {
         self.allow_unix_sockets = paths.into_iter().collect();
         self
     }
 
-    pub fn with_local_binding(mut self, allow: bool) -> Self {
+    pub fn local_binding(mut self, allow: bool) -> Self {
         self.allow_local_binding = allow;
         self
     }
@@ -234,7 +234,7 @@ mod tests {
     #[test]
     fn test_excluded_commands() {
         let config =
-            SandboxConfig::disabled().with_excluded_commands(vec!["docker".into(), "git".into()]);
+            SandboxConfig::disabled().excluded_commands(vec!["docker".into(), "git".into()]);
 
         assert!(config.is_command_excluded("docker"));
         assert!(config.is_command_excluded("docker run nginx"));
@@ -259,7 +259,7 @@ mod tests {
 
     #[test]
     fn test_network_config() {
-        let network = NetworkConfig::with_proxy(Some(8080), Some(1080));
+        let network = NetworkConfig::proxy(Some(8080), Some(1080));
         assert!(network.has_proxy());
         assert_eq!(
             network.http_proxy_url(),
@@ -273,7 +273,7 @@ mod tests {
 
     #[test]
     fn test_unix_sockets() {
-        let network = NetworkConfig::new().with_unix_sockets(vec!["~/.ssh/agent-socket".into()]);
+        let network = NetworkConfig::new().unix_sockets(vec!["~/.ssh/agent-socket".into()]);
         assert_eq!(network.allow_unix_sockets.len(), 1);
     }
 

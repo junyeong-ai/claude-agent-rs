@@ -34,19 +34,19 @@ You are powered by the model named {model_name}. The exact model ID is {model_id
 Assistant knowledge cutoff is May 2025.
 
 <claude_background_info>
-The most recent frontier Claude model is Claude Opus 4.5 (model ID: '{frontier}').
+The most recent frontier Claude model is Claude Opus 4.6 (model ID: '{frontier}').
 </claude_background_info>"#,
         frontier = FRONTIER_MODEL
     )
 }
 
 /// Checks if a directory is a git repository.
-pub fn is_git_repository(dir: Option<&Path>) -> bool {
+pub(crate) fn is_git_repository(dir: Option<&Path>) -> bool {
     dir.map(|d| d.join(".git").exists()).unwrap_or(false)
 }
 
 /// Gets the current platform identifier.
-pub fn current_platform() -> &'static str {
+pub(crate) fn current_platform() -> &'static str {
     if cfg!(target_os = "macos") {
         "darwin"
     } else if cfg!(target_os = "linux") {
@@ -59,7 +59,7 @@ pub fn current_platform() -> &'static str {
 }
 
 /// Gets the OS version string.
-pub fn os_version() -> String {
+pub(crate) fn os_version() -> String {
     #[cfg(target_os = "macos")]
     {
         std::process::Command::new("uname")
@@ -110,15 +110,15 @@ mod tests {
             true,
             "darwin",
             "Darwin 25.1.0",
-            "Claude Sonnet 4",
-            "claude-sonnet-4-20250514",
+            "Claude Sonnet 4.5",
+            "claude-sonnet-4-5-20250929",
         );
 
         assert!(block.contains("/test/dir"));
         assert!(block.contains("Is directory a git repo: Yes"));
         assert!(block.contains("darwin"));
-        assert!(block.contains("claude-sonnet-4-20250514"));
-        assert!(block.contains("Claude Opus 4.5"));
+        assert!(block.contains("claude-sonnet-4-5-20250929"));
+        assert!(block.contains("Claude Opus 4.6"));
     }
 
     #[test]

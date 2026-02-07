@@ -3,8 +3,12 @@
 //! Provides built-in atomic metrics for local tracking, with optional
 //! OpenTelemetry export when the `otel` feature is enabled.
 
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicI64, AtomicU64, Ordering};
 use std::time::Duration;
+
+use rust_decimal::Decimal;
+
+use crate::budget::COST_SCALE_FACTOR;
 
 #[cfg(feature = "otel")]
 use super::otel::{OtelConfig, OtelMetricsBridge, SERVICE_NAME_DEFAULT};
@@ -61,7 +65,7 @@ impl Counter {
 /// Thread-safe atomic gauge.
 #[derive(Default)]
 pub struct Gauge {
-    value: AtomicU64,
+    value: AtomicI64,
 }
 
 impl Gauge {
@@ -69,7 +73,7 @@ impl Gauge {
         Self::default()
     }
 
-    pub fn set(&self, value: u64) {
+    pub fn set(&self, value: i64) {
         self.value.store(value, Ordering::Relaxed);
     }
 
@@ -81,7 +85,7 @@ impl Gauge {
         self.value.fetch_sub(1, Ordering::Relaxed);
     }
 
-    pub fn get(&self) -> u64 {
+    pub fn get(&self) -> i64 {
         self.value.load(Ordering::Relaxed)
     }
 }
@@ -121,7 +125,8 @@ impl Histogram {
             .unwrap_or(self.bucket_bounds.len());
 
         self.buckets[bucket_idx].fetch_add(1, Ordering::Relaxed);
-        self.sum.fetch_add(value as u64, Ordering::Relaxed);
+        self.sum
+            .fetch_add((value * 1000.0) as u64, Ordering::Relaxed);
         self.count.fetch_add(1, Ordering::Relaxed);
     }
 
@@ -131,6 +136,14 @@ impl Histogram {
 
     pub fn sum(&self) -> u64 {
         self.sum.load(Ordering::Relaxed)
+    }
+
+    /// Returns the sum as a floating-point value in the original unit (ms).
+    ///
+    /// The internal sum is stored scaled by 1000x to preserve sub-integer
+    /// precision. This method converts back to the original scale.
+    pub fn sum_ms(&self) -> f64 {
+        self.sum.load(Ordering::Relaxed) as f64 / 1000.0
     }
 }
 
@@ -176,7 +189,7 @@ impl MetricsRegistry {
     }
 
     #[cfg(feature = "otel")]
-    pub fn with_otel(_config: &MetricsConfig, otel_config: &OtelConfig) -> Self {
+    pub fn otel(_config: &MetricsConfig, otel_config: &OtelConfig) -> Self {
         let meter = global::meter(SERVICE_NAME_DEFAULT);
         let bridge = OtelMetricsBridge::new(&meter);
         let _ = &otel_config.service_name; // Used for configuration, meter uses static name
@@ -255,8 +268,11 @@ impl MetricsRegistry {
         }
     }
 
-    pub fn record_cost(&self, cost_usd: f64) {
-        let micros = (cost_usd * 1_000_000.0) as u64;
+    pub fn record_cost(&self, cost_usd: Decimal) {
+        let scaled = cost_usd * COST_SCALE_FACTOR;
+        let micros = scaled
+            .try_into()
+            .unwrap_or_else(|_| scaled.to_string().parse::<u64>().unwrap_or(0));
         self.cost_total_micros.add(micros);
 
         #[cfg(feature = "otel")]
@@ -265,8 +281,8 @@ impl MetricsRegistry {
         }
     }
 
-    pub fn total_cost_usd(&self) -> f64 {
-        self.cost_total_micros.get() as f64 / 1_000_000.0
+    pub fn total_cost_usd(&self) -> Decimal {
+        Decimal::from(self.cost_total_micros.get()) / COST_SCALE_FACTOR
     }
 }
 
@@ -277,8 +293,12 @@ impl Default for MetricsRegistry {
 }
 
 /// High-level metrics summary for an agent session.
+///
+/// This is a snapshot summary for export/display purposes, derived from
+/// the MetricsRegistry. For detailed per-agent metrics with tool stats
+/// and call records, see `crate::agent::AgentMetrics`.
 #[derive(Debug, Clone, Default)]
-pub struct AgentMetrics {
+pub struct MetricsSummary {
     pub total_requests: u64,
     pub successful_requests: u64,
     pub failed_requests: u64,
@@ -288,15 +308,15 @@ pub struct AgentMetrics {
     pub cache_creation_tokens: u64,
     pub total_tool_calls: u64,
     pub failed_tool_calls: u64,
-    pub total_cost_usd: f64,
+    pub total_cost_usd: Decimal,
     pub avg_latency_ms: f64,
 }
 
-impl AgentMetrics {
+impl MetricsSummary {
     pub fn from_registry(registry: &MetricsRegistry) -> Self {
         let count = registry.request_latency_ms.count();
         let avg_latency = if count > 0 {
-            registry.request_latency_ms.sum() as f64 / count as f64
+            registry.request_latency_ms.sum_ms() / count as f64
         } else {
             0.0
         };
@@ -320,6 +340,7 @@ impl AgentMetrics {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use rust_decimal_macros::dec;
 
     #[test]
     fn test_counter() {
@@ -340,6 +361,10 @@ mod tests {
         assert_eq!(gauge.get(), 11);
         gauge.dec();
         assert_eq!(gauge.get(), 10);
+        // Verify no underflow panic with negative values
+        gauge.set(0);
+        gauge.dec();
+        assert_eq!(gauge.get(), -1);
     }
 
     #[test]
@@ -358,10 +383,10 @@ mod tests {
         registry.record_request_start();
         registry.record_tokens(100, 50);
         registry.record_tool_call(true);
-        registry.record_cost(0.001);
+        registry.record_cost(dec!(0.001));
         registry.record_request_end(true, 250.0);
 
-        let metrics = AgentMetrics::from_registry(&registry);
+        let metrics = MetricsSummary::from_registry(&registry);
         assert_eq!(metrics.total_requests, 1);
         assert_eq!(metrics.total_input_tokens, 100);
         assert_eq!(metrics.total_output_tokens, 50);

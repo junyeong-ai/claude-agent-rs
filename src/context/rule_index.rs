@@ -26,7 +26,7 @@ use crate::common::{
 ///
 /// Used with the generic `parse_frontmatter<RuleFrontmatter>()` parser.
 #[derive(Debug, Default, Deserialize)]
-pub struct RuleFrontmatter {
+pub(crate) struct RuleFrontmatter {
     /// Human-readable description of the rule.
     #[serde(default)]
     pub description: String,
@@ -79,7 +79,7 @@ impl RuleIndex {
     /// Create a new rule index entry.
     ///
     /// Uses `ContentSource::default()` (empty InMemory) as placeholder.
-    /// Call `with_source()` to set the actual content source.
+    /// Call `source()` to set the actual content source.
     pub fn new(name: impl Into<String>) -> Self {
         Self {
             name: name.into(),
@@ -93,32 +93,32 @@ impl RuleIndex {
     }
 
     /// Set the rule description.
-    pub fn with_description(mut self, description: impl Into<String>) -> Self {
+    pub fn description(mut self, description: impl Into<String>) -> Self {
         self.description = description.into();
         self
     }
 
     /// Set path patterns this rule applies to.
-    pub fn with_paths(mut self, paths: Vec<String>) -> Self {
+    pub fn paths(mut self, paths: Vec<String>) -> Self {
         self.compiled_patterns = paths.iter().filter_map(|p| Pattern::new(p).ok()).collect();
         self.paths = Some(paths);
         self
     }
 
     /// Set the explicit priority.
-    pub fn with_priority(mut self, priority: i32) -> Self {
+    pub fn priority(mut self, priority: i32) -> Self {
         self.priority = priority;
         self
     }
 
     /// Set the content source.
-    pub fn with_source(mut self, source: ContentSource) -> Self {
+    pub fn source(mut self, source: ContentSource) -> Self {
         self.source = source;
         self
     }
 
     /// Set the source type.
-    pub fn with_source_type(mut self, source_type: SourceType) -> Self {
+    pub fn source_type(mut self, source_type: SourceType) -> Self {
         self.source_type = source_type;
         self
     }
@@ -250,9 +250,9 @@ mod tests {
     #[test]
     fn test_rule_index_creation() {
         let rule = RuleIndex::new("typescript")
-            .with_description("TypeScript coding standards")
-            .with_paths(vec!["**/*.ts".into(), "**/*.tsx".into()])
-            .with_priority(10);
+            .description("TypeScript coding standards")
+            .paths(vec!["**/*.ts".into(), "**/*.tsx".into()])
+            .priority(10);
 
         assert_eq!(rule.name, "typescript");
         assert_eq!(rule.description, "TypeScript coding standards");
@@ -261,7 +261,7 @@ mod tests {
 
     #[test]
     fn test_path_matching() {
-        let rule = RuleIndex::new("rust").with_paths(vec!["**/*.rs".into()]);
+        let rule = RuleIndex::new("rust").paths(vec!["**/*.rs".into()]);
 
         assert!(rule.matches_path(Path::new("src/lib.rs")));
         assert!(rule.matches_path(Path::new("src/context/mod.rs")));
@@ -343,8 +343,8 @@ priority: 5
     #[test]
     fn test_summary_line_with_description() {
         let rule = RuleIndex::new("security")
-            .with_description("Security best practices")
-            .with_paths(vec!["**/*.rs".into()]);
+            .description("Security best practices")
+            .paths(vec!["**/*.rs".into()]);
 
         let summary = rule.to_summary_line();
         assert!(summary.contains("security"));
@@ -363,10 +363,10 @@ priority: 5
     fn test_priority_override() {
         // Priority should be explicit, not source_type-based
         let rule = RuleIndex::new("test")
-            .with_priority(100)
-            .with_source_type(SourceType::Builtin); // Builtin would be 0 normally
+            .priority(100)
+            .source_type(SourceType::Builtin); // Builtin would be 0 normally
 
-        assert_eq!(rule.priority(), 100); // Should use explicit priority
+        assert_eq!(rule.priority, 100); // Should use explicit priority
     }
 
     #[test]
@@ -374,16 +374,16 @@ priority: 5
         use crate::common::{Index, PathMatched};
 
         let rule = RuleIndex::new("test")
-            .with_description("Test")
-            .with_paths(vec!["**/*.rs".into()])
-            .with_source_type(SourceType::User)
-            .with_source(ContentSource::in_memory("Rule content"));
+            .description("Test")
+            .paths(vec!["**/*.rs".into()])
+            .source_type(SourceType::User)
+            .source(ContentSource::in_memory("Rule content"));
 
         // Index trait
         assert_eq!(rule.name(), "test");
-        assert_eq!(rule.source_type(), SourceType::User);
+        assert_eq!(rule.source_type, SourceType::User);
         assert!(rule.to_summary_line().contains("test"));
-        assert_eq!(rule.description(), "Test");
+        assert_eq!(rule.description, "Test");
 
         // PathMatched trait
         assert!(!rule.is_global());

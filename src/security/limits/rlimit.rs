@@ -56,27 +56,27 @@ impl ResourceLimits {
         }
     }
 
-    pub fn with_cpu_time(mut self, seconds: u64) -> Self {
+    pub fn cpu_time(mut self, seconds: u64) -> Self {
         self.cpu_time = Some(seconds);
         self
     }
 
-    pub fn with_file_size(mut self, bytes: u64) -> Self {
+    pub fn file_size(mut self, bytes: u64) -> Self {
         self.file_size = Some(bytes);
         self
     }
 
-    pub fn with_open_files(mut self, count: u64) -> Self {
+    pub fn open_files(mut self, count: u64) -> Self {
         self.open_files = Some(count);
         self
     }
 
-    pub fn with_processes(mut self, count: u64) -> Self {
+    pub fn processes(mut self, count: u64) -> Self {
         self.processes = Some(count);
         self
     }
 
-    pub fn with_virtual_memory(mut self, bytes: u64) -> Self {
+    pub fn virtual_memory(mut self, bytes: u64) -> Self {
         self.virtual_memory = Some(bytes);
         self
     }
@@ -112,7 +112,6 @@ impl ResourceLimits {
                 .map_err(|e| SecurityError::ResourceLimit(format!("NOFILE: {}", e)))?;
         }
 
-        #[cfg(target_os = "linux")]
         if let Some(nproc) = self.processes {
             let rlim = Rlimit {
                 current: Some(nproc),
@@ -187,9 +186,9 @@ mod tests {
     #[test]
     fn test_builder() {
         let limits = ResourceLimits::none()
-            .with_cpu_time(120)
-            .with_file_size(1024 * 1024)
-            .with_open_files(128);
+            .cpu_time(120)
+            .file_size(1024 * 1024)
+            .open_files(128);
 
         assert_eq!(limits.cpu_time, Some(120));
         assert_eq!(limits.file_size, Some(1024 * 1024));

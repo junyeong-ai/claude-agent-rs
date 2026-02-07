@@ -57,16 +57,15 @@ fn resolve_mcp_config(config: McpServerConfig, root: &Path) -> McpServerConfig {
     }
 }
 
-/// Outer wrapper for hooks.json — supports both official nested format
-/// and flat legacy format.
+/// Outer wrapper for hooks.json — supports both nested and flat formats.
 #[derive(Debug, Deserialize)]
 #[serde(untagged)]
 enum PluginHooksFile {
-    /// Official format: `{"hooks": {"PreToolUse": [{"matcher": "...", "hooks": [...]}]}}`
-    Official {
+    /// Nested format: `{"hooks": {"PreToolUse": [{"matcher": "...", "hooks": [...]}]}}`
+    Nested {
         hooks: HashMap<String, Vec<HookRule>>,
     },
-    /// Legacy flat format: `{"PreToolUse": ["echo pre"]}`
+    /// Flat format: `{"PreToolUse": ["echo pre"]}`
     Flat(HashMap<String, Vec<HookConfig>>),
 }
 
@@ -119,7 +118,7 @@ impl PluginLoader {
                 .await
                 .map_err(|e| PluginError::ResourceLoad {
                     plugin: plugin_name.to_string(),
-                    message: format!("skills: {e}"),
+                    message: format!("Skills: {e}"),
                 })?;
 
         let plugin_root = plugin.root_dir();
@@ -138,7 +137,7 @@ impl PluginLoader {
         Ok(())
     }
 
-    /// Load legacy `commands/` directory (simple markdown files treated as skills).
+    /// Load `commands/` directory (simple markdown files treated as skills).
     async fn load_commands(
         plugin: &PluginDescriptor,
         plugin_name: &str,
@@ -155,7 +154,7 @@ impl PluginLoader {
                 .await
                 .map_err(|e| PluginError::ResourceLoad {
                     plugin: plugin_name.to_string(),
-                    message: format!("commands dir: {e}"),
+                    message: format!("Commands dir: {e}"),
                 })?;
 
         while let Some(entry) =
@@ -164,7 +163,7 @@ impl PluginLoader {
                 .await
                 .map_err(|e| PluginError::ResourceLoad {
                     plugin: plugin_name.to_string(),
-                    message: format!("commands entry: {e}"),
+                    message: format!("Commands entry: {e}"),
                 })?
         {
             let path = entry.path();
@@ -211,7 +210,7 @@ impl PluginLoader {
                 .await
                 .map_err(|e| PluginError::ResourceLoad {
                     plugin: plugin_name.to_string(),
-                    message: format!("agents: {e}"),
+                    message: format!("Agents: {e}"),
                 })?;
 
         let plugin_root = plugin.root_dir();
@@ -280,7 +279,7 @@ impl PluginLoader {
         let plugin_root = plugin.root_dir();
 
         match hooks_file {
-            PluginHooksFile::Official { hooks } => {
+            PluginHooksFile::Nested { hooks } => {
                 Self::collect_resource_hooks(
                     &Some(hooks),
                     plugin_name,

@@ -33,8 +33,8 @@ impl OutputStyleLoader {
         let source_type = SourceType::from_str_opt(fm.source_type.as_deref());
 
         OutputStyle::new(fm.name, fm.description, body)
-            .with_source_type(source_type)
-            .with_keep_coding_instructions(fm.keep_coding_instructions)
+            .source_type(source_type)
+            .keep_coding_instructions(fm.keep_coding_instructions)
     }
 }
 

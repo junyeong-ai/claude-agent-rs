@@ -185,8 +185,7 @@ pub fn is_sandbox_supported() -> bool {
 }
 
 pub fn create_sandbox(working_dir: &Path, auto_allow_bash: bool) -> Sandbox {
-    let config =
-        SandboxConfig::new(working_dir.to_path_buf()).with_auto_allow_bash(auto_allow_bash);
+    let config = SandboxConfig::new(working_dir.to_path_buf()).auto_allow_bash(auto_allow_bash);
     Sandbox::new(config)
 }
 
@@ -211,7 +210,7 @@ mod tests {
     #[test]
     fn test_excluded_command() {
         let config =
-            SandboxConfig::new(PathBuf::from("/tmp")).with_excluded_commands(vec!["docker".into()]);
+            SandboxConfig::new(PathBuf::from("/tmp")).excluded_commands(vec!["docker".into()]);
         let sandbox = Sandbox::new(config);
 
         let result = sandbox.wrap_command("docker run nginx");
@@ -220,8 +219,8 @@ mod tests {
 
     #[test]
     fn test_proxy_environment() {
-        let config = SandboxConfig::disabled()
-            .with_network(NetworkConfig::with_proxy(Some(8080), Some(1080)));
+        let config =
+            SandboxConfig::disabled().network(NetworkConfig::proxy(Some(8080), Some(1080)));
         let sandbox = Sandbox::new(config);
 
         let env = sandbox.environment_vars();
@@ -237,7 +236,7 @@ mod tests {
         let config = SandboxConfig::new(PathBuf::from("/tmp"));
         assert!(config.should_auto_allow_bash());
 
-        let config = SandboxConfig::new(PathBuf::from("/tmp")).with_auto_allow_bash(false);
+        let config = SandboxConfig::new(PathBuf::from("/tmp")).auto_allow_bash(false);
         assert!(!config.should_auto_allow_bash());
     }
 

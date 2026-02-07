@@ -88,45 +88,42 @@ impl SubagentIndex {
     }
 
     /// Set allowed tools.
-    pub fn with_allowed_tools(
-        mut self,
-        tools: impl IntoIterator<Item = impl Into<String>>,
-    ) -> Self {
+    pub fn allowed_tools(mut self, tools: impl IntoIterator<Item = impl Into<String>>) -> Self {
         self.allowed_tools = tools.into_iter().map(Into::into).collect();
         self
     }
 
-    /// Alias for `with_allowed_tools()` for convenience.
-    pub fn with_tools(self, tools: impl IntoIterator<Item = impl Into<String>>) -> Self {
-        self.with_allowed_tools(tools)
+    /// Alias for `allowed_tools()` for convenience.
+    pub fn tools(self, t: impl IntoIterator<Item = impl Into<String>>) -> Self {
+        self.allowed_tools(t)
     }
 
     /// Set the content source (prompt).
-    pub fn with_source(mut self, source: ContentSource) -> Self {
+    pub fn source(mut self, source: ContentSource) -> Self {
         self.source = source;
         self
     }
 
     /// Set the source type.
-    pub fn with_source_type(mut self, source_type: SourceType) -> Self {
+    pub fn source_type(mut self, source_type: SourceType) -> Self {
         self.source_type = source_type;
         self
     }
 
     /// Set the model alias or ID.
-    pub fn with_model(mut self, model: impl Into<String>) -> Self {
+    pub fn model(mut self, model: impl Into<String>) -> Self {
         self.model = Some(model.into());
         self
     }
 
     /// Set the model type.
-    pub fn with_model_type(mut self, model_type: ModelType) -> Self {
+    pub fn model_type(mut self, model_type: ModelType) -> Self {
         self.model_type = Some(model_type);
         self
     }
 
     /// Set available skills.
-    pub fn with_skills(mut self, skills: impl IntoIterator<Item = impl Into<String>>) -> Self {
+    pub fn skills(mut self, skills: impl IntoIterator<Item = impl Into<String>>) -> Self {
         self.skills = skills.into_iter().map(Into::into).collect();
         self
     }
@@ -134,7 +131,7 @@ impl SubagentIndex {
     /// Resolve the model to use for this subagent.
     ///
     /// Supports both direct model IDs and aliases:
-    /// - `"opus"` → resolves to reasoning model (e.g., claude-opus-4-5)
+    /// - `"opus"` → resolves to reasoning model (e.g., claude-opus-4-6)
     /// - `"sonnet"` → resolves to primary model (e.g., claude-sonnet-4-5)
     /// - `"haiku"` → resolves to small model (e.g., claude-haiku-4-5)
     /// - Direct model ID → passed through unchanged
@@ -199,10 +196,10 @@ mod tests {
     #[test]
     fn test_subagent_index_creation() {
         let subagent = SubagentIndex::new("reviewer", "Code reviewer")
-            .with_source(ContentSource::in_memory("Review the code"))
-            .with_source_type(SourceType::Project)
-            .with_tools(["Read", "Grep", "Glob"])
-            .with_model("haiku");
+            .source(ContentSource::in_memory("Review the code"))
+            .source_type(SourceType::Project)
+            .tools(["Read", "Grep", "Glob"])
+            .model("haiku");
 
         assert_eq!(subagent.name, "reviewer");
         assert!(subagent.has_tool_restrictions());
@@ -213,7 +210,7 @@ mod tests {
     #[test]
     fn test_summary_line() {
         let subagent = SubagentIndex::new("Explore", "Fast codebase exploration")
-            .with_tools(["Read", "Grep", "Glob", "Bash"]);
+            .tools(["Read", "Grep", "Glob", "Bash"]);
 
         let summary = subagent.to_summary_line();
         assert!(summary.contains("Explore"));
@@ -231,7 +228,7 @@ mod tests {
     #[tokio::test]
     async fn test_load_prompt() {
         let subagent = SubagentIndex::new("test", "Test agent")
-            .with_source(ContentSource::in_memory("You are a test agent."));
+            .source(ContentSource::in_memory("You are a test agent."));
 
         let prompt = subagent.load_prompt().await.unwrap();
         assert_eq!(prompt, "You are a test agent.");
@@ -242,13 +239,13 @@ mod tests {
         let config = ModelConfig::default();
 
         let subagent = SubagentIndex::new("fast", "Fast agent")
-            .with_source(ContentSource::in_memory("Be quick"))
-            .with_model("haiku");
+            .source(ContentSource::in_memory("Be quick"))
+            .model("haiku");
         assert!(subagent.resolve_model(&config).contains("haiku"));
 
         let subagent = SubagentIndex::new("smart", "Smart agent")
-            .with_source(ContentSource::in_memory("Think deep"))
-            .with_model("opus");
+            .source(ContentSource::in_memory("Think deep"))
+            .model("opus");
         assert!(subagent.resolve_model(&config).contains("opus"));
     }
 
@@ -257,8 +254,8 @@ mod tests {
         let config = ModelConfig::default();
 
         let subagent = SubagentIndex::new("typed", "Typed agent")
-            .with_source(ContentSource::in_memory("Use type"))
-            .with_model_type(ModelType::Small);
+            .source(ContentSource::in_memory("Use type"))
+            .model_type(ModelType::Small);
         assert!(subagent.resolve_model(&config).contains("haiku"));
     }
 }

@@ -8,6 +8,17 @@ use serde_json::Value;
 
 use super::{PermissionMode, is_file_tool, is_read_only_tool};
 
+fn anchor_pattern(pattern: &str) -> String {
+    let has_start = pattern.starts_with('^');
+    let has_end = pattern.ends_with('$');
+    match (has_start, has_end) {
+        (true, true) => pattern.to_string(),
+        (true, false) => format!("{}$", pattern),
+        (false, true) => format!("^{}", pattern),
+        (false, false) => format!("^{}$", pattern),
+    }
+}
+
 /// Permission decision for SDK.
 ///
 /// SDK only supports Allow/Deny. For interactive approval workflows,
@@ -87,26 +98,26 @@ pub struct ToolLimits {
 }
 
 impl ToolLimits {
-    pub fn with_timeout(timeout_ms: u64) -> Self {
+    pub fn timeout(timeout_ms: u64) -> Self {
         Self {
             timeout_ms: Some(timeout_ms),
             ..Default::default()
         }
     }
 
-    pub fn with_max_output(max_bytes: usize) -> Self {
+    pub fn max_output(max_bytes: usize) -> Self {
         Self {
             max_output_size: Some(max_bytes),
             ..Default::default()
         }
     }
 
-    pub fn with_allowed_paths(mut self, paths: Vec<String>) -> Self {
+    pub fn allowed_paths(mut self, paths: Vec<String>) -> Self {
         self.allowed_paths = Some(paths);
         self
     }
 
-    pub fn with_denied_paths(mut self, paths: Vec<String>) -> Self {
+    pub fn denied_paths(mut self, paths: Vec<String>) -> Self {
         self.denied_paths = Some(paths);
         self
     }
@@ -138,23 +149,28 @@ impl PermissionRule {
     }
 
     fn new(pattern: impl Into<String>, decision: PermissionDecision) -> Self {
+        let pattern = pattern.into();
+        let anchored = anchor_pattern(&pattern);
+        let compiled = Regex::new(&anchored).ok();
         Self {
-            pattern: pattern.into(),
+            pattern,
             input_pattern: None,
             decision,
             reason: None,
-            compiled: None,
+            compiled,
         }
     }
 
     pub fn from_scoped(scoped: &str, decision: PermissionDecision) -> Self {
         if let Some((tool, scope)) = Self::parse_scope(scoped) {
+            let anchored = anchor_pattern(&tool);
+            let compiled = Regex::new(&anchored).ok();
             Self {
                 pattern: tool,
                 input_pattern: Some(scope),
                 decision,
                 reason: None,
-                compiled: None,
+                compiled,
             }
         } else {
             Self::new(scoped, decision)
@@ -169,6 +185,26 @@ impl PermissionRule {
         Self::from_scoped(scoped, PermissionDecision::Deny)
     }
 
+    /// Create a rule from a pattern string, auto-detecting scoped patterns like `Bash(git:*)`.
+    pub fn allow_pattern(pattern: impl Into<String>) -> Self {
+        let p = pattern.into();
+        if p.contains('(') {
+            Self::allow_scoped(&p)
+        } else {
+            Self::allow(p)
+        }
+    }
+
+    /// Create a deny rule from a pattern string, auto-detecting scoped patterns.
+    pub fn deny_pattern(pattern: impl Into<String>) -> Self {
+        let p = pattern.into();
+        if p.contains('(') {
+            Self::deny_scoped(&p)
+        } else {
+            Self::deny(p)
+        }
+    }
+
     fn parse_scope(s: &str) -> Option<(String, String)> {
         let start = s.find('(')?;
         let end = s.rfind(')')?;
@@ -179,25 +215,25 @@ impl PermissionRule {
         }
     }
 
-    pub fn with_input_pattern(mut self, pattern: impl Into<String>) -> Self {
+    pub fn input_pattern(mut self, pattern: impl Into<String>) -> Self {
         self.input_pattern = Some(pattern.into());
         self
     }
 
-    pub fn with_reason(mut self, reason: impl Into<String>) -> Self {
+    pub fn reason(mut self, reason: impl Into<String>) -> Self {
         self.reason = Some(reason.into());
         self
     }
 
     pub fn compile(&mut self) -> Result<(), regex::Error> {
-        self.compiled = Some(Regex::new(&self.pattern)?);
+        self.compiled = Some(Regex::new(&anchor_pattern(&self.pattern))?);
         Ok(())
     }
 
     pub fn matches(&self, tool_name: &str) -> bool {
         if let Some(ref regex) = self.compiled {
             regex.is_match(tool_name)
-        } else if let Ok(regex) = Regex::new(&self.pattern) {
+        } else if let Ok(regex) = Regex::new(&anchor_pattern(&self.pattern)) {
             regex.is_match(tool_name)
         } else {
             self.pattern == tool_name
@@ -225,7 +261,7 @@ impl PermissionRule {
                     return input
                         .get("url")
                         .and_then(|v| v.as_str())
-                        .map(|url| url.contains(domain))
+                        .map(|url| Self::matches_domain(url, domain))
                         .unwrap_or(false);
                 }
                 input.get("url").and_then(|v| v.as_str())
@@ -254,6 +290,37 @@ impl PermissionRule {
         } else {
             input == pattern || input.starts_with(&format!("{}/", pattern))
         }
+    }
+
+    /// Securely match a URL against an allowed domain.
+    ///
+    /// Extracts the actual host from the URL and checks for:
+    /// - Exact domain match (e.g., "github.com")
+    /// - Subdomain match (e.g., "api.github.com" matches "github.com")
+    ///
+    /// This prevents bypass attacks like:
+    /// - `evil.github.com.attacker.com` (subdomain of attacker.com, not github.com)
+    /// - `https://attacker.com?redirect=github.com` (domain in query string)
+    fn matches_domain(url: &str, domain: &str) -> bool {
+        // Extract host from URL
+        let host = url
+            // Remove protocol
+            .strip_prefix("https://")
+            .or_else(|| url.strip_prefix("http://"))
+            .unwrap_or(url)
+            // Take only the host part (before path, query, or port)
+            .split('/')
+            .next()
+            .unwrap_or("")
+            .split('?')
+            .next()
+            .unwrap_or("")
+            .split(':')
+            .next()
+            .unwrap_or("");
+
+        // Check exact match or subdomain match
+        host == domain || host.ends_with(&format!(".{}", domain))
     }
 }
 
@@ -379,24 +446,16 @@ impl PermissionPolicyBuilder {
     }
 
     pub fn allow(mut self, pattern: impl Into<String>) -> Self {
-        let pattern_str = pattern.into();
-        let rule = if pattern_str.contains('(') {
-            PermissionRule::allow_scoped(&pattern_str)
-        } else {
-            PermissionRule::allow(pattern_str)
-        };
-        self.policy.rules.push(rule);
+        self.policy
+            .rules
+            .push(PermissionRule::allow_pattern(pattern));
         self
     }
 
     pub fn deny(mut self, pattern: impl Into<String>) -> Self {
-        let pattern_str = pattern.into();
-        let rule = if pattern_str.contains('(') {
-            PermissionRule::deny_scoped(&pattern_str)
-        } else {
-            PermissionRule::deny(pattern_str)
-        };
-        self.policy.rules.push(rule);
+        self.policy
+            .rules
+            .push(PermissionRule::deny_pattern(pattern));
         self
     }
 
@@ -529,7 +588,7 @@ mod tests {
     #[test]
     fn test_tool_limits() {
         let policy = PermissionPolicy::builder()
-            .tool_limits("Bash", ToolLimits::with_timeout(30000))
+            .tool_limits("Bash", ToolLimits::timeout(30000))
             .build();
 
         let limits = policy.limits("Bash").unwrap();
@@ -549,5 +608,80 @@ mod tests {
 
         assert!(policy.check("WebFetch", &github_input).is_allowed());
         assert!(policy.check("WebFetch", &other_input).is_denied());
+    }
+
+    #[test]
+    fn test_domain_filter_security() {
+        let policy = PermissionPolicy::builder()
+            .mode(PermissionMode::Default)
+            .allow("WebFetch(domain:github.com)")
+            .build();
+
+        // Should allow: exact domain and subdomains
+        let exact = serde_json::json!({"url": "https://github.com/user/repo"});
+        let subdomain = serde_json::json!({"url": "https://api.github.com/repos"});
+        let with_port = serde_json::json!({"url": "https://github.com:443/path"});
+        assert!(policy.check("WebFetch", &exact).is_allowed());
+        assert!(policy.check("WebFetch", &subdomain).is_allowed());
+        assert!(policy.check("WebFetch", &with_port).is_allowed());
+
+        // Should deny: bypass attempts
+        let fake_subdomain = serde_json::json!({"url": "https://github.com.attacker.com/path"});
+        let query_bypass = serde_json::json!({"url": "https://attacker.com?url=github.com"});
+        let path_bypass = serde_json::json!({"url": "https://attacker.com/github.com"});
+        let partial_match = serde_json::json!({"url": "https://notgithub.com/page"});
+        assert!(policy.check("WebFetch", &fake_subdomain).is_denied());
+        assert!(policy.check("WebFetch", &query_bypass).is_denied());
+        assert!(policy.check("WebFetch", &path_bypass).is_denied());
+        assert!(policy.check("WebFetch", &partial_match).is_denied());
+    }
+
+    #[test]
+    fn test_matches_domain_helper() {
+        // Exact match
+        assert!(PermissionRule::matches_domain(
+            "https://github.com/path",
+            "github.com"
+        ));
+        assert!(PermissionRule::matches_domain(
+            "http://github.com",
+            "github.com"
+        ));
+        assert!(PermissionRule::matches_domain(
+            "https://github.com:443/path",
+            "github.com"
+        ));
+
+        // Subdomain match
+        assert!(PermissionRule::matches_domain(
+            "https://api.github.com/repos",
+            "github.com"
+        ));
+        assert!(PermissionRule::matches_domain(
+            "https://raw.githubusercontent.com/f",
+            "githubusercontent.com"
+        ));
+
+        // Security: should NOT match
+        assert!(!PermissionRule::matches_domain(
+            "https://github.com.evil.com/x",
+            "github.com"
+        ));
+        assert!(!PermissionRule::matches_domain(
+            "https://evil.com?r=github.com",
+            "github.com"
+        ));
+        assert!(!PermissionRule::matches_domain(
+            "https://evil.com/github.com",
+            "github.com"
+        ));
+        assert!(!PermissionRule::matches_domain(
+            "https://notgithub.com",
+            "github.com"
+        ));
+        assert!(!PermissionRule::matches_domain(
+            "https://fakegithub.com",
+            "github.com"
+        ));
     }
 }

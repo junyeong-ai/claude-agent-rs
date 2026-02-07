@@ -119,7 +119,7 @@ impl ContextWindow {
         self.warning_threshold
     }
 
-    pub fn with_thresholds(mut self, warning: f64, critical: f64) -> Self {
+    pub fn thresholds(mut self, warning: f64, critical: f64) -> Self {
         self.warning_threshold = warning;
         self.critical_threshold = critical;
         self
@@ -129,11 +129,11 @@ impl ContextWindow {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::models::read_registry;
+    use crate::models::registry;
 
     #[test]
     fn test_context_window_status() {
-        let reg = read_registry();
+        let reg = registry();
         let spec = reg.resolve("sonnet").unwrap();
         let mut window = ContextWindow::new(spec, false);
 
@@ -152,7 +152,7 @@ mod tests {
 
     #[test]
     fn test_extended_context() {
-        let reg = read_registry();
+        let reg = registry();
         let spec = reg.resolve("sonnet").unwrap();
 
         let standard = ContextWindow::new(spec, false);

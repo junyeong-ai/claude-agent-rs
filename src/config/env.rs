@@ -22,7 +22,7 @@ impl EnvConfigProvider {
     }
 
     /// Create an environment provider with a prefix
-    pub fn with_prefix(prefix: impl Into<String>) -> Self {
+    pub fn prefixed(prefix: impl Into<String>) -> Self {
         Self {
             prefix: Some(prefix.into()),
         }
@@ -109,13 +109,13 @@ mod tests {
         assert_eq!(provider.env_key("api.key"), "API_KEY");
         assert_eq!(provider.env_key("model.name"), "MODEL_NAME");
 
-        let provider = EnvConfigProvider::with_prefix("CLAUDE_");
+        let provider = EnvConfigProvider::prefixed("CLAUDE_");
         assert_eq!(provider.env_key("api.key"), "CLAUDE_API_KEY");
     }
 
     #[tokio::test]
     async fn test_env_provider_get() {
-        let provider = EnvConfigProvider::with_prefix("TEST_CONFIG_");
+        let provider = EnvConfigProvider::prefixed("TEST_CONFIG_");
 
         // SAFETY: Test-only environment setup
         unsafe { std::env::set_var("TEST_CONFIG_MY_KEY", "my_value") };
@@ -137,7 +137,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_env_provider_not_found() {
-        let provider = EnvConfigProvider::with_prefix("NONEXISTENT_PREFIX_");
+        let provider = EnvConfigProvider::prefixed("NONEXISTENT_PREFIX_");
         let value = provider.get_raw("some.key").await.unwrap();
         assert_eq!(value, None);
     }

@@ -34,17 +34,17 @@ impl SecurityPolicy {
         }
     }
 
-    pub fn with_permission(mut self, policy: PermissionPolicy) -> Self {
+    pub fn permission(mut self, policy: PermissionPolicy) -> Self {
         self.permission = policy;
         self
     }
 
-    pub fn with_sandbox_bypass(mut self, allow: bool) -> Self {
+    pub fn sandbox_bypass(mut self, allow: bool) -> Self {
         self.allow_sandbox_bypass = allow;
         self
     }
 
-    pub fn with_symlink_depth(mut self, depth: u8) -> Self {
+    pub fn symlink_depth(mut self, depth: u8) -> Self {
         self.max_symlink_depth = depth;
         self
     }

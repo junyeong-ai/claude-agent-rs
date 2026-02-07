@@ -11,9 +11,10 @@ use std::sync::Arc;
 
 use tokio::sync::RwLock;
 
-use crate::common::{Index, IndexRegistry, LoadedEntry};
+use crate::common::{IndexRegistry, LoadedEntry};
+use crate::session::compact::DEFAULT_COMPACT_THRESHOLD;
 use crate::skills::SkillIndex;
-use crate::types::{DEFAULT_COMPACT_THRESHOLD, TokenUsage, context_window};
+use crate::types::{TokenUsage, context_window};
 
 use super::rule_index::RuleIndex;
 use super::static_context::StaticContext;
@@ -44,12 +45,12 @@ impl PromptOrchestrator {
     }
 
     /// Set the rule registry with pre-populated rules.
-    pub fn with_rule_registry(mut self, registry: IndexRegistry<RuleIndex>) -> Self {
+    pub fn rule_registry(mut self, registry: IndexRegistry<RuleIndex>) -> Self {
         self.rule_registry = Arc::new(RwLock::new(registry));
         self
     }
 
-    pub fn with_skill_registry(mut self, registry: IndexRegistry<SkillIndex>) -> Self {
+    pub fn skill_registry(mut self, registry: IndexRegistry<SkillIndex>) -> Self {
         self.skill_registry = registry;
         self
     }
@@ -63,13 +64,13 @@ impl PromptOrchestrator {
     }
 
     /// Get read access to the rule registry.
-    pub async fn rule_registry(
+    pub async fn get_rule_registry(
         &self,
     ) -> tokio::sync::RwLockReadGuard<'_, IndexRegistry<RuleIndex>> {
         self.rule_registry.read().await
     }
 
-    pub fn skill_registry(&self) -> &IndexRegistry<SkillIndex> {
+    pub fn get_skill_registry(&self) -> &IndexRegistry<SkillIndex> {
         &self.skill_registry
     }
 
@@ -187,29 +188,21 @@ impl PromptOrchestrator {
     }
 
     pub fn build_skill_summary(&self) -> String {
-        if self.skill_registry.is_empty() {
+        let summary = self.skill_registry.build_summary();
+        if summary.is_empty() {
             return String::new();
         }
-
-        let mut lines = vec!["# Available Skills".to_string()];
-        for skill in self.skill_registry.iter() {
-            lines.push(skill.to_summary_line());
-        }
-        lines.join("\n")
+        format!("# Available Skills\n{summary}")
     }
 
     /// Build a summary of all registered rules.
     pub async fn build_rules_summary(&self) -> String {
         let registry = self.rule_registry.read().await;
-        if registry.is_empty() {
+        let summary = registry.build_priority_summary();
+        if summary.is_empty() {
             return String::new();
         }
-
-        let mut lines = vec!["# Available Rules".to_string()];
-        for rule in registry.sorted_by_priority() {
-            lines.push(rule.to_summary_line());
-        }
-        lines.join("\n")
+        format!("# Available Rules\n{summary}")
     }
 }
 
@@ -220,7 +213,7 @@ mod tests {
 
     #[test]
     fn test_orchestrator_creation() {
-        let static_context = StaticContext::new().with_system_prompt("Hello");
+        let static_context = StaticContext::new().system_prompt("Hello");
         let orchestrator = PromptOrchestrator::new(static_context, "claude-sonnet-4-5");
 
         assert_eq!(orchestrator.max_tokens(), 200_000);
@@ -256,15 +249,15 @@ mod tests {
         let mut rule_registry = IndexRegistry::new();
         rule_registry.register(
             RuleIndex::new("rust")
-                .with_paths(vec!["**/*.rs".into()])
-                .with_source(ContentSource::in_memory("Use snake_case")),
+                .paths(vec!["**/*.rs".into()])
+                .source(ContentSource::in_memory("Use snake_case")),
         );
         rule_registry
-            .register(RuleIndex::new("global").with_source(ContentSource::in_memory("Be helpful")));
+            .register(RuleIndex::new("global").source(ContentSource::in_memory("Be helpful")));
 
         let static_context = StaticContext::new();
         let orchestrator = PromptOrchestrator::new(static_context, "claude-sonnet-4-5")
-            .with_rule_registry(rule_registry);
+            .rule_registry(rule_registry);
 
         let rules = orchestrator
             .get_rules_for_path(Path::new("src/lib.rs"))
@@ -282,13 +275,13 @@ mod tests {
         let mut rule_registry = IndexRegistry::new();
         rule_registry.register(
             RuleIndex::new("rust")
-                .with_paths(vec!["**/*.rs".into()])
-                .with_source(ContentSource::in_memory("Rust rules")),
+                .paths(vec!["**/*.rs".into()])
+                .source(ContentSource::in_memory("Rust rules")),
         );
 
         let static_context = StaticContext::new();
         let orchestrator = PromptOrchestrator::new(static_context, "claude-sonnet-4-5")
-            .with_rule_registry(rule_registry);
+            .rule_registry(rule_registry);
 
         let rules = orchestrator
             .find_matching_rules(Path::new("src/lib.rs"))
@@ -314,13 +307,13 @@ mod tests {
         let mut skill_registry = IndexRegistry::new();
         skill_registry.register(
             SkillIndex::new("test", "A test skill")
-                .with_source(ContentSource::in_memory("Test content")),
+                .source(ContentSource::in_memory("Test content")),
         );
 
         let orchestrator = PromptOrchestrator::new(static_context, "claude-sonnet-4-5")
-            .with_skill_registry(skill_registry);
+            .skill_registry(skill_registry);
 
-        assert!(orchestrator.skill_registry().contains("test"));
+        assert!(orchestrator.get_skill_registry().contains("test"));
     }
 
     #[test]
@@ -331,7 +324,7 @@ mod tests {
         skill_registry.register(SkillIndex::new("review", "Review code"));
 
         let orchestrator = PromptOrchestrator::new(static_context, "claude-sonnet-4-5")
-            .with_skill_registry(skill_registry);
+            .skill_registry(skill_registry);
 
         let summary = orchestrator.build_skill_summary();
         assert!(summary.contains("commit"));
@@ -343,13 +336,13 @@ mod tests {
         let mut rule_registry = IndexRegistry::new();
         rule_registry.register(
             RuleIndex::new("security")
-                .with_description("Security best practices")
-                .with_source(ContentSource::in_memory("content")),
+                .description("Security best practices")
+                .source(ContentSource::in_memory("content")),
         );
 
         let static_context = StaticContext::new();
         let orchestrator = PromptOrchestrator::new(static_context, "claude-sonnet-4-5")
-            .with_rule_registry(rule_registry);
+            .rule_registry(rule_registry);
 
         let summary = orchestrator.build_rules_summary().await;
         assert!(summary.contains("security"));

@@ -34,16 +34,14 @@ impl HookEvent {
     /// - `PreToolUse`: Can block tool execution
     /// - `UserPromptSubmit`: Can block prompt processing
     /// - `SessionStart`: Can block session initialization
-    /// - `PreCompact`: Can block context compaction
     /// - `SubagentStart`: Can block subagent spawning
+    ///
+    /// Non-blockable pre-events:
+    /// - `PreCompact`: Compaction is non-critical; failures are logged but don't stop execution
     pub fn can_block(&self) -> bool {
         matches!(
             self,
-            Self::PreToolUse
-                | Self::UserPromptSubmit
-                | Self::SessionStart
-                | Self::PreCompact
-                | Self::SubagentStart
+            Self::PreToolUse | Self::UserPromptSubmit | Self::SessionStart | Self::SubagentStart
         )
     }
 
@@ -330,17 +328,17 @@ impl HookOutput {
         }
     }
 
-    pub fn with_system_message(mut self, message: impl Into<String>) -> Self {
+    pub fn system_message(mut self, message: impl Into<String>) -> Self {
         self.system_message = Some(message.into());
         self
     }
 
-    pub fn with_context(mut self, context: impl Into<String>) -> Self {
+    pub fn context(mut self, context: impl Into<String>) -> Self {
         self.additional_context = Some(context.into());
         self
     }
 
-    pub fn with_updated_input(mut self, input: Value) -> Self {
+    pub fn updated_input(mut self, input: Value) -> Self {
         self.updated_input = Some(input);
         self
     }
@@ -378,20 +376,29 @@ impl HookContext {
         }
     }
 
-    pub fn with_cancellation_token(mut self, token: CancellationToken) -> Self {
+    pub fn cancellation_token(mut self, token: CancellationToken) -> Self {
         self.cancellation_token = token;
         self
     }
 
-    pub fn with_cwd(mut self, cwd: impl Into<std::path::PathBuf>) -> Self {
+    pub fn cwd(mut self, cwd: impl Into<std::path::PathBuf>) -> Self {
         self.cwd = Some(cwd.into());
         self
     }
 
-    pub fn with_env(mut self, env: std::collections::HashMap<String, String>) -> Self {
+    pub fn env(mut self, env: std::collections::HashMap<String, String>) -> Self {
         self.env = env;
         self
     }
+}
+
+/// Origin of a hook registration.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum HookSource {
+    #[default]
+    Builtin,
+    User,
+    Project,
 }
 
 /// Hook metadata for configuration.
@@ -402,6 +409,7 @@ pub struct HookMetadata {
     pub priority: i32,
     pub timeout_secs: u64,
     pub tool_matcher: Option<Regex>,
+    pub source: HookSource,
 }
 
 impl HookMetadata {
@@ -412,23 +420,29 @@ impl HookMetadata {
             priority: 0,
             timeout_secs: 60,
             tool_matcher: None,
+            source: HookSource::default(),
         }
     }
 
-    pub fn with_priority(mut self, priority: i32) -> Self {
+    pub fn priority(mut self, priority: i32) -> Self {
         self.priority = priority;
         self
     }
 
-    pub fn with_timeout(mut self, secs: u64) -> Self {
+    pub fn timeout(mut self, secs: u64) -> Self {
         self.timeout_secs = secs;
         self
     }
 
-    pub fn with_tool_matcher(mut self, pattern: &str) -> Self {
+    pub fn tool_matcher(mut self, pattern: &str) -> Self {
         if let Ok(regex) = Regex::new(pattern) {
             self.tool_matcher = Some(regex);
         }
+        self
+    }
+
+    pub fn source(mut self, source: HookSource) -> Self {
+        self.source = source;
         self
     }
 }
@@ -459,7 +473,11 @@ pub trait Hook: Send + Sync {
         hook_context: &HookContext,
     ) -> Result<HookOutput, crate::Error>;
 
-    /// Get full metadata as a struct.
+    #[inline]
+    fn source(&self) -> HookSource {
+        HookSource::Builtin
+    }
+
     fn metadata(&self) -> HookMetadata {
         HookMetadata {
             name: self.name().to_string(),
@@ -467,6 +485,7 @@ pub trait Hook: Send + Sync {
             priority: self.priority(),
             timeout_secs: self.timeout_secs(),
             tool_matcher: self.tool_matcher().cloned(),
+            source: self.source(),
         }
     }
 }
@@ -586,7 +605,7 @@ mod tests {
         assert!(HookEvent::PreToolUse.can_block());
         assert!(HookEvent::UserPromptSubmit.can_block());
         assert!(HookEvent::SessionStart.can_block());
-        assert!(HookEvent::PreCompact.can_block());
+        assert!(!HookEvent::PreCompact.can_block());
         assert!(HookEvent::SubagentStart.can_block());
 
         // Non-blockable events (fail-open semantics)
@@ -621,8 +640,8 @@ mod tests {
         assert_eq!(output.stop_reason, Some("Dangerous operation".to_string()));
 
         let output = HookOutput::allow()
-            .with_system_message("Added context")
-            .with_context("More info")
+            .system_message("Added context")
+            .context("More info")
             .suppress_logging();
         assert!(output.continue_execution);
         assert!(output.suppress_logging);

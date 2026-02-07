@@ -62,12 +62,12 @@ impl OutputStyle {
         }
     }
 
-    pub fn with_source_type(mut self, source_type: SourceType) -> Self {
+    pub fn source_type(mut self, source_type: SourceType) -> Self {
         self.source_type = source_type;
         self
     }
 
-    pub fn with_keep_coding_instructions(mut self, keep: bool) -> Self {
+    pub fn keep_coding_instructions(mut self, keep: bool) -> Self {
         self.keep_coding_instructions = keep;
         self
     }
@@ -108,7 +108,7 @@ pub type OutputStyleRegistry = IndexRegistry<OutputStyle>;
 
 #[cfg(feature = "cli-integration")]
 impl OutputStyleRegistry {
-    pub fn with_builtins() -> Self {
+    pub fn builtins() -> Self {
         let mut registry = Self::new();
         registry.register_all(builtin_styles());
         registry
@@ -119,25 +119,25 @@ impl OutputStyleRegistry {
         working_dir: Option<&std::path::Path>,
     ) -> crate::Result<()> {
         let builtins = InMemoryOutputStyleProvider::new()
-            .with_items(builtin_styles())
-            .with_priority(0)
-            .with_source_type(SourceType::Builtin);
+            .items(builtin_styles())
+            .priority(0)
+            .source_type(SourceType::Builtin);
 
-        let mut chain = ChainOutputStyleProvider::new().with(builtins);
+        let mut chain = ChainOutputStyleProvider::new().provider(builtins);
 
         if let Some(dir) = working_dir {
             let project = file_output_style_provider()
-                .with_project_path(dir)
-                .with_priority(20)
-                .with_source_type(SourceType::Project);
-            chain = chain.with(project);
+                .project_path(dir)
+                .priority(20)
+                .source_type(SourceType::Project);
+            chain = chain.provider(project);
         }
 
         let user = file_output_style_provider()
-            .with_user_path()
-            .with_priority(10)
-            .with_source_type(SourceType::User);
-        let chain = chain.with(user);
+            .user_path()
+            .priority(10)
+            .source_type(SourceType::User);
+        let chain = chain.provider(user);
 
         let loaded = chain.load_all().await?;
         self.register_all(loaded);
@@ -170,8 +170,8 @@ mod tests {
     #[test]
     fn test_output_style_builder() {
         let style = OutputStyle::new("custom", "Custom style", "Custom prompt")
-            .with_source_type(SourceType::Project)
-            .with_keep_coding_instructions(true);
+            .source_type(SourceType::Project)
+            .keep_coding_instructions(true);
 
         assert_eq!(style.source_type, SourceType::Project);
         assert!(style.keep_coding_instructions);

@@ -175,15 +175,8 @@ impl SandboxRuntime for SeatbeltSandbox {
 
 fn write_profile_to_temp(profile: &str) -> SandboxResult<PathBuf> {
     use std::fs::OpenOptions;
-    use std::time::{SystemTime, UNIX_EPOCH};
 
-    let timestamp = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_nanos())
-        .unwrap_or(0);
-    let random = std::process::id() as u128 ^ timestamp;
-
-    let path = PathBuf::from(format!("/tmp/claude-sandbox-{:032x}.sb", random));
+    let path = PathBuf::from(format!("/tmp/claude-sandbox-{}.sb", uuid::Uuid::new_v4()));
 
     let mut file = OpenOptions::new()
         .write(true)

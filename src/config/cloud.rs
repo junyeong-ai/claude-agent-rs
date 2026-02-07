@@ -9,7 +9,7 @@ use crate::client::messages::{DEFAULT_MAX_TOKENS, MIN_THINKING_BUDGET};
 pub struct CloudConfig {
     pub provider: ProviderSelection,
     pub tokens: TokenLimits,
-    pub caching: CacheConfig,
+    pub caching: PromptCachingConfig,
     pub gateway: GatewayOptions,
 }
 
@@ -36,7 +36,7 @@ impl Default for TokenLimits {
 }
 
 #[derive(Clone, Debug, Default)]
-pub struct CacheConfig {
+pub struct PromptCachingConfig {
     pub disable_prompt_caching: bool,
 }
 
@@ -94,7 +94,7 @@ impl CloudConfig {
         Self {
             provider: ProviderSelection::from_env(),
             tokens: TokenLimits::from_env(),
-            caching: CacheConfig::from_env(),
+            caching: PromptCachingConfig::from_env(),
             gateway: GatewayOptions::from_env(),
         }
     }
@@ -133,7 +133,7 @@ impl TokenLimits {
     }
 }
 
-impl CacheConfig {
+impl PromptCachingConfig {
     pub fn from_env() -> Self {
         Self {
             disable_prompt_caching: is_flag_set("DISABLE_PROMPT_CACHING"),
@@ -163,13 +163,13 @@ impl BedrockConfig {
     }
 
     /// Builder method to set use_global_endpoint.
-    pub fn with_global_endpoint(mut self, enable: bool) -> Self {
+    pub fn global_endpoint(mut self, enable: bool) -> Self {
         self.use_global_endpoint = enable;
         self
     }
 
-    /// Builder method to enable 1M context.
-    pub fn with_1m_context(mut self, enable: bool) -> Self {
+    /// Builder method to enable extended context (1M tokens).
+    pub fn extended_context(mut self, enable: bool) -> Self {
         self.enable_1m_context = enable;
         self
     }
@@ -180,14 +180,9 @@ impl VertexConfig {
         let mut model_regions = HashMap::new();
 
         let region_vars = [
-            ("VERTEX_REGION_CLAUDE_3_5_HAIKU", "claude-3-5-haiku"),
-            ("VERTEX_REGION_CLAUDE_3_5_SONNET", "claude-3-5-sonnet"),
-            ("VERTEX_REGION_CLAUDE_3_7_SONNET", "claude-3-7-sonnet"),
-            ("VERTEX_REGION_CLAUDE_4_0_OPUS", "claude-4-0-opus"),
-            ("VERTEX_REGION_CLAUDE_4_0_SONNET", "claude-4-0-sonnet"),
-            ("VERTEX_REGION_CLAUDE_4_1_OPUS", "claude-4-1-opus"),
             ("VERTEX_REGION_CLAUDE_4_5_SONNET", "claude-4-5-sonnet"),
             ("VERTEX_REGION_CLAUDE_4_5_HAIKU", "claude-4-5-haiku"),
+            ("VERTEX_REGION_CLAUDE_4_6_OPUS", "claude-4-6-opus"),
         ];
 
         for (env_var, model_key) in region_vars {
@@ -237,19 +232,19 @@ impl FoundryConfig {
     }
 
     /// Builder method to set resource name.
-    pub fn with_resource(mut self, resource: impl Into<String>) -> Self {
+    pub fn resource(mut self, resource: impl Into<String>) -> Self {
         self.resource = Some(resource.into());
         self
     }
 
     /// Builder method to set base URL (alternative to resource).
-    pub fn with_base_url(mut self, base_url: impl Into<String>) -> Self {
+    pub fn base_url(mut self, base_url: impl Into<String>) -> Self {
         self.base_url = Some(base_url.into());
         self
     }
 
     /// Builder method to set API key.
-    pub fn with_api_key(mut self, api_key: impl Into<String>) -> Self {
+    pub fn api_key(mut self, api_key: impl Into<String>) -> Self {
         self.api_key = Some(api_key.into());
         self
     }

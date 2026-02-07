@@ -13,8 +13,8 @@ use super::OutputStyle;
 /// This is a null/passthrough style that doesn't modify the default behavior.
 pub fn default_style() -> OutputStyle {
     OutputStyle::new("default", "Standard mode with full coding instructions", "")
-        .with_source_type(SourceType::Builtin)
-        .with_keep_coding_instructions(true)
+        .source_type(SourceType::Builtin)
+        .keep_coding_instructions(true)
 }
 
 /// Explanatory output style.
@@ -27,8 +27,8 @@ pub fn explanatory_style() -> OutputStyle {
         "Educational mode that explains implementation choices",
         EXPLANATORY_PROMPT,
     )
-    .with_source_type(SourceType::Builtin)
-    .with_keep_coding_instructions(true)
+    .source_type(SourceType::Builtin)
+    .keep_coding_instructions(true)
 }
 
 /// Learning output style.
@@ -41,8 +41,8 @@ pub fn learning_style() -> OutputStyle {
         "Interactive learning mode with guided exercises",
         LEARNING_PROMPT,
     )
-    .with_source_type(SourceType::Builtin)
-    .with_keep_coding_instructions(true)
+    .source_type(SourceType::Builtin)
+    .keep_coding_instructions(true)
 }
 
 /// Returns all built-in styles.

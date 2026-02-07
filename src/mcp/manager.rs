@@ -17,7 +17,6 @@ use super::{ReconnectPolicy, make_mcp_name, parse_mcp_name};
 #[cfg(feature = "mcp")]
 use super::client::McpClient;
 
-/// MCP Manager for handling multiple server connections
 pub struct McpManager {
     #[cfg(feature = "mcp")]
     servers: Arc<RwLock<HashMap<String, McpClient>>>,
@@ -50,12 +49,11 @@ impl McpManager {
     }
 
     #[cfg(feature = "mcp")]
-    pub fn with_reconnect_policy(mut self, policy: ReconnectPolicy) -> Self {
+    pub fn reconnect_policy(mut self, policy: ReconnectPolicy) -> Self {
         self.reconnect_policy = policy;
         self
     }
 
-    /// Add and connect to an MCP server
     #[cfg(feature = "mcp")]
     pub async fn add_server(
         &self,
@@ -64,7 +62,6 @@ impl McpManager {
     ) -> McpResult<()> {
         let name = name.into();
 
-        // Check if server already exists
         {
             let servers = self.servers.read().await;
             if servers.contains_key(&name) {
@@ -74,18 +71,21 @@ impl McpManager {
             }
         }
 
-        // Create and connect client
         let mut client = McpClient::new(name.clone(), config);
         client.connect().await?;
 
-        // Store client
+        // Re-check after acquiring write lock to prevent race
         let mut servers = self.servers.write().await;
+        if servers.contains_key(&name) {
+            return Err(McpError::Protocol {
+                message: format!("Server '{}' already exists", name),
+            });
+        }
         servers.insert(name, client);
 
         Ok(())
     }
 
-    /// Add and connect to an MCP server (stub when feature disabled)
     #[cfg(not(feature = "mcp"))]
     pub async fn add_server(
         &self,
@@ -97,7 +97,6 @@ impl McpManager {
         })
     }
 
-    /// Remove and disconnect from an MCP server
     #[cfg(feature = "mcp")]
     pub async fn remove_server(&self, name: &str) -> McpResult<()> {
         let mut servers = self.servers.write().await;
@@ -111,7 +110,6 @@ impl McpManager {
         }
     }
 
-    /// Remove and disconnect from an MCP server (stub when feature disabled)
     #[cfg(not(feature = "mcp"))]
     pub async fn remove_server(&self, _name: &str) -> McpResult<()> {
         Err(McpError::Protocol {
@@ -119,33 +117,28 @@ impl McpManager {
         })
     }
 
-    /// List all connected servers
     #[cfg(feature = "mcp")]
     pub async fn list_servers(&self) -> Vec<String> {
         let servers = self.servers.read().await;
         servers.keys().cloned().collect()
     }
 
-    /// List all connected servers (stub when feature disabled)
     #[cfg(not(feature = "mcp"))]
     pub async fn list_servers(&self) -> Vec<String> {
         Vec::new()
     }
 
-    /// Get server state
     #[cfg(feature = "mcp")]
     pub async fn get_server_state(&self, name: &str) -> Option<McpServerState> {
         let servers = self.servers.read().await;
         servers.get(name).map(|c| c.state().clone())
     }
 
-    /// Get server state (stub when feature disabled)
     #[cfg(not(feature = "mcp"))]
     pub async fn get_server_state(&self, _name: &str) -> Option<McpServerState> {
         None
     }
 
-    /// List all available tools from all servers
     #[cfg(feature = "mcp")]
     pub async fn list_tools(&self) -> Vec<(String, McpToolDefinition)> {
         let servers = self.servers.read().await;
@@ -160,13 +153,12 @@ impl McpManager {
         tools
     }
 
-    /// List all available tools from all servers (stub when feature disabled)
     #[cfg(not(feature = "mcp"))]
     pub async fn list_tools(&self) -> Vec<(String, McpToolDefinition)> {
         Vec::new()
     }
 
-    /// Ensure a server is connected, reconnecting if necessary
+    /// Reconnects if the server is disconnected, with exponential backoff.
     #[cfg(feature = "mcp")]
     pub async fn ensure_connected(&self, server_name: &str) -> McpResult<()> {
         // Fast path: check with read lock first
@@ -217,7 +209,6 @@ impl McpManager {
         })
     }
 
-    /// Call a tool by its qualified name (`mcp__server_tool`)
     #[cfg(feature = "mcp")]
     pub async fn call_tool(
         &self,
@@ -241,7 +232,6 @@ impl McpManager {
         client.call_tool(tool_name, arguments).await
     }
 
-    /// Call a tool by its qualified name (stub when feature disabled)
     #[cfg(not(feature = "mcp"))]
     pub async fn call_tool(
         &self,
@@ -253,7 +243,6 @@ impl McpManager {
         })
     }
 
-    /// List all available resources from all servers
     #[cfg(feature = "mcp")]
     pub async fn list_resources(&self) -> Vec<(String, McpResourceDefinition)> {
         let servers = self.servers.read().await;
@@ -268,13 +257,11 @@ impl McpManager {
         resources
     }
 
-    /// List all available resources from all servers (stub when feature disabled)
     #[cfg(not(feature = "mcp"))]
     pub async fn list_resources(&self) -> Vec<(String, McpResourceDefinition)> {
         Vec::new()
     }
 
-    /// Read a resource from a specific server
     #[cfg(feature = "mcp")]
     pub async fn read_resource(&self, server_name: &str, uri: &str) -> McpResult<Vec<McpContent>> {
         let servers = self.servers.read().await;
@@ -287,7 +274,6 @@ impl McpManager {
         client.read_resource(uri).await
     }
 
-    /// Read a resource from a specific server (stub when feature disabled)
     #[cfg(not(feature = "mcp"))]
     pub async fn read_resource(
         &self,
@@ -299,7 +285,6 @@ impl McpManager {
         })
     }
 
-    /// Close all server connections
     #[cfg(feature = "mcp")]
     pub async fn close_all(&self) -> McpResult<()> {
         let mut servers = self.servers.write().await;
@@ -309,7 +294,6 @@ impl McpManager {
         Ok(())
     }
 
-    /// Close all server connections (stub when feature disabled)
     #[cfg(not(feature = "mcp"))]
     pub async fn close_all(&self) -> McpResult<()> {
         Ok(())
@@ -399,7 +383,7 @@ mod tests {
     async fn test_call_tool_server_not_found() {
         let manager = McpManager::new();
         let result = manager
-            .call_tool("mcp__server_tool", serde_json::json!({}))
+            .call_tool("mcp__server__tool", serde_json::json!({}))
             .await;
         assert!(matches!(result, Err(McpError::ServerNotFound { .. })));
     }
@@ -421,7 +405,7 @@ mod tests {
             max_delay_ms: 10000,
             jitter_factor: 0.2,
         };
-        let manager = McpManager::new().with_reconnect_policy(policy);
+        let manager = McpManager::new().reconnect_policy(policy);
         assert!(manager.list_servers().await.is_empty());
     }
 }

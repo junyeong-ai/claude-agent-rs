@@ -108,46 +108,43 @@ impl SkillIndex {
 
     /// Set the base directory for relative path resolution.
     /// This is useful for InMemory sources where the ContentSource doesn't have a file path.
-    pub fn with_base_dir(mut self, dir: impl Into<PathBuf>) -> Self {
+    pub fn base_dir(mut self, dir: impl Into<PathBuf>) -> Self {
         self.base_dir_override = Some(dir.into());
         self
     }
 
     /// Set triggers for keyword matching.
-    pub fn with_triggers(mut self, triggers: impl IntoIterator<Item = impl Into<String>>) -> Self {
+    pub fn triggers(mut self, triggers: impl IntoIterator<Item = impl Into<String>>) -> Self {
         self.triggers = triggers.into_iter().map(Into::into).collect();
         self
     }
 
     /// Set allowed tools.
-    pub fn with_allowed_tools(
-        mut self,
-        tools: impl IntoIterator<Item = impl Into<String>>,
-    ) -> Self {
+    pub fn allowed_tools(mut self, tools: impl IntoIterator<Item = impl Into<String>>) -> Self {
         self.allowed_tools = tools.into_iter().map(Into::into).collect();
         self
     }
 
     /// Set the content source.
-    pub fn with_source(mut self, source: ContentSource) -> Self {
+    pub fn source(mut self, source: ContentSource) -> Self {
         self.source = source;
         self
     }
 
     /// Set the source type.
-    pub fn with_source_type(mut self, source_type: SourceType) -> Self {
+    pub fn source_type(mut self, source_type: SourceType) -> Self {
         self.source_type = source_type;
         self
     }
 
     /// Set the model override.
-    pub fn with_model(mut self, model: impl Into<String>) -> Self {
+    pub fn model(mut self, model: impl Into<String>) -> Self {
         self.model = Some(model.into());
         self
     }
 
     /// Set the argument hint.
-    pub fn with_argument_hint(mut self, hint: impl Into<String>) -> Self {
+    pub fn argument_hint(mut self, hint: impl Into<String>) -> Self {
         self.argument_hint = Some(hint.into());
         self
     }
@@ -172,7 +169,7 @@ impl SkillIndex {
 
     /// Get the base directory for this skill (for relative path resolution).
     /// Checks base_dir_override first, then falls back to ContentSource's base_dir.
-    pub fn base_dir(&self) -> Option<PathBuf> {
+    pub fn get_base_dir(&self) -> Option<PathBuf> {
         self.base_dir_override
             .clone()
             .or_else(|| self.source.base_dir())
@@ -180,14 +177,14 @@ impl SkillIndex {
 
     /// Resolve a relative path against this skill's base directory.
     pub fn resolve_path(&self, relative: &str) -> Option<PathBuf> {
-        self.base_dir().map(|base| base.join(relative))
+        self.get_base_dir().map(|base| base.join(relative))
     }
 
     /// Load content with resolved relative paths.
     pub async fn load_content_with_resolved_paths(&self) -> crate::Result<String> {
         let content = self.load_content().await?;
 
-        if let Some(base_dir) = self.base_dir() {
+        if let Some(base_dir) = self.get_base_dir() {
             Ok(processing::resolve_markdown_paths(&content, &base_dir))
         } else {
             Ok(content)
@@ -211,7 +208,7 @@ impl SkillIndex {
     /// 5. Substitute arguments ($ARGUMENTS, $1-$9)
     pub async fn execute(&self, arguments: &str, content: &str) -> String {
         let base_dir = self
-            .base_dir()
+            .get_base_dir()
             .unwrap_or_else(|| std::env::current_dir().unwrap_or_default());
 
         // 1. Strip frontmatter
@@ -272,8 +269,8 @@ mod tests {
     #[test]
     fn test_skill_index_creation() {
         let skill = SkillIndex::new("commit", "Create a git commit with conventional format")
-            .with_triggers(["git commit", "commit changes"])
-            .with_source_type(SourceType::User);
+            .triggers(["git commit", "commit changes"])
+            .source_type(SourceType::User);
 
         assert_eq!(skill.name, "commit");
         assert!(skill.matches_triggers("I want to git commit these changes"));
@@ -292,7 +289,7 @@ mod tests {
 
     #[test]
     fn test_summary_line() {
-        let skill = SkillIndex::new("test", "A test skill").with_source_type(SourceType::Project);
+        let skill = SkillIndex::new("test", "A test skill").source_type(SourceType::Project);
 
         let summary = skill.to_summary_line();
         assert!(summary.contains("test"));
@@ -301,8 +298,7 @@ mod tests {
 
     #[test]
     fn test_summary_line_with_tools() {
-        let skill =
-            SkillIndex::new("reader", "Read files only").with_allowed_tools(["Read", "Grep"]);
+        let skill = SkillIndex::new("reader", "Read files only").allowed_tools(["Read", "Grep"]);
 
         let summary = skill.to_summary_line();
         assert!(summary.contains("[tools: Read, Grep]"));
@@ -318,7 +314,7 @@ mod tests {
     #[tokio::test]
     async fn test_load_content() {
         let skill = SkillIndex::new("test", "Test skill")
-            .with_source(ContentSource::in_memory("Full skill content here"));
+            .source(ContentSource::in_memory("Full skill content here"));
 
         let content = skill.load_content().await.unwrap();
         assert_eq!(content, "Full skill content here");
@@ -326,9 +322,9 @@ mod tests {
 
     #[test]
     fn test_priority() {
-        let builtin = SkillIndex::new("a", "").with_source_type(SourceType::Builtin);
-        let user = SkillIndex::new("b", "").with_source_type(SourceType::User);
-        let project = SkillIndex::new("c", "").with_source_type(SourceType::Project);
+        let builtin = SkillIndex::new("a", "").source_type(SourceType::Builtin);
+        let user = SkillIndex::new("b", "").source_type(SourceType::User);
+        let project = SkillIndex::new("c", "").source_type(SourceType::Project);
 
         assert!(project.priority() > user.priority());
         assert!(user.priority() > builtin.priority());
@@ -361,7 +357,7 @@ Absolute: [config](/etc/config.md)"#;
     #[tokio::test]
     async fn test_execute() {
         let skill = SkillIndex::new("test", "Test skill")
-            .with_source(ContentSource::in_memory("Process: $ARGUMENTS"));
+            .source(ContentSource::in_memory("Process: $ARGUMENTS"));
 
         let content = skill.load_content().await.unwrap();
         let result = skill.execute("my argument", &content).await;

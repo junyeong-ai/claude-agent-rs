@@ -6,7 +6,6 @@ use super::ProcessManager;
 use super::context::ExecutionContext;
 use crate::session::session_state::ToolState;
 
-/// Execution environment for tools including security context and shared state.
 #[derive(Clone)]
 pub struct ToolExecutionEnv {
     pub context: ExecutionContext,
@@ -23,12 +22,12 @@ impl ToolExecutionEnv {
         }
     }
 
-    pub fn with_tool_state(mut self, state: ToolState) -> Self {
+    pub fn tool_state(mut self, state: ToolState) -> Self {
         self.tool_state = Some(state);
         self
     }
 
-    pub fn with_process_manager(mut self, pm: Arc<ProcessManager>) -> Self {
+    pub fn process_manager(mut self, pm: Arc<ProcessManager>) -> Self {
         self.process_manager = Some(pm);
         self
     }

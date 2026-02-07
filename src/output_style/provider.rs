@@ -24,7 +24,7 @@ mod tests {
     #[tokio::test]
     async fn test_in_memory_provider() {
         let style = OutputStyle::new("test", "Test style", "Do something");
-        let provider = InMemoryOutputStyleProvider::new().with_item(style);
+        let provider = InMemoryOutputStyleProvider::new().item(style);
 
         let names = provider.list().await.unwrap();
         assert_eq!(names, vec!["test"]);
@@ -37,14 +37,14 @@ mod tests {
     #[tokio::test]
     async fn test_chain_provider() {
         let low = InMemoryOutputStyleProvider::new()
-            .with_item(OutputStyle::new("shared", "Low", "Low content"))
-            .with_priority(0);
+            .item(OutputStyle::new("shared", "Low", "Low content"))
+            .priority(0);
 
         let high = InMemoryOutputStyleProvider::new()
-            .with_item(OutputStyle::new("shared", "High", "High content"))
-            .with_priority(10);
+            .item(OutputStyle::new("shared", "High", "High content"))
+            .priority(10);
 
-        let chain = ChainOutputStyleProvider::new().with(low).with(high);
+        let chain = ChainOutputStyleProvider::new().provider(low).provider(high);
 
         let style = chain.get("shared").await.unwrap().unwrap();
         assert_eq!(style.description, "High");
@@ -52,15 +52,15 @@ mod tests {
 
     #[tokio::test]
     async fn test_file_provider() {
-        use crate::common::SourceType;
+        use crate::common::{Provider, SourceType};
 
         let temp = tempfile::tempdir().unwrap();
         let provider = file_output_style_provider()
-            .with_path(temp.path())
-            .with_priority(5)
-            .with_source_type(SourceType::Project);
+            .path(temp.path())
+            .priority(5)
+            .source_type(SourceType::Project);
 
-        assert_eq!(provider.priority(), 5);
+        assert_eq!(Provider::priority(&provider), 5);
         assert_eq!(provider.paths().len(), 1);
     }
 
@@ -81,7 +81,7 @@ Custom content here.
         .await
         .unwrap();
 
-        let provider = file_output_style_provider().with_path(temp.path());
+        let provider = file_output_style_provider().path(temp.path());
 
         let style = provider.get("custom").await.unwrap();
         assert!(style.is_some());

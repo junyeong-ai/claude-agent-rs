@@ -242,6 +242,37 @@ static DANGEROUS_PATTERNS: LazyLock<Vec<(Regex, &'static str)>> = LazyLock::new(
         (Regex::new(r"\bkexec\b").unwrap(), "kexec"),
         (Regex::new(r"\bpivot_root\b").unwrap(), "pivot_root"),
         (Regex::new(r"\bswapoff\s+-a\b").unwrap(), "swapoff all"),
+        // Encoding/obfuscation bypass patterns
+        (
+            Regex::new(r#"\$'\\x[0-9a-fA-F]"#).unwrap(),
+            "hex encoded command",
+        ),
+        (
+            Regex::new(r"\bbase64\s+(-d|--decode)\b").unwrap(),
+            "base64 decode",
+        ),
+        (Regex::new(r"\bxxd\s+-r\b").unwrap(), "hex decode"),
+        (
+            Regex::new(r#"\bprintf\s+['"]\\x[0-9a-fA-F]"#).unwrap(),
+            "printf hex encode",
+        ),
+        // GNU long-option destructive patterns
+        (
+            Regex::new(r"\brm\s+--recursive\b").unwrap(),
+            "rm --recursive",
+        ),
+        (
+            Regex::new(r"\brm\s+.*--no-preserve-root\b").unwrap(),
+            "rm --no-preserve-root",
+        ),
+        (
+            Regex::new(r"\bchmod\s+[augo]*[+-][rwxst]+\s+/").unwrap(),
+            "chmod symbolic system path",
+        ),
+        (
+            Regex::new(r"\bfind\s+.*-exec\s+shred\b").unwrap(),
+            "find -exec shred",
+        ),
     ]
 });
 
@@ -339,7 +370,7 @@ impl BashPolicy {
         .collect()
     }
 
-    pub fn with_blocked_commands(
+    pub fn blocked_commands(
         mut self,
         commands: impl IntoIterator<Item = impl Into<String>>,
     ) -> Self {
@@ -573,18 +604,9 @@ impl BashAnalyzer {
         if REMOTE_EXEC_RE.is_match(source) {
             analysis.concerns.push(SecurityConcern::RemoteExecution);
         }
-        if source.contains("curl")
-            && source.contains("|")
-            && (source.contains("sh") || source.contains("bash"))
-            && !analysis
-                .concerns
-                .contains(&SecurityConcern::RemoteExecution)
-        {
-            analysis.concerns.push(SecurityConcern::RemoteExecution);
-        }
-        if source.contains("wget")
-            && source.contains("|")
-            && (source.contains("sh") || source.contains("bash"))
+        static PIPE_SHELL_RE: LazyLock<Regex> =
+            LazyLock::new(|| Regex::new(r"(curl|wget)\s[^|]*\|\s*\b(ba)?sh\b").unwrap());
+        if PIPE_SHELL_RE.is_match(source)
             && !analysis
                 .concerns
                 .contains(&SecurityConcern::RemoteExecution)

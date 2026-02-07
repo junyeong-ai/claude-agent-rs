@@ -59,116 +59,45 @@ impl RoutingStrategy {
     }
 }
 
-/// Skill discovery mode configuration
-#[derive(Clone, Debug, Default, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum SkillDiscoveryMode {
-    /// Only explicit slash commands activate skills
-    ExplicitOnly,
-
-    /// Index-based discovery (default)
-    ///
-    /// Skills are discoverable via:
-    /// - Slash commands (/skill-name)
-    /// - Trigger keyword matching
-    /// - Semantic matching (Claude uses skill descriptions)
-    #[default]
-    IndexBased,
-
-    /// RAG-assisted discovery (optional feature)
-    ///
-    /// Uses embeddings for semantic similarity matching
-    /// before delegating to Claude.
-    RagAssisted {
-        /// Embedding model to use
-        embedding_model: String,
-        /// Minimum similarity threshold
-        similarity_threshold: f32,
-    },
-}
-
-/// Router for skill discovery
-#[derive(Debug)]
-pub struct SkillRouter {
-    /// Discovery mode
-    mode: SkillDiscoveryMode,
-}
-
-impl SkillRouter {
-    /// Create a new router with the specified mode
-    pub fn new(mode: SkillDiscoveryMode) -> Self {
-        Self { mode }
+/// Route user input to determine skill discovery strategy.
+pub fn route(input: &str, skill_indices: &[SkillIndex]) -> RoutingStrategy {
+    // 1. Check for explicit slash command
+    if let Some(skill) = skill_indices.iter().find(|s| s.matches_command(input)) {
+        return RoutingStrategy::Explicit {
+            skill_name: skill.name.clone(),
+        };
     }
 
-    /// Route user input to a skill
-    pub fn route(&self, input: &str, skill_indices: &[SkillIndex]) -> RoutingStrategy {
-        match &self.mode {
-            SkillDiscoveryMode::ExplicitOnly => self.route_explicit_only(input, skill_indices),
-            SkillDiscoveryMode::IndexBased => self.route_index_based(input, skill_indices),
-            SkillDiscoveryMode::RagAssisted { .. } => {
-                // RAG would be handled externally; fall back to index-based
-                self.route_index_based(input, skill_indices)
-            }
-        }
-    }
+    // 2. Check for trigger keyword matches
+    let matches: Vec<_> = skill_indices
+        .iter()
+        .filter(|s| s.matches_triggers(input))
+        .collect();
 
-    /// Route with explicit-only mode
-    fn route_explicit_only(&self, input: &str, skill_indices: &[SkillIndex]) -> RoutingStrategy {
-        if let Some(skill) = skill_indices.iter().find(|s| s.matches_command(input)) {
-            RoutingStrategy::Explicit {
-                skill_name: skill.name.clone(),
-            }
-        } else {
-            RoutingStrategy::NoSkill
-        }
-    }
-
-    /// Route with index-based discovery
-    fn route_index_based(&self, input: &str, skill_indices: &[SkillIndex]) -> RoutingStrategy {
-        // 1. Check for explicit slash command
-        if let Some(skill) = skill_indices.iter().find(|s| s.matches_command(input)) {
-            return RoutingStrategy::Explicit {
-                skill_name: skill.name.clone(),
-            };
-        }
-
-        // 2. Check for trigger keyword matches
-        let matches: Vec<_> = skill_indices
+    if !matches.is_empty() {
+        let matched_triggers: Vec<String> = matches
             .iter()
-            .filter(|s| s.matches_triggers(input))
+            .flat_map(|s| {
+                s.triggers
+                    .iter()
+                    .filter(|t| input.to_lowercase().contains(&t.to_lowercase()))
+                    .cloned()
+            })
             .collect();
 
-        if !matches.is_empty() {
-            let matched_triggers: Vec<String> = matches
-                .iter()
-                .flat_map(|s| {
-                    s.triggers
-                        .iter()
-                        .filter(|t| input.to_lowercase().contains(&t.to_lowercase()))
-                        .cloned()
-                })
-                .collect();
+        let skill_names: Vec<String> = matches.iter().map(|s| s.name.clone()).collect();
 
-            let skill_names: Vec<String> = matches.iter().map(|s| s.name.clone()).collect();
-
-            return RoutingStrategy::KeywordMatch {
-                matched_triggers,
-                skill_names,
-            };
-        }
-
-        // 3. Fall back to semantic matching (Claude will decide)
-        if !skill_indices.is_empty() {
-            RoutingStrategy::Semantic { confidence: 0.0 }
-        } else {
-            RoutingStrategy::NoSkill
-        }
+        return RoutingStrategy::KeywordMatch {
+            matched_triggers,
+            skill_names,
+        };
     }
-}
 
-impl Default for SkillRouter {
-    fn default() -> Self {
-        Self::new(SkillDiscoveryMode::default())
+    // 3. Fall back to semantic matching (Claude will decide)
+    if !skill_indices.is_empty() {
+        RoutingStrategy::Semantic { confidence: 0.0 }
+    } else {
+        RoutingStrategy::NoSkill
     }
 }
 
@@ -180,20 +109,19 @@ mod tests {
     fn test_skills() -> Vec<SkillIndex> {
         vec![
             SkillIndex::new("commit", "Create a git commit")
-                .with_triggers(["git commit", "commit changes"])
-                .with_source_type(SourceType::User),
+                .triggers(["git commit", "commit changes"])
+                .source_type(SourceType::User),
             SkillIndex::new("review", "Review code changes")
-                .with_triggers(["code review", "review pr"])
-                .with_source_type(SourceType::Project),
+                .triggers(["code review", "review pr"])
+                .source_type(SourceType::Project),
         ]
     }
 
     #[test]
     fn test_explicit_routing() {
-        let router = SkillRouter::default();
         let skills = test_skills();
 
-        let result = router.route("/commit", &skills);
+        let result = route("/commit", &skills);
         assert!(
             matches!(result, RoutingStrategy::Explicit { skill_name } if skill_name == "commit")
         );
@@ -201,10 +129,9 @@ mod tests {
 
     #[test]
     fn test_keyword_routing() {
-        let router = SkillRouter::default();
         let skills = test_skills();
 
-        let result = router.route("I want to git commit these changes", &skills);
+        let result = route("I want to git commit these changes", &skills);
         assert!(matches!(result, RoutingStrategy::KeywordMatch { .. }));
 
         if let RoutingStrategy::KeywordMatch { skill_names, .. } = result {
@@ -214,34 +141,31 @@ mod tests {
 
     #[test]
     fn test_no_match_semantic() {
-        let router = SkillRouter::default();
         let skills = test_skills();
 
-        let result = router.route("help me with this bug", &skills);
+        let result = route("help me with this bug", &skills);
         assert!(matches!(result, RoutingStrategy::Semantic { .. }));
     }
 
     #[test]
     fn test_no_skill_empty_index() {
-        let router = SkillRouter::default();
         let skills: Vec<SkillIndex> = vec![];
 
-        let result = router.route("anything", &skills);
+        let result = route("anything", &skills);
         assert!(matches!(result, RoutingStrategy::NoSkill));
     }
 
     #[test]
-    fn test_explicit_only_mode() {
-        let router = SkillRouter::new(SkillDiscoveryMode::ExplicitOnly);
+    fn test_explicit_takes_precedence() {
         let skills = test_skills();
 
-        // Explicit command works
-        let result = router.route("/commit", &skills);
+        // Explicit command works even if keywords also match
+        let result = route("/commit", &skills);
         assert!(matches!(result, RoutingStrategy::Explicit { .. }));
 
-        // Keywords don't match in explicit-only mode
-        let result = router.route("git commit these changes", &skills);
-        assert!(matches!(result, RoutingStrategy::NoSkill));
+        // Keywords match when no explicit command
+        let result = route("git commit these changes", &skills);
+        assert!(matches!(result, RoutingStrategy::KeywordMatch { .. }));
     }
 
     #[test]

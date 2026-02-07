@@ -85,7 +85,7 @@ impl ConfigValidator {
         let key = key.into();
         let regex = regex::Regex::new(pattern).map_err(|e| ConfigError::InvalidValue {
             key: key.clone(),
-            message: format!("invalid regex pattern: {}", e),
+            message: format!("Invalid regex pattern: {}", e),
         })?;
         self.pattern_rules.insert(key, regex);
         Ok(self)
@@ -100,69 +100,7 @@ impl ConfigValidator {
     }
 
     pub fn validate(&self, config: &Value) -> ConfigResult<()> {
-        let mut errors = Vec::new();
-
-        for key in &self.required_keys {
-            if get_nested(config, key).is_none() {
-                errors.push(ConfigError::NotFound { key: key.clone() });
-            }
-        }
-
-        for (key, expected_type) in &self.type_rules {
-            if let Some(value) = get_nested(config, key)
-                && !expected_type.matches(value)
-            {
-                errors.push(ConfigError::InvalidValue {
-                    key: key.clone(),
-                    message: format!(
-                        "expected {}, got {}",
-                        expected_type.name(),
-                        value_type_name(value)
-                    ),
-                });
-            }
-        }
-
-        for (key, range) in &self.range_rules {
-            if let Some(value) = get_nested(config, key)
-                && let Some(num) = value.as_i64()
-                && !range.contains(&num)
-            {
-                errors.push(ConfigError::InvalidValue {
-                    key: key.clone(),
-                    message: format!(
-                        "value {} not in range {}..={}",
-                        num,
-                        range.start(),
-                        range.end()
-                    ),
-                });
-            }
-        }
-
-        for (key, pattern) in &self.pattern_rules {
-            if let Some(value) = get_nested(config, key)
-                && let Some(s) = value.as_str()
-                && !pattern.is_match(s)
-            {
-                errors.push(ConfigError::InvalidValue {
-                    key: key.clone(),
-                    message: format!("value '{}' does not match pattern", s),
-                });
-            }
-        }
-
-        for (key, validator) in &self.custom_rules {
-            if let Some(value) = get_nested(config, key)
-                && let Err(msg) = validator(value)
-            {
-                errors.push(ConfigError::InvalidValue {
-                    key: key.clone(),
-                    message: msg,
-                });
-            }
-        }
-
+        let errors = self.collect_errors(config);
         if errors.is_empty() {
             Ok(())
         } else {
@@ -171,6 +109,10 @@ impl ConfigValidator {
     }
 
     pub fn validate_partial(&self, config: &Value) -> Vec<ConfigError> {
+        self.collect_errors(config)
+    }
+
+    fn collect_errors(&self, config: &Value) -> Vec<ConfigError> {
         let mut errors = Vec::new();
 
         for key in &self.required_keys {
@@ -218,7 +160,7 @@ impl ConfigValidator {
             {
                 errors.push(ConfigError::InvalidValue {
                     key: key.clone(),
-                    message: format!("value '{}' does not match pattern", s),
+                    message: format!("Value '{}' does not match pattern", s),
                 });
             }
         }

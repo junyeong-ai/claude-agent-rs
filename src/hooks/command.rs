@@ -37,17 +37,17 @@ impl CommandHook {
         }
     }
 
-    pub fn with_matcher(mut self, pattern: &str) -> Self {
+    pub fn matcher(mut self, pattern: &str) -> Self {
         self.tool_pattern = Regex::new(pattern).ok();
         self
     }
 
-    pub fn with_timeout(mut self, secs: u64) -> Self {
+    pub fn timeout(mut self, secs: u64) -> Self {
         self.timeout_secs = secs;
         self
     }
 
-    pub fn with_env(mut self, key: impl Into<String>, value: impl Into<String>) -> Self {
+    pub fn env(mut self, key: impl Into<String>, value: impl Into<String>) -> Self {
         self.extra_env.insert(key.into(), value.into());
         self
     }
@@ -94,10 +94,10 @@ impl CommandHook {
         let (command, matcher, timeout) = Self::parse_config(config);
         let mut hook = Self::new(name, command, vec![event]);
         if let Some(m) = matcher {
-            hook = hook.with_matcher(&m);
+            hook = hook.matcher(&m);
         }
         if let Some(t) = timeout {
-            hook = hook.with_timeout(t);
+            hook = hook.timeout(t);
         }
         hook
     }
@@ -237,8 +237,8 @@ mod tests {
     #[test]
     fn test_command_hook_creation() {
         let hook = CommandHook::new("test", "echo hello", vec![HookEvent::PreToolUse])
-            .with_matcher("Bash")
-            .with_timeout(30);
+            .matcher("Bash")
+            .timeout(30);
 
         assert_eq!(hook.name(), "test");
         assert!(hook.tool_matcher().is_some());

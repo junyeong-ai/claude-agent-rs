@@ -44,6 +44,7 @@ pub async fn load_cli_credentials() -> Result<Option<CliCredentials>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use secrecy::ExposeSecret;
 
     #[test]
     fn test_cli_credentials_parse() {
@@ -59,7 +60,7 @@ mod tests {
 
         let creds: CliCredentials = serde_json::from_str(json).unwrap();
         let oauth = creds.oauth().unwrap();
-        assert_eq!(oauth.access_token, "sk-ant-oat01-test");
+        assert_eq!(oauth.access_token.expose_secret(), "sk-ant-oat01-test");
         assert_eq!(oauth.subscription_type, Some("pro".to_string()));
     }
 }

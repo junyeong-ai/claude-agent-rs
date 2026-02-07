@@ -64,12 +64,11 @@ impl OAuthConfig {
         if self.url_params.is_empty() {
             url
         } else {
-            let params: Vec<String> = self
-                .url_params
-                .iter()
-                .map(|(k, v)| format!("{}={}", k, v))
-                .collect();
-            format!("{}?{}", url, params.join("&"))
+            let mut serializer = url::form_urlencoded::Serializer::new(String::new());
+            for (k, v) in &self.url_params {
+                serializer.append_pair(k, v);
+            }
+            format!("{}?{}", url, serializer.finish())
         }
     }
 

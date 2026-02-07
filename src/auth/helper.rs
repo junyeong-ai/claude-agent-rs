@@ -4,22 +4,56 @@ use std::process::Stdio;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+use secrecy::{ExposeSecret, SecretString};
 use tokio::process::Command;
-use tokio::sync::RwLock;
+use tokio::sync::Mutex;
 
 use crate::{Error, Result};
+
+use std::fmt;
+
+async fn run_shell_command(cmd: &str, context: &str) -> Result<String> {
+    let output = Command::new("sh")
+        .arg("-c")
+        .arg(cmd)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .output()
+        .await
+        .map_err(|e| Error::auth(format!("{} failed: {}", context, e)))?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(Error::auth(format!(
+            "{} failed: {}",
+            context,
+            stderr.trim()
+        )));
+    }
+
+    Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+}
 
 #[derive(Debug)]
 pub struct ApiKeyHelper {
     command: String,
     ttl: Duration,
-    cache: RwLock<Option<CachedKey>>,
+    cache: Mutex<Option<CachedKey>>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 struct CachedKey {
-    key: String,
+    key: SecretString,
     expires_at: Instant,
+}
+
+impl fmt::Debug for CachedKey {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("CachedKey")
+            .field("key", &"[redacted]")
+            .field("expires_at", &self.expires_at)
+            .finish()
+    }
 }
 
 impl ApiKeyHelper {
@@ -27,16 +61,16 @@ impl ApiKeyHelper {
         Self {
             command: command.into(),
             ttl: Duration::from_secs(3600),
-            cache: RwLock::new(None),
+            cache: Mutex::new(None),
         }
     }
 
-    pub fn with_ttl(mut self, ttl: Duration) -> Self {
+    pub fn ttl(mut self, ttl: Duration) -> Self {
         self.ttl = ttl;
         self
     }
 
-    pub fn with_ttl_ms(mut self, ttl_ms: u64) -> Self {
+    pub fn ttl_ms(mut self, ttl_ms: u64) -> Self {
         self.ttl = Duration::from_millis(ttl_ms);
         self
     }
@@ -48,60 +82,36 @@ impl ApiKeyHelper {
             .and_then(|v| v.parse().ok())
             .unwrap_or(3_600_000);
 
-        Some(Self::new(command).with_ttl_ms(ttl_ms))
+        Some(Self::new(command).ttl_ms(ttl_ms))
     }
 
-    pub async fn get_key(&self) -> Result<String> {
+    pub async fn get_key(&self) -> Result<SecretString> {
+        let mut cache = self.cache.lock().await;
+
+        if let Some(ref cached) = *cache
+            && Instant::now() < cached.expires_at
         {
-            let cache = self.cache.read().await;
-            if let Some(ref cached) = *cache
-                && Instant::now() < cached.expires_at
-            {
-                return Ok(cached.key.clone());
-            }
+            return Ok(cached.key.clone());
         }
 
-        let key = self.execute_helper().await?;
-
-        let cached = CachedKey {
-            key: key.clone(),
-            expires_at: Instant::now() + self.ttl,
-        };
-
-        *self.cache.write().await = Some(cached);
-
-        Ok(key)
-    }
-
-    async fn execute_helper(&self) -> Result<String> {
-        let output = Command::new("sh")
-            .arg("-c")
-            .arg(&self.command)
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .output()
-            .await
-            .map_err(|e| Error::auth(format!("Failed to execute API key helper: {}", e)))?;
-
-        if !output.status.success() {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            return Err(Error::auth(format!(
-                "API key helper failed: {}",
-                stderr.trim()
-            )));
-        }
-
-        let key = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        let key = run_shell_command(&self.command, "API key helper").await?;
 
         if key.is_empty() {
             return Err(Error::auth("API key helper returned empty key"));
         }
 
-        Ok(key)
+        let secret_key = SecretString::from(key);
+
+        *cache = Some(CachedKey {
+            key: secret_key.clone(),
+            expires_at: Instant::now() + self.ttl,
+        });
+
+        Ok(secret_key)
     }
 
     pub async fn invalidate(&self) {
-        *self.cache.write().await = None;
+        *self.cache.lock().await = None;
     }
 }
 
@@ -139,52 +149,15 @@ impl AwsCredentialRefresh {
         }
 
         if let Some(ref cmd) = self.auth_refresh_cmd {
-            self.run_auth_refresh(cmd).await?;
+            run_shell_command(cmd, "AWS auth refresh").await?;
         }
 
         Ok(None)
     }
 
-    async fn run_auth_refresh(&self, cmd: &str) -> Result<()> {
-        let output = Command::new("sh")
-            .arg("-c")
-            .arg(cmd)
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .output()
-            .await
-            .map_err(|e| Error::auth(format!("AWS auth refresh failed: {}", e)))?;
-
-        if !output.status.success() {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            return Err(Error::auth(format!(
-                "AWS auth refresh failed: {}",
-                stderr.trim()
-            )));
-        }
-
-        Ok(())
-    }
-
     async fn export_credentials(&self, cmd: &str) -> Result<AwsCredentials> {
-        let output = Command::new("sh")
-            .arg("-c")
-            .arg(cmd)
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .output()
-            .await
-            .map_err(|e| Error::auth(format!("AWS credential export failed: {}", e)))?;
+        let stdout = run_shell_command(cmd, "AWS credential export").await?;
 
-        if !output.status.success() {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            return Err(Error::auth(format!(
-                "AWS credential export failed: {}",
-                stderr.trim()
-            )));
-        }
-
-        let stdout = String::from_utf8_lossy(&output.stdout);
         let json: serde_json::Value = serde_json::from_str(&stdout)
             .map_err(|e| Error::auth(format!("Invalid credential JSON: {}", e)))?;
 
@@ -198,15 +171,17 @@ impl AwsCredentialRefresh {
                 .and_then(|v| v.as_str())
                 .ok_or_else(|| Error::auth("Missing AccessKeyId"))?
                 .to_string(),
-            secret_access_key: creds
-                .get("SecretAccessKey")
-                .and_then(|v| v.as_str())
-                .ok_or_else(|| Error::auth("Missing SecretAccessKey"))?
-                .to_string(),
+            secret_access_key: SecretString::from(
+                creds
+                    .get("SecretAccessKey")
+                    .and_then(|v| v.as_str())
+                    .ok_or_else(|| Error::auth("Missing SecretAccessKey"))?
+                    .to_string(),
+            ),
             session_token: creds
                 .get("SessionToken")
                 .and_then(|v| v.as_str())
-                .map(String::from),
+                .map(|s| SecretString::from(s.to_string())),
         })
     }
 }
@@ -217,11 +192,34 @@ impl Default for AwsCredentialRefresh {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct AwsCredentials {
     pub access_key_id: String,
-    pub secret_access_key: String,
-    pub session_token: Option<String>,
+    secret_access_key: SecretString,
+    session_token: Option<SecretString>,
+}
+
+impl AwsCredentials {
+    pub fn secret_access_key(&self) -> &str {
+        self.secret_access_key.expose_secret()
+    }
+
+    pub fn session_token(&self) -> Option<&str> {
+        self.session_token.as_ref().map(|s| s.expose_secret())
+    }
+}
+
+impl fmt::Debug for AwsCredentials {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("AwsCredentials")
+            .field("access_key_id", &self.access_key_id)
+            .field("secret_access_key", &"[redacted]")
+            .field(
+                "session_token",
+                &self.session_token.as_ref().map(|_| "[redacted]"),
+            )
+            .finish()
+    }
 }
 
 #[derive(Debug)]
@@ -238,17 +236,17 @@ impl CredentialManager {
         }
     }
 
-    pub fn with_api_key_helper(mut self, helper: ApiKeyHelper) -> Self {
+    pub fn api_key_helper(mut self, helper: ApiKeyHelper) -> Self {
         self.api_key_helper = Some(Arc::new(helper));
         self
     }
 
-    pub fn with_aws_refresh(mut self, refresh: AwsCredentialRefresh) -> Self {
+    pub fn aws_refresh(mut self, refresh: AwsCredentialRefresh) -> Self {
         self.aws_refresh = Some(Arc::new(refresh));
         self
     }
 
-    pub async fn get_api_key(&self) -> Result<Option<String>> {
+    pub async fn get_api_key(&self) -> Result<Option<SecretString>> {
         match &self.api_key_helper {
             Some(helper) => helper.get_key().await.map(Some),
             None => Ok(None),
@@ -277,16 +275,16 @@ mod tests {
     async fn test_api_key_helper_echo() {
         let helper = ApiKeyHelper::new("echo test-key");
         let key = helper.get_key().await.unwrap();
-        assert_eq!(key, "test-key");
+        assert_eq!(key.expose_secret(), "test-key");
     }
 
     #[tokio::test]
     async fn test_api_key_helper_caching() {
-        let helper = ApiKeyHelper::new("echo test-key").with_ttl(Duration::from_secs(60));
+        let helper = ApiKeyHelper::new("echo test-key").ttl(Duration::from_secs(60));
 
         let key1 = helper.get_key().await.unwrap();
         let key2 = helper.get_key().await.unwrap();
-        assert_eq!(key1, key2);
+        assert_eq!(key1.expose_secret(), key2.expose_secret());
     }
 
     #[tokio::test]

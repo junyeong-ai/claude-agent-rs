@@ -5,7 +5,9 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use tokio::sync::RwLock;
 
-use crate::auth::{ClaudeCliProvider, Credential, CredentialProvider, EnvironmentProvider};
+#[cfg(feature = "cli-integration")]
+use crate::auth::ClaudeCliProvider;
+use crate::auth::{Credential, CredentialProvider, EnvironmentProvider};
 use crate::{Error, Result};
 
 pub struct ChainProvider {
@@ -21,12 +23,13 @@ impl ChainProvider {
         }
     }
 
-    pub fn with<P: CredentialProvider + 'static>(mut self, provider: P) -> Self {
+    pub fn provider<P: CredentialProvider + 'static>(mut self, provider: P) -> Self {
         self.providers.push(Arc::new(provider));
         self
     }
 }
 
+#[cfg(feature = "cli-integration")]
 impl Default for ChainProvider {
     fn default() -> Self {
         Self {
@@ -34,6 +37,16 @@ impl Default for ChainProvider {
                 Arc::new(EnvironmentProvider::new()),
                 Arc::new(ClaudeCliProvider::new()),
             ],
+            last_successful: RwLock::new(None),
+        }
+    }
+}
+
+#[cfg(not(feature = "cli-integration"))]
+impl Default for ChainProvider {
+    fn default() -> Self {
+        Self {
+            providers: vec![Arc::new(EnvironmentProvider::new())],
             last_successful: RwLock::new(None),
         }
     }
@@ -80,7 +93,11 @@ impl CredentialProvider for ChainProvider {
     }
 
     fn supports_refresh(&self) -> bool {
-        false
+        self.last_successful
+            .try_read()
+            .ok()
+            .and_then(|guard| guard.as_ref().map(|p| p.supports_refresh()))
+            .unwrap_or(false)
     }
 }
 
@@ -88,41 +105,83 @@ impl CredentialProvider for ChainProvider {
 mod tests {
     use super::*;
     use crate::auth::ExplicitProvider;
+    use secrecy::ExposeSecret;
 
     #[tokio::test]
     async fn test_chain_first_success() {
         let chain = ChainProvider::new(vec![])
-            .with(ExplicitProvider::api_key("first"))
-            .with(ExplicitProvider::api_key("second"));
+            .provider(ExplicitProvider::api_key("first"))
+            .provider(ExplicitProvider::api_key("second"));
 
         let cred = chain.resolve().await.unwrap();
-        assert!(matches!(cred, Credential::ApiKey(k) if k == "first"));
+        assert!(matches!(&cred, Credential::ApiKey(k) if k.expose_secret() == "first"));
     }
 
     #[tokio::test]
     async fn test_chain_fallback() {
         let chain = ChainProvider::new(vec![])
-            .with(EnvironmentProvider::with_var("NONEXISTENT_VAR"))
-            .with(ExplicitProvider::api_key("fallback"));
+            .provider(EnvironmentProvider::from_var("NONEXISTENT_VAR"))
+            .provider(ExplicitProvider::api_key("fallback"));
 
         let cred = chain.resolve().await.unwrap();
-        assert!(matches!(cred, Credential::ApiKey(k) if k == "fallback"));
+        assert!(matches!(&cred, Credential::ApiKey(k) if k.expose_secret() == "fallback"));
     }
 
     #[tokio::test]
     async fn test_chain_all_fail() {
         let chain = ChainProvider::new(vec![])
-            .with(EnvironmentProvider::with_var("NONEXISTENT_VAR_1"))
-            .with(EnvironmentProvider::with_var("NONEXISTENT_VAR_2"));
+            .provider(EnvironmentProvider::from_var("NONEXISTENT_VAR_1"))
+            .provider(EnvironmentProvider::from_var("NONEXISTENT_VAR_2"));
 
         assert!(chain.resolve().await.is_err());
+    }
+
+    struct RefreshableProvider;
+
+    #[async_trait]
+    impl CredentialProvider for RefreshableProvider {
+        fn name(&self) -> &str {
+            "refreshable"
+        }
+
+        async fn resolve(&self) -> Result<Credential> {
+            Ok(Credential::api_key("refreshable-key"))
+        }
+
+        fn supports_refresh(&self) -> bool {
+            true
+        }
+
+        async fn refresh(&self) -> Result<Credential> {
+            Ok(Credential::api_key("refreshed-key"))
+        }
+    }
+
+    #[tokio::test]
+    async fn test_supports_refresh_after_resolve() {
+        let chain = ChainProvider::new(vec![]).provider(RefreshableProvider);
+
+        assert!(!chain.supports_refresh());
+
+        let _ = chain.resolve().await.unwrap();
+
+        assert!(chain.supports_refresh());
+    }
+
+    #[tokio::test]
+    async fn test_supports_refresh_with_non_refreshable() {
+        let chain = ChainProvider::new(vec![]).provider(ExplicitProvider::api_key("key"));
+
+        let _ = chain.resolve().await.unwrap();
+
+        assert!(!chain.supports_refresh());
     }
 
     #[tokio::test]
     async fn test_chain_tracks_last_successful() {
         let chain = ChainProvider::new(vec![])
-            .with(EnvironmentProvider::with_var("NONEXISTENT_VAR"))
-            .with(ExplicitProvider::api_key("fallback"));
+            .provider(EnvironmentProvider::from_var("NONEXISTENT_VAR"))
+            .provider(ExplicitProvider::api_key("fallback"));
 
         let _ = chain.resolve().await.unwrap();
 

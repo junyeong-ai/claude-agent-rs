@@ -15,6 +15,8 @@ mod storage;
 
 use std::sync::Arc;
 
+use secrecy::{ExposeSecret, SecretString};
+
 pub use cache::CachedProvider;
 pub use config::{CLAUDE_CODE_BETA, OAuthConfig, OAuthConfigBuilder};
 pub use credential::{Credential, OAuthCredential};
@@ -45,31 +47,33 @@ use crate::Result;
 /// - `Foundry`: Azure Foundry (requires `azure` feature)
 #[derive(Clone, Default)]
 pub enum Auth {
-    /// Direct API key authentication.
-    ApiKey(String),
-    /// Load API key from ANTHROPIC_API_KEY environment variable.
+    ApiKey(SecretString),
     #[default]
     FromEnv,
-    /// Use credentials from Claude Code CLI (~/.claude/credentials.json).
-    /// Requires `cli-integration` feature.
     #[cfg(feature = "cli-integration")]
     ClaudeCli,
-    /// OAuth token authentication.
-    OAuth { token: String },
-    /// Use a pre-resolved credential directly.
-    /// Useful for testing, credential reuse, or custom credential sources.
+    OAuth {
+        token: SecretString,
+    },
     Resolved(Credential),
     #[cfg(feature = "aws")]
-    Bedrock { region: String },
+    Bedrock {
+        region: String,
+    },
     #[cfg(feature = "gcp")]
-    Vertex { project: String, region: String },
+    Vertex {
+        project: String,
+        region: String,
+    },
     #[cfg(feature = "azure")]
-    Foundry { resource: String },
+    Foundry {
+        resource: String,
+    },
 }
 
 impl Auth {
     pub fn api_key(key: impl Into<String>) -> Self {
-        Self::ApiKey(key.into())
+        Self::ApiKey(SecretString::from(key.into()))
     }
 
     pub fn from_env() -> Self {
@@ -83,7 +87,7 @@ impl Auth {
 
     pub fn oauth(token: impl Into<String>) -> Self {
         Self::OAuth {
-            token: token.into(),
+            token: SecretString::from(token.into()),
         }
     }
 
@@ -109,38 +113,33 @@ impl Auth {
         }
     }
 
-    /// Use a pre-resolved credential directly.
     pub fn resolved(credential: Credential) -> Self {
         Self::Resolved(credential)
     }
 
-    /// Resolve authentication to internal credential format.
     pub async fn resolve(&self) -> Result<Credential> {
         match self {
-            Self::ApiKey(key) => Ok(Credential::api_key(key)),
+            Self::ApiKey(key) => Ok(Credential::api_key(key.expose_secret())),
             Self::FromEnv => EnvironmentProvider::new().resolve().await,
             #[cfg(feature = "cli-integration")]
             Self::ClaudeCli => ClaudeCliProvider::new().resolve().await,
-            Self::OAuth { token } => Ok(Credential::oauth(token)),
+            Self::OAuth { token } => Ok(Credential::oauth(token.expose_secret())),
             Self::Resolved(credential) => Ok(credential.clone()),
             #[cfg(feature = "aws")]
-            Self::Bedrock { .. } => Ok(Credential::default()),
+            Self::Bedrock { .. } => Ok(Credential::placeholder()),
             #[cfg(feature = "gcp")]
-            Self::Vertex { .. } => Ok(Credential::default()),
+            Self::Vertex { .. } => Ok(Credential::placeholder()),
             #[cfg(feature = "azure")]
-            Self::Foundry { .. } => Ok(Credential::default()),
+            Self::Foundry { .. } => Ok(Credential::placeholder()),
         }
     }
 
-    /// Resolve authentication and return both credential and provider.
-    ///
-    /// Returns the credential provider for auth methods that support token refresh.
-    /// This enables automatic 401 retry with credential refresh.
+    /// Returns (credential, optional_provider) for auth methods that support token refresh.
     pub async fn resolve_with_provider(
         &self,
     ) -> Result<(Credential, Option<Arc<dyn CredentialProvider>>)> {
         match self {
-            Self::ApiKey(key) => Ok((Credential::api_key(key), None)),
+            Self::ApiKey(key) => Ok((Credential::api_key(key.expose_secret()), None)),
             Self::FromEnv => {
                 let provider = EnvironmentProvider::new();
                 let credential = provider.resolve().await?;
@@ -152,14 +151,14 @@ impl Auth {
                 let credential = provider.resolve().await?;
                 Ok((credential, Some(provider)))
             }
-            Self::OAuth { token } => Ok((Credential::oauth(token), None)),
+            Self::OAuth { token } => Ok((Credential::oauth(token.expose_secret()), None)),
             Self::Resolved(credential) => Ok((credential.clone(), None)),
             #[cfg(feature = "aws")]
-            Self::Bedrock { .. } => Ok((Credential::default(), None)),
+            Self::Bedrock { .. } => Ok((Credential::placeholder(), None)),
             #[cfg(feature = "gcp")]
-            Self::Vertex { .. } => Ok((Credential::default(), None)),
+            Self::Vertex { .. } => Ok((Credential::placeholder(), None)),
             #[cfg(feature = "azure")]
-            Self::Foundry { .. } => Ok((Credential::default(), None)),
+            Self::Foundry { .. } => Ok((Credential::placeholder(), None)),
         }
     }
 
@@ -197,13 +196,13 @@ impl Auth {
 
 impl From<&str> for Auth {
     fn from(key: &str) -> Self {
-        Self::ApiKey(key.to_string())
+        Self::ApiKey(SecretString::from(key))
     }
 }
 
 impl From<String> for Auth {
     fn from(key: String) -> Self {
-        Self::ApiKey(key)
+        Self::ApiKey(SecretString::from(key))
     }
 }
 
@@ -260,6 +259,6 @@ mod tests {
         let cred = Credential::api_key("test-key");
         let auth = Auth::resolved(cred);
         let resolved = auth.resolve().await.unwrap();
-        assert!(!resolved.is_default());
+        assert!(!resolved.is_placeholder());
     }
 }

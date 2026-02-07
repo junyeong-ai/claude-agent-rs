@@ -3,15 +3,61 @@
 use std::fmt;
 
 use chrono::{DateTime, Duration, Utc};
+use secrecy::{ExposeSecret, SecretString};
 use serde::{Deserialize, Serialize};
 
-/// OAuth credential from Claude Code CLI.
+mod secret_serde {
+    use secrecy::{ExposeSecret, SecretString};
+    use serde::{Deserialize, Deserializer, Serializer};
+
+    pub fn serialize<S: Serializer>(
+        secret: &SecretString,
+        serializer: S,
+    ) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(secret.expose_secret())
+    }
+
+    pub fn deserialize<'de, D: Deserializer<'de>>(
+        deserializer: D,
+    ) -> Result<SecretString, D::Error> {
+        let s = String::deserialize(deserializer)?;
+        Ok(SecretString::from(s))
+    }
+}
+
+mod option_secret_serde {
+    use secrecy::{ExposeSecret, SecretString};
+    use serde::{Deserialize, Deserializer, Serializer};
+
+    pub fn serialize<S: Serializer>(
+        secret: &Option<SecretString>,
+        serializer: S,
+    ) -> Result<S::Ok, S::Error> {
+        match secret {
+            Some(s) => serializer.serialize_some(s.expose_secret()),
+            None => serializer.serialize_none(),
+        }
+    }
+
+    pub fn deserialize<'de, D: Deserializer<'de>>(
+        deserializer: D,
+    ) -> Result<Option<SecretString>, D::Error> {
+        let opt = Option::<String>::deserialize(deserializer)?;
+        Ok(opt.map(SecretString::from))
+    }
+}
+
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct OAuthCredential {
-    pub access_token: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub refresh_token: Option<String>,
+    #[serde(with = "secret_serde")]
+    pub access_token: SecretString,
+    #[serde(
+        with = "option_secret_serde",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub refresh_token: Option<SecretString>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub expires_at: Option<i64>,
     #[serde(default)]
@@ -36,31 +82,39 @@ impl fmt::Debug for OAuthCredential {
 }
 
 impl OAuthCredential {
-    /// Get expiration as DateTime.
     pub fn expires_at_datetime(&self) -> Option<DateTime<Utc>> {
-        self.expires_at
-            .map(|ts| DateTime::from_timestamp(ts, 0).unwrap_or_else(Utc::now))
+        self.expires_at.and_then(|ts| {
+            DateTime::from_timestamp(ts, 0).or_else(|| {
+                tracing::warn!(
+                    timestamp = ts,
+                    "Invalid expires_at timestamp, treating as expired"
+                );
+                None
+            })
+        })
     }
 
-    /// Check if token is expired.
     pub fn is_expired(&self) -> bool {
-        self.expires_at_datetime()
-            .map(|exp| Utc::now() >= exp)
-            .unwrap_or(false)
+        match (self.expires_at, self.expires_at_datetime()) {
+            (Some(_), None) => true,
+            (_, Some(exp)) => Utc::now() >= exp,
+            (None, None) => false,
+        }
     }
 
-    /// Check if token needs refresh (within 5 minutes of expiry).
+    /// Returns true within 5 minutes of expiry.
     pub fn needs_refresh(&self) -> bool {
-        self.expires_at_datetime()
-            .map(|exp| Utc::now() >= exp - Duration::minutes(5))
-            .unwrap_or(false)
+        match (self.expires_at, self.expires_at_datetime()) {
+            (Some(_), None) => true,
+            (_, Some(exp)) => Utc::now() >= exp - Duration::minutes(5),
+            (None, None) => false,
+        }
     }
 }
 
-/// Authentication credential.
 #[derive(Clone)]
 pub enum Credential {
-    ApiKey(String),
+    ApiKey(SecretString),
     OAuth(OAuthCredential),
 }
 
@@ -73,23 +127,20 @@ impl fmt::Debug for Credential {
     }
 }
 
-impl Default for Credential {
-    /// Default credential is an empty API key (placeholder for cloud providers).
-    fn default() -> Self {
-        Self::ApiKey(String::new())
-    }
-}
-
 impl Credential {
-    /// Create API Key credential.
-    pub fn api_key(key: impl Into<String>) -> Self {
-        Self::ApiKey(key.into())
+    /// Create a placeholder credential for cloud providers that handle
+    /// authentication through their own token mechanisms (Bedrock, Vertex, Foundry).
+    pub fn placeholder() -> Self {
+        Self::ApiKey(SecretString::from(""))
     }
 
-    /// Create OAuth credential.
+    pub fn api_key(key: impl Into<String>) -> Self {
+        Self::ApiKey(SecretString::from(key.into()))
+    }
+
     pub fn oauth(token: impl Into<String>) -> Self {
         Self::OAuth(OAuthCredential {
-            access_token: token.into(),
+            access_token: SecretString::from(token.into()),
             refresh_token: None,
             expires_at: None,
             scopes: vec![],
@@ -97,16 +148,13 @@ impl Credential {
         })
     }
 
-    /// Check if this is a default (empty) credential.
-    /// Used for cloud providers that handle auth differently.
-    pub fn is_default(&self) -> bool {
+    pub fn is_placeholder(&self) -> bool {
         match self {
-            Self::ApiKey(key) => key.is_empty(),
-            Self::OAuth(oauth) => oauth.access_token.is_empty(),
+            Self::ApiKey(key) => key.expose_secret().is_empty(),
+            Self::OAuth(oauth) => oauth.access_token.expose_secret().is_empty(),
         }
     }
 
-    /// Check if credential is expired.
     pub fn is_expired(&self) -> bool {
         match self {
             Credential::ApiKey(_) => false,
@@ -114,7 +162,6 @@ impl Credential {
         }
     }
 
-    /// Check if credential needs refresh.
     pub fn needs_refresh(&self) -> bool {
         match self {
             Credential::ApiKey(_) => false,
@@ -122,7 +169,6 @@ impl Credential {
         }
     }
 
-    /// Get credential type name.
     pub fn credential_type(&self) -> &'static str {
         match self {
             Credential::ApiKey(_) => "api_key",
@@ -130,12 +176,10 @@ impl Credential {
         }
     }
 
-    /// Check if this is an OAuth credential.
     pub fn is_oauth(&self) -> bool {
         matches!(self, Credential::OAuth(_))
     }
 
-    /// Check if this is an API key credential.
     pub fn is_api_key(&self) -> bool {
         matches!(self, Credential::ApiKey(_))
     }
@@ -162,7 +206,7 @@ mod tests {
     #[test]
     fn test_oauth_expiry() {
         let expired = OAuthCredential {
-            access_token: "test".into(),
+            access_token: SecretString::from("test"),
             refresh_token: None,
             expires_at: Some(0),
             scopes: vec![],
@@ -171,12 +215,35 @@ mod tests {
         assert!(expired.is_expired());
 
         let future = OAuthCredential {
-            access_token: "test".into(),
+            access_token: SecretString::from("test"),
             refresh_token: None,
             expires_at: Some(Utc::now().timestamp() + 3600),
             scopes: vec![],
             subscription_type: None,
         };
         assert!(!future.is_expired());
+    }
+
+    #[test]
+    fn test_credential_debug_redacts_secrets() {
+        let cred = Credential::api_key("super-secret-key");
+        let debug = format!("{:?}", cred);
+        assert!(!debug.contains("super-secret-key"));
+        assert!(debug.contains("[redacted]"));
+    }
+
+    #[test]
+    fn test_oauth_debug_redacts_tokens() {
+        let oauth = OAuthCredential {
+            access_token: SecretString::from("secret-token"),
+            refresh_token: Some(SecretString::from("secret-refresh")),
+            expires_at: None,
+            scopes: vec![],
+            subscription_type: None,
+        };
+        let debug = format!("{:?}", oauth);
+        assert!(!debug.contains("secret-token"));
+        assert!(!debug.contains("secret-refresh"));
+        assert!(debug.contains("[redacted]"));
     }
 }

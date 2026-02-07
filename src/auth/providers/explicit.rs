@@ -41,12 +41,13 @@ impl CredentialProvider for ExplicitProvider {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use secrecy::ExposeSecret;
 
     #[tokio::test]
     async fn test_explicit_api_key() {
         let provider = ExplicitProvider::api_key("test-key");
         let cred = provider.resolve().await.unwrap();
-        assert!(matches!(cred, Credential::ApiKey(k) if k == "test-key"));
+        assert!(matches!(&cred, Credential::ApiKey(k) if k.expose_secret() == "test-key"));
     }
 
     #[tokio::test]
@@ -56,6 +57,6 @@ mod tests {
         let Credential::OAuth(oauth) = cred else {
             unreachable!("ExplicitProvider::oauth always creates OAuth credential");
         };
-        assert_eq!(oauth.access_token, "test-token");
+        assert_eq!(oauth.access_token.expose_secret(), "test-token");
     }
 }

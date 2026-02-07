@@ -28,6 +28,21 @@ impl FileStorage {
             return Ok(None);
         }
 
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            if let Ok(metadata) = tokio::fs::metadata(&path).await {
+                let mode = metadata.permissions().mode();
+                if mode & 0o077 != 0 {
+                    tracing::warn!(
+                        "Credentials file {:?} has overly permissive permissions {:o}, expected 0600",
+                        path,
+                        mode & 0o777
+                    );
+                }
+            }
+        }
+
         let content = tokio::fs::read_to_string(&path)
             .await
             .map_err(|e| crate::Error::auth(format!("Failed to read credentials file: {}", e)))?;

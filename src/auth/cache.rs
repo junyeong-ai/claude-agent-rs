@@ -4,7 +4,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use async_trait::async_trait;
-use tokio::sync::RwLock;
+use tokio::sync::Mutex;
 
 use super::{Credential, CredentialProvider};
 use crate::Result;
@@ -17,9 +17,12 @@ struct CacheEntry {
 }
 
 /// A caching wrapper around any CredentialProvider.
+///
+/// Uses a `Mutex` to prevent thundering herd: when the cache is empty or expired,
+/// only one caller fetches a new credential while others wait.
 pub struct CachedProvider<P> {
     inner: P,
-    cache: Arc<RwLock<Option<CacheEntry>>>,
+    cache: Arc<Mutex<Option<CacheEntry>>>,
     ttl: Duration,
 }
 
@@ -27,18 +30,18 @@ impl<P: CredentialProvider> CachedProvider<P> {
     pub fn new(provider: P) -> Self {
         Self {
             inner: provider,
-            cache: Arc::new(RwLock::new(None)),
+            cache: Arc::new(Mutex::new(None)),
             ttl: DEFAULT_TTL,
         }
     }
 
-    pub fn with_ttl(mut self, ttl: Duration) -> Self {
+    pub fn ttl(mut self, ttl: Duration) -> Self {
         self.ttl = ttl;
         self
     }
 
     pub async fn invalidate(&self) {
-        let mut cache = self.cache.write().await;
+        let mut cache = self.cache.lock().await;
         *cache = None;
     }
 
@@ -62,22 +65,18 @@ impl<P: CredentialProvider> CredentialProvider for CachedProvider<P> {
     }
 
     async fn resolve(&self) -> Result<Credential> {
-        // Check cache first
+        // Hold mutex through entire check-fetch-store to prevent thundering herd
+        let mut cache = self.cache.lock().await;
+
+        if let Some(ref entry) = *cache
+            && !self.is_expired(entry)
+            && !self.credential_expired(&entry.credential)
         {
-            let cache = self.cache.read().await;
-            if let Some(ref entry) = *cache
-                && !self.is_expired(entry)
-                && !self.credential_expired(&entry.credential)
-            {
-                return Ok(entry.credential.clone());
-            }
+            return Ok(entry.credential.clone());
         }
 
-        // Cache miss or expired - fetch new credential
         let credential = self.inner.resolve().await?;
 
-        // Update cache
-        let mut cache = self.cache.write().await;
         *cache = Some(CacheEntry {
             credential: credential.clone(),
             fetched_at: Instant::now(),
@@ -89,7 +88,7 @@ impl<P: CredentialProvider> CredentialProvider for CachedProvider<P> {
     async fn refresh(&self) -> Result<Credential> {
         let credential = self.inner.refresh().await?;
 
-        let mut cache = self.cache.write().await;
+        let mut cache = self.cache.lock().await;
         *cache = Some(CacheEntry {
             credential: credential.clone(),
             fetched_at: Instant::now(),
@@ -167,7 +166,7 @@ mod tests {
     #[tokio::test]
     async fn test_ttl_expiry() {
         let inner = CountingProvider::new();
-        let cached = CachedProvider::new(inner).with_ttl(Duration::from_millis(10));
+        let cached = CachedProvider::new(inner).ttl(Duration::from_millis(10));
 
         let _ = cached.resolve().await.unwrap();
         assert_eq!(1, cached.inner.call_count());

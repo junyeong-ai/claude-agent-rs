@@ -21,7 +21,7 @@ impl EnvironmentProvider {
     }
 
     /// Create provider with custom environment variable.
-    pub fn with_var(env_var: impl Into<String>) -> Self {
+    pub fn from_var(env_var: impl Into<String>) -> Self {
         Self {
             env_var: env_var.into(),
         }
@@ -50,12 +50,13 @@ impl CredentialProvider for EnvironmentProvider {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use secrecy::ExposeSecret;
 
     #[tokio::test]
     async fn test_environment_provider_missing() {
         // SAFETY: Test-only environment setup, single-threaded test context
         unsafe { std::env::remove_var("TEST_API_KEY_NOT_SET") };
-        let provider = EnvironmentProvider::with_var("TEST_API_KEY_NOT_SET");
+        let provider = EnvironmentProvider::from_var("TEST_API_KEY_NOT_SET");
         assert!(provider.resolve().await.is_err());
     }
 
@@ -63,9 +64,9 @@ mod tests {
     async fn test_environment_provider_set() {
         // SAFETY: Test-only environment setup, single-threaded test context
         unsafe { std::env::set_var("TEST_API_KEY_SET", "test-key") };
-        let provider = EnvironmentProvider::with_var("TEST_API_KEY_SET");
+        let provider = EnvironmentProvider::from_var("TEST_API_KEY_SET");
         let cred = provider.resolve().await.unwrap();
-        assert!(matches!(cred, Credential::ApiKey(k) if k == "test-key"));
+        assert!(matches!(&cred, Credential::ApiKey(k) if k.expose_secret() == "test-key"));
         unsafe { std::env::remove_var("TEST_API_KEY_SET") };
     }
 }
